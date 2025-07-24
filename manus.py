@@ -19,21 +19,31 @@ def split_pdf_by_employee(input_pdf_path, output_dir):
             file_identifier = f'holerite_pagina_{i+1}'  # Fallback para caso o identificador não seja encontrado
             employee_cpf = ''  # Inicializa o CPF
 
-            # Regex para encontrar o número da empresa (ex: 0059-ABECKER INFRAESTRUTURA LTDA)
-            empresa_match = re.search(r'^(\d{4})-ABECKER INFRAESTRUTURA LTDA', text, re.MULTILINE)
-            empresa_num = empresa_match.group(1) if empresa_match else 'UNKNOWN_EMP'
-
             # Regex para encontrar o número de cadastro
-            cadastro_match = re.search(r'\n\s*(\d+)\s+[A-ZÀ-Ú\s]+?\s+\d{6}', text)
+            # Busca por uma linha que começa com um número e é seguida por texto em maiúsculas
+            cadastro_match = re.search(r'Cadastro\s*Nome\s*do\s*Funcionário\s*CBO\s*Empresa\s*Local\s*Departamento\s*FL\s*\n\s*(\d+)', text)
             cadastro_num = cadastro_match.group(1) if cadastro_match else 'UNKNOWN_CAD'
 
-            # Formar o identificador único
-            file_identifier = f'{empresa_num}_{cadastro_num}'
+            # Regex para encontrar o número da empresa (campo 'Empresa')
+            # Busca por 'CBO Empresa Local Departamento FL' e então captura o segundo número na linha seguinte
+            empresa_field_match = re.search(r'(\d+)\s+[A-ZÀ-Ú\s]+\s+(\d+)\s+(\d+)\s+\d+\s+\d+\s+\d+', text)
+            empresa_num = empresa_field_match.group(3) if empresa_field_match else 'UNKNOWN_EMP'
+
+            # Formatação do identificador único: XXXXYYYYY
+            # XXXX = código da empresa (preenchido com zeros à esquerda)
+            # YYYYY = código do cadastro (preenchido com zeros à esquerda)
+            if empresa_num != 'UNKNOWN_EMP' and cadastro_num != 'UNKNOWN_CAD':
+                empresa_formatted = str(empresa_num).zfill(4)
+                cadastro_formatted = str(cadastro_num).zfill(5)
+                file_identifier = f'{empresa_formatted}{cadastro_formatted}'
+            else:
+                file_identifier = f'UNKNOWN_{i+1}'
 
             # Regex para encontrar o CPF
             cpf_match = re.search(r'CPF:\s*(\d{3}\.\d{3}\.\d{3}-\d{2})', text)
             if cpf_match:
-                employee_cpf = cpf_match.group(1).replace('.', '').replace('-', '')  # Remove pontos e traços
+                employee_cpf_full = cpf_match.group(1).replace('.', '').replace('-', '')  # Remove pontos e traços
+                employee_cpf = employee_cpf_full[:4]  # Apenas os 4 primeiros dígitos
 
             output_pdf_path = os.path.join(output_dir, f'{file_identifier}_holerite_junho_2025.pdf')
             
@@ -60,6 +70,6 @@ def split_pdf_by_employee(input_pdf_path, output_dir):
         print("---------------------------------------------")
 
 if __name__ == '__main__':
-    input_pdf = 'Recibos.pdf'
-    output_directory = './holerites_identificador_unico/'
+    input_pdf = './Recibos.pdf'
+    output_directory = './holerites_formatados_final/'
     split_pdf_by_employee(input_pdf, output_directory)
