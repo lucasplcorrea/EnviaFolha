@@ -45,7 +45,27 @@ def split_pdf_by_employee(input_pdf_path, output_dir):
                 employee_cpf_full = cpf_match.group(1).replace('.', '').replace('-', '')  # Remove pontos e traços
                 employee_cpf = employee_cpf_full[:4]  # Apenas os 4 primeiros dígitos
 
-            output_pdf_path = os.path.join(output_dir, f'{file_identifier}_holerite_junho_2025.pdf')
+            # Regex para encontrar o mês e ano de referência
+            month_year_match = re.search(r"(\d{2}/\d{4})\s*Mensal", text)
+            month_year = month_year_match.group(1) if month_year_match else "UNKNOWN_DATE"
+
+            # Mapeamento de números de mês para nomes de mês em português
+            month_names = {
+                "01": "janeiro", "02": "fevereiro", "03": "março", "04": "abril",
+                "05": "maio", "06": "junho", "07": "julho", "08": "agosto",
+                "09": "setembro", "10": "outubro", "11": "novembro", "12": "dezembro"
+            }
+
+            # Formatar o mês e ano para o nome do arquivo
+            formatted_month_year = ""
+            if month_year != "UNKNOWN_DATE":
+                month_num = month_year.split("/")[0]
+                year = month_year.split("/")[1]
+                formatted_month_year = f"{month_names.get(month_num, 'UNKNOWN')}_{year}"
+            else:
+                formatted_month_year = "UNKNOWN_DATE"
+
+            output_pdf_path = os.path.join(output_dir, f'{file_identifier}_holerite_{formatted_month_year}.pdf')
             
             writer = PyPDF2.PdfWriter()
             writer.add_page(page)
@@ -55,9 +75,9 @@ def split_pdf_by_employee(input_pdf_path, output_dir):
                     writer.encrypt(user_password=employee_cpf, owner_password=None)
                 except Exception as e:
                     print(f"Erro ao proteger o PDF {file_identifier}: {e}")
-                    unprotected_pdfs.append(f'{file_identifier}_holerite_junho_2025.pdf (Erro: {e})')
+                    unprotected_pdfs.append(f'{file_identifier}_error.pdf (Erro: {e})')
             else:
-                unprotected_pdfs.append(f'{file_identifier}_holerite_junho_2025.pdf (CPF não encontrado)')
+                unprotected_pdfs.append(f'{file_identifier}_unprotected.pdf (CPF não encontrado)')
 
             with open(output_pdf_path, 'wb') as outfile:
                 writer.write(outfile)
