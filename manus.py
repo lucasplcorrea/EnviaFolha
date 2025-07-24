@@ -15,45 +15,34 @@ def split_pdf_by_employee(input_pdf_path, output_dir):
             text = page.extract_text()
 
             employee_name = f'holerite_pagina_{i+1}' # Fallback para caso o nome não seja encontrado
+            employee_cpf = '' # Inicializa o CPF
 
-            # Regex para encontrar a linha que contém o nome do funcionário
-            # Procura por 'Cadastro' seguido por 'Nome do Funcionário' e então o número de cadastro
-            # e captura a linha inteira que contém o nome do funcionário e o CBO.
-            match_line = re.search(r'Cadastro\s+Nome do Funcionário.*?\n\s*\d+\s+([^\n]+?)\s+\d+', text, re.DOTALL)
-            
-            if match_line:
-                line_with_name_and_cbo = match_line.group(1).strip()
-                
-                # Agora, extrair apenas o nome da linha capturada
-                # O nome é uma sequência de letras maiúsculas e espaços, antes do CBO (número de 6 dígitos)
-                name_match = re.match(r'([A-ZÀ-Ú\s]+?)\s+\d{6}', line_with_name_and_cbo)
-                if name_match:
-                    employee_name = name_match.group(1).strip()
-                else:
-                    # Se não encontrou o padrão com CBO, tenta pegar tudo antes do primeiro número
-                    name_match_fallback = re.match(r'([A-ZÀ-Ú\s]+?)\s+\d+', line_with_name_and_cbo)
-                    if name_match_fallback:
-                        employee_name = name_match_fallback.group(1).strip()
-                    else:
-                        employee_name = line_with_name_and_cbo # Usa a linha inteira como último recurso
-
-                # Limpar o nome para usar como nome de arquivo
+            # Regex para encontrar o nome do funcionário
+            name_match = re.search(r'\n\s*\d+\s+([A-ZÀ-Ú\s]+?)\s+\d{6}', text)
+            if name_match:
+                employee_name = name_match.group(1).strip()
                 employee_name = re.sub(r'[^a-zA-Z0-9_]', '', employee_name.replace(' ', '_'))
-                if not employee_name: # Se o nome ficou vazio após a limpeza, usa o fallback
+                if not employee_name:
                     employee_name = f'holerite_pagina_{i+1}'
+
+            # Regex para encontrar o CPF
+            cpf_match = re.search(r'CPF:\s*(\d{3}\.\d{3}\.\d{3}-\d{2})', text)
+            if cpf_match:
+                employee_cpf = cpf_match.group(1).replace('.', '').replace('-', '') # Remove pontos e traços
 
             output_pdf_path = os.path.join(output_dir, f'{employee_name}_holerite_junho_2025.pdf')
             
             writer = PyPDF2.PdfWriter()
             writer.add_page(page)
 
+            if employee_cpf: # Se o CPF foi encontrado, adiciona a senha
+                writer.encrypt(user_pwd=employee_cpf, owner_pwd=None)
+
             with open(output_pdf_path, 'wb') as outfile:
                 writer.write(outfile)
-            print(f'Holerite de {employee_name} salvo em {output_pdf_path}')
+            print(f'Holerite de {employee_name} salvo em {output_pdf_path} (protegido com senha: {bool(employee_cpf)})')
 
 if __name__ == '__main__':
     input_pdf = './Recibos.pdf'
-    output_directory = './holerites_separados_final'
+    output_directory = './holerites_protegidos/'
     split_pdf_by_employee(input_pdf, output_directory)
-
-
