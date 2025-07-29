@@ -1,42 +1,70 @@
 import pandas as pd
 import os
 import logging
+import requests
+from dotenv import load_dotenv
 
-# Configuração de logging para um output mais limpo
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+# Carrega as variáveis do arquivo .env
+load_dotenv()
 
-def send_holerites_to_api(excel_path, pdf_dir, api_url, month_year_str):
-    try:
-        df = pd.read_excel(excel_path)
-    except FileNotFoundError:
-        logging.error(f"Erro: Planilha de colaboradores não encontrada em {excel_path}")
+# Configuração de logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+def send_single_holerite(pdf_path, api_url, auth_token, external_key, target_phone_number):
+    logging.info(f"Iniciando o envio de um único holerite para {target_phone_number}.")
+
+    headers = {
+        "Authorization": f"Bearer {auth_token}"
+    }
+
+    pdf_filename = os.path.basename(pdf_path)
+
+    if not os.path.exists(pdf_path):
+        logging.error(f"Erro: Holerite não encontrado em {pdf_path}. Abortando envio.")
         return
 
-    logging.info(f"\n--- INICIANDO TESTE DE MESA DE ASSOCIAÇÃO DE HOLERITES ---")
-    logging.info(f"Verificando {len(df)} colaboradores na planilha.\n")
+    logging.info(f"Enviando holerite {pdf_filename} para o número {target_phone_number}...")
 
-    found_associations = 0
-    for index, row in df.iterrows():
-        unique_id = str(row["ID_Unico"]).zfill(9)
-        employee_name = row["Nome_Colaborador"]
-        phone_number = str(row["Telefone"])
+    try:
+        with open(pdf_path, "rb") as f:
+            pdf_content = f.read()
 
-        pdf_filename = f"{unique_id}_holerite_{month_year_str}.pdf"
-        pdf_path = os.path.join(pdf_dir, pdf_filename)
+        files = {"media": (pdf_filename, pdf_content, "application/pdf")}
+        data = {
+            "number": target_phone_number,
+            "externalKey": external_key,
+            "isClosed": "false",
+            "body": "Mensagem"
+        }
 
-        if os.path.exists(pdf_path):
-            found_associations += 1
-            logging.info(f"[ENCONTRADO] Holerite: {pdf_filename} -> Colaborador: {employee_name} -> Telefone: {phone_number}")
+        response = requests.post(api_url, headers=headers, files=files, data=data)
+        response.raise_for_status()  # Levanta um erro para status codes 4xx/5xx
+
+        logging.info(f"Holerite {pdf_filename} enviado com sucesso! Resposta da API: {response.status_code} - {response.text}")
+
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 403:
+            logging.error(f"Erro 403 Forbidden ao enviar holerite {pdf_filename}. Verifique o token de autorização ou permissões da API.")
         else:
-            logging.warning(f"[NÃO ENCONTRADO] Holerite: {pdf_filename} para {employee_name}. Arquivo não existe.")
+            logging.error(f"Erro HTTP ao enviar holerite {pdf_filename} para a API: {e}")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Erro de requisição ao enviar holerite {pdf_filename} para a API: {e}")
+    except Exception as e:
+        logging.error(f"Erro inesperado ao processar holerite {pdf_filename}: {e}")
 
-    logging.info(f"\n--- TESTE DE MESA CONCLUÍDO ---")
-    logging.info(f"Total de holerites encontrados e associados: {found_associations} de {len(df)}")
+    logging.info("Processamento concluído.")
 
 if __name__ == "__main__":
-    excel_file = "./Colaboradores.xlsx"
-    holerites_directory = "./holerites_formatados_final/"
-    target_api_url = "https://sua-api-aqui.com/upload-holerite" # URL da API (apenas para referência no log)
-    current_month_year = "junho_2025" # Mês e ano de referência dos holerites
+    # Configurações para o teste de envio único
+    test_pdf_path = "./holerites_formatados_final/006000130_holerite_junho_2025.pdf" # Escolha um holerite existente para teste
+    target_phone_number = "554700000000" # Seu número de telefone
 
-    send_holerites_to_api(excel_file, holerites_directory, target_api_url, current_month_year)
+    api_url = os.getenv("API_URL")
+    auth_token = os.getenv("AUTH_TOKEN")
+    external_key = os.getenv("EXTERNAL_KEY")
+
+    if not all([api_url, auth_token, external_key]):
+        logging.error("Erro: Variáveis de ambiente API_URL, AUTH_TOKEN e EXTERNAL_KEY devem ser definidas.")
+        exit(1)
+
+    send_single_holerite(test_pdf_path, api_url, auth_token, external_key, target_phone_number)
