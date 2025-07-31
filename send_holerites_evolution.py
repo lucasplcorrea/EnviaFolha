@@ -6,6 +6,7 @@ import time
 import random
 import base64
 from datetime import datetime
+import mimetypes
 from dotenv import load_dotenv
 
 # Carrega as variáveis do arquivo .env
@@ -72,13 +73,8 @@ class HoleritesSenderEvolution:
         
         payload = {
             "number": number,
-            "textMessage": {
-                "text": text
-            },
-            "options": {
-                "delay": delay,
-                "presence": "composing"
-            }
+            "text": text,
+            "delay": delay
         }
         
         for attempt in range(retry_count):
@@ -166,16 +162,12 @@ class HoleritesSenderEvolution:
         
         payload = {
             "number": number,
-            "mediaMessage": {
-                "mediaType": media_type,
-                "fileName": filename or os.path.basename(file_path),
-                "caption": caption or "",
-                "media": base64_content
-            },
-            "options": {
-                "delay": delay,
-                "presence": "composing"
-            }
+            "mediatype": media_type,
+            "mimetype": mimetypes.guess_type(file_path)[0] or "application/octet-stream",
+            "caption": caption or "",
+            "media": base64_content,
+            "fileName": filename or os.path.basename(file_path),
+            "delay": delay
         }
         
         for attempt in range(retry_count):
@@ -231,10 +223,11 @@ class HoleritesSenderEvolution:
             response.raise_for_status()
             
             result = response.json()
-            status = result.get('instance', {}).get('state', 'unknown')
+            # A partir da v2.2.2, o status pode vir em 'state' ou 'status'
+            status = result.get('instance', {}).get('state', result.get('instance', {}).get('status', 'unknown'))
             logging.info(f"Status da instância {self.instance_name}: {status}")
             
-            if status != 'open':
+            if status != 'open' and status != 'connected': # Adicionado 'connected' para v2.2.2+
                 logging.warning(f"Instância não está conectada. Status: {status}")
                 return False
             
@@ -315,7 +308,7 @@ class HoleritesSenderEvolution:
             return
 
         total_employees = len(df)
-        logging.info(f"Iniciando o envio de holerites para {total_employees} colaboradores usando Evolution API v1.8.2.")
+        logging.info(f"Iniciando o envio de holerites para {total_employees} colaboradores usando Evolution API v2.2.2.")
         logging.info(f"Instância: {self.instance_name}")
         logging.info(f"Começando do índice {start_from_index}")
 
@@ -339,7 +332,7 @@ class HoleritesSenderEvolution:
     def generate_report(self):
         """Gera relatório final do envio"""
         logging.info("\n" + "="*50)
-        logging.info("RELATÓRIO FINAL DE ENVIO - Evolution API v1.8.2")
+        logging.info("RELATÓRIO FINAL DE ENVIO - Evolution API v2.2.2")
         logging.info("="*50)
         logging.info(f"✅ Enviados com sucesso: {self.success_count}")
         logging.info(f"❌ Falhas: {len(self.failed_employees)}")
