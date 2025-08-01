@@ -8,6 +8,8 @@ import base64
 from datetime import datetime
 import mimetypes
 from dotenv import load_dotenv
+from status_manager import StatusManager
+import shutil
 
 # Carrega as variáveis do arquivo .env
 load_dotenv()
@@ -42,6 +44,22 @@ class HoleritesSenderEvolution:
         self.success_count = 0
         self.failed_employees = []
         self.sent_employees = []
+        self.status_manager = StatusManager()
+        self.sent_files_dir = "enviados"
+        
+        # Criar diretório de arquivos enviados se não existir
+        os.makedirs(self.sent_files_dir, exist_ok=True)
+        
+    def move_sent_file(self, file_path, filename):
+        """Move arquivo enviado com sucesso para a pasta 'enviados'"""
+        try:
+            destination_path = os.path.join(self.sent_files_dir, filename)
+            shutil.move(file_path, destination_path)
+            logging.info(f"Arquivo {filename} movido para pasta 'enviados'")
+            return True
+        except Exception as e:
+            logging.error(f"Erro ao mover arquivo {filename}: {e}")
+            return False
         
     def add_random_delay(self, base_delay=15, variation=5):
         """Adiciona delay aleatório para parecer mais humano"""
@@ -243,9 +261,14 @@ class HoleritesSenderEvolution:
         employee_name = row["Nome_Colaborador"]
         phone_number = str(row["Telefone"])
 
+        # Atualiza status para "processando"
+        self.status_manager.update_current_step(f"Processando {employee_name}", employee_name)
+        self.status_manager.update_employee_status(unique_id, employee_name, phone_number, "processing", "Iniciando processamento")
+
         if phone_number == "nan" or not phone_number.strip():
             logging.warning(f"Número de telefone inválido para {employee_name} (ID: {unique_id}). Pulando...")
             self.failed_employees.append({"nome": employee_name, "id": unique_id, "motivo": "Telefone inválido"})
+            self.status_manager.update_employee_status(unique_id, employee_name, phone_number, "failed", "Telefone inválido")
             return False
 
         # Formatar número de telefone
@@ -257,45 +280,56 @@ class HoleritesSenderEvolution:
         if not os.path.exists(pdf_path):
             logging.warning(f"Holerite não encontrado para {employee_name} (ID: {unique_id}) em {pdf_path}. Pulando...")
             self.failed_employees.append({"nome": employee_name, "id": unique_id, "motivo": "Holerite não encontrado"})
+            self.status_manager.update_employee_status(unique_id, employee_name, formatted_phone, "failed", "Holerite não encontrado")
             return False
 
         logging.info(f"Iniciando envio para {employee_name} (ID: {unique_id}) no número {formatted_phone}...")
 
-        # Mensagem de saudação
-        greeting_message = f"Olá {employee_name}, segue seu holerite referente ao mês de {month_year_str.replace('_', ' ')}, a senha para abrir são os 4 primeiros dígitos do seu CPF."
+        # Mensagem de saudação combinada com informações do holerite
+        greeting_message = f"Olá {employee_name}, segue seu holerite referente ao mês de {month_year_str.replace('_', ' ')}, a senha para abrir são os 4 primeiros dígitos do seu CPF. Esta é uma mensagem automática, em caso de dúvidas contate o RH."
+        
+        self.status_manager.update_employee_status(unique_id, employee_name, formatted_phone, "processing", "Enviando mensagem de saudação")
         
         if not self.send_text_message(formatted_phone, greeting_message):
             logging.error(f"Falha ao enviar mensagem de saudação para {employee_name}")
             self.failed_employees.append({"nome": employee_name, "id": unique_id, "motivo": "Falha na mensagem de saudação"})
+            self.status_manager.update_employee_status(unique_id, employee_name, formatted_phone, "failed", "Falha na mensagem de saudação")
             return False
 
-        # Delay entre mensagem de saudação e arquivo
-        self.add_random_delay(25, 10)
+        # Delay entre mensagem e arquivo (reduzido)
+        self.add_random_delay(20, 8)
 
-        # Envio do holerite
-        if not self.send_media_message(formatted_phone, pdf_path, pdf_filename, "Holerite anexo"):
+        # Envio do holerite com caption informativo
+        self.status_manager.update_employee_status(unique_id, employee_name, formatted_phone, "processing", "Enviando holerite")
+        
+        holerite_caption = "📄 Seu holerite está anexo. Guarde este documento em local seguro."
+        
+        if not self.send_media_message(formatted_phone, pdf_path, pdf_filename, holerite_caption):
             logging.error(f"Falha ao enviar holerite para {employee_name}")
             self.failed_employees.append({"nome": employee_name, "id": unique_id, "motivo": "Falha no envio do holerite"})
+            self.status_manager.update_employee_status(unique_id, employee_name, formatted_phone, "failed", "Falha no envio do holerite")
             return False
-
-        # Delay entre arquivo e mensagem de finalização
-        self.add_random_delay(25, 10)
-
-        # Mensagem de finalização
-        conclusion_message = "Essa é uma mensagem automática, em caso de dúvidas contate o RH."
-        
-        if not self.send_text_message(formatted_phone, conclusion_message):
-            logging.warning(f"Falha ao enviar mensagem de finalização para {employee_name} (holerite já foi enviado)")
-            # Não considera como falha total, pois o holerite foi enviado
 
         self.success_count += 1
         self.sent_employees.append({"nome": employee_name, "id": unique_id, "telefone": formatted_phone})
-        logging.info(f"✅ Processo completo para {employee_name}!")
+        self.status_manager.update_employee_status(unique_id, employee_name, formatted_phone, "success", "Holerite enviado com sucesso")
+        
+        # Mover arquivo para pasta 'enviados'
+        if self.move_sent_file(pdf_path, pdf_filename):
+            logging.info(f"✅ Processo completo para {employee_name}! Arquivo movido para 'enviados'.")
+        else:
+            logging.warning(f"✅ Processo completo para {employee_name}! Mas houve erro ao mover o arquivo.")
         
         return True
 
     def send_holerites_to_api(self, excel_path, pdf_dir, month_year_str, start_from_index=0):
         """Função principal para envio dos holerites"""
+        
+        # Verificar se já há uma execução em andamento
+        if self.status_manager.is_running():
+            logging.error("Já existe uma execução em andamento. Aguarde a conclusão ou resete o status.")
+            return
+        
         # Verificar status da instância antes de começar
         if not self.check_instance_status():
             logging.error("Instância não está conectada. Abortando envio.")
@@ -308,26 +342,40 @@ class HoleritesSenderEvolution:
             return
 
         total_employees = len(df)
+        execution_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Iniciar execução
+        if not self.status_manager.start_execution(total_employees, execution_id):
+            logging.error("Não foi possível iniciar a execução. Verifique se não há outra execução em andamento.")
+            return
+        
         logging.info(f"Iniciando o envio de holerites para {total_employees} colaboradores usando Evolution API v2.2.2.")
         logging.info(f"Instância: {self.instance_name}")
         logging.info(f"Começando do índice {start_from_index}")
+        logging.info(f"ID da execução: {execution_id}")
 
-        for index, row in df.iterrows():
-            if index < start_from_index:
-                continue
+        try:
+            for index, row in df.iterrows():
+                if index < start_from_index:
+                    continue
+                    
+                logging.info(f"\n--- Processando funcionário {index + 1}/{total_employees} ---")
                 
-            logging.info(f"\n--- Processando funcionário {index + 1}/{total_employees} ---")
-            
-            success = self.process_employee(row, pdf_dir, month_year_str)
-            
-            # Delay maior entre funcionários para evitar rate limits
-            if index < total_employees - 1:  # Não adiciona delay após o último
-                if success:
-                    self.add_random_delay(60, 20)  # 40-80 segundos entre sucessos
-                else:
-                    self.add_random_delay(30, 10)  # 20-40 segundos entre falhas
+                success = self.process_employee(row, pdf_dir, month_year_str)
+                
+                # Delay menor entre funcionários devido à otimização das mensagens
+                if index < total_employees - 1:  # Não adiciona delay após o último
+                    if success:
+                        self.add_random_delay(45, 15)  # 30-60 segundos entre sucessos (reduzido)
+                    else:
+                        self.add_random_delay(20, 8)   # 12-28 segundos entre falhas (reduzido)
 
-        self.generate_report()
+        except Exception as e:
+            logging.error(f"Erro durante a execução: {e}")
+        finally:
+            # Finalizar execução
+            self.status_manager.end_execution()
+            self.generate_report()
 
     def generate_report(self):
         """Gera relatório final do envio"""
@@ -349,6 +397,83 @@ class HoleritesSenderEvolution:
                 logging.info(f"  - {emp['nome']} (ID: {emp['id']}) - Motivo: {emp['motivo']}")
         
         logging.info("="*50)
+        
+        # Gerar arquivo de relatório para envio via WhatsApp
+        self.generate_whatsapp_report()
+    
+    def generate_whatsapp_report(self):
+        """Gera relatório em arquivo e envia via WhatsApp"""
+        try:
+            # Obter número do administrador das variáveis de ambiente
+            admin_phone = os.getenv("ADMIN_WHATSAPP_NUMBER")
+            if not admin_phone:
+                logging.warning("Número do administrador não configurado (ADMIN_WHATSAPP_NUMBER). Pulando envio de relatório.")
+                return
+            
+            # Gerar nome do arquivo de relatório
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            report_filename = f"relatorio_envio_holerites_{timestamp}.txt"
+            
+            # Criar conteúdo do relatório
+            report_content = []
+            report_content.append("📊 RELATÓRIO DE ENVIO DE HOLERITES")
+            report_content.append("=" * 40)
+            report_content.append(f"Data/Hora: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+            report_content.append(f"Instância: {self.instance_name}")
+            report_content.append("")
+            report_content.append("📈 RESUMO:")
+            report_content.append(f"✅ Enviados com sucesso: {self.success_count}")
+            report_content.append(f"❌ Falhas: {len(self.failed_employees)}")
+            report_content.append(f"📊 Total processado: {self.success_count + len(self.failed_employees)}")
+            report_content.append("")
+            
+            if self.sent_employees:
+                report_content.append("✅ FUNCIONÁRIOS COM ENVIO REALIZADO:")
+                for emp in self.sent_employees:
+                    report_content.append(f"  • {emp['nome']} (ID: {emp['id']}) - {emp['telefone']}")
+                report_content.append("")
+            
+            if self.failed_employees:
+                report_content.append("❌ FUNCIONÁRIOS COM FALHA:")
+                for emp in self.failed_employees:
+                    report_content.append(f"  • {emp['nome']} (ID: {emp['id']}) - {emp['motivo']}")
+                report_content.append("")
+            
+            report_content.append("=" * 40)
+            report_content.append("Relatório gerado automaticamente pelo sistema")
+            
+            # Salvar arquivo de relatório
+            with open(report_filename, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(report_content))
+            
+            # Formatar número do administrador
+            formatted_admin_phone = self.format_phone_number(admin_phone)
+            
+            # Enviar mensagem de texto com resumo
+            summary_message = f"""📊 *Relatório de Envio de Holerites*
+            
+✅ Sucessos: {self.success_count}
+❌ Falhas: {len(self.failed_employees)}
+📊 Total: {self.success_count + len(self.failed_employees)}
+
+Relatório detalhado em anexo."""
+            
+            if self.send_text_message(formatted_admin_phone, summary_message):
+                logging.info("Mensagem de resumo enviada para o administrador")
+                
+                # Aguardar um pouco antes de enviar o arquivo
+                time.sleep(5)
+                
+                # Enviar arquivo de relatório
+                if self.send_media_message(formatted_admin_phone, report_filename, report_filename, "Relatório detalhado de envio"):
+                    logging.info(f"Relatório {report_filename} enviado para o administrador via WhatsApp")
+                else:
+                    logging.error("Falha ao enviar arquivo de relatório para o administrador")
+            else:
+                logging.error("Falha ao enviar mensagem de resumo para o administrador")
+                
+        except Exception as e:
+            logging.error(f"Erro ao gerar/enviar relatório via WhatsApp: {e}")
 
 def main():
     # Configurações
