@@ -1,0 +1,10 @@
+# Configurações da Evolution API v1.8.2
+EVOLUTION_SERVER_URL="https://sua-api.evolution.com"
+EVOLUTION_API_KEY="sua_chave_de_api_aqui"
+EVOLUTION_INSTANCE_NAME="nome_da_sua_instancia"
+ADMIN_WHATSAPP_NUMBER=5511999999999
+
+
+# Opcional: Para retomar envio de onde parou
+START_FROM_INDEX=0
+

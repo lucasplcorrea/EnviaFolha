@@ -1,6 +1,7 @@
 import PyPDF2
 import re
 import os
+import sys
 
 def split_pdf_by_employee(input_pdf_path, output_dir):
     if not os.path.exists(output_dir):
@@ -90,6 +91,10 @@ def split_pdf_by_employee(input_pdf_path, output_dir):
         print("---------------------------------------------")
 
 if __name__ == '__main__':
-    input_pdf = './Recibos.pdf'
+    if len(sys.argv) < 2:
+        print("Erro: caminho do PDF não fornecido.")
+        sys.exit(1)
+
+    input_pdf = sys.argv[1]
     output_directory = './holerites_formatados_final/'
     split_pdf_by_employee(input_pdf, output_directory)
