@@ -126,7 +126,7 @@ if os.path.exists("Colaboradores.xlsx") and os.listdir(OUTPUT_DIR):
         df = pd.read_excel("Colaboradores.xlsx")
         arquivos_segmentados = set(os.listdir(OUTPUT_DIR))
         df['ID_Unico_Str'] = df['ID_Unico'].apply(lambda x: str(x).zfill(9))
-        df['Arquivo Esperado'] = df['ID_Unico_Str'].apply(lambda x: f"{x}_holerite_junho_2025.pdf")
+        df['Arquivo Esperado'] = df['ID_Unico_Str'].apply(lambda x: f"{x}_holerite_julho_2025.pdf")
         df['Será Enviado?'] = df['Arquivo Esperado'].apply(lambda x: 'Sim' if x in arquivos_segmentados else 'Não')
         
         # Adicionar status de envio se houver dados de execução
