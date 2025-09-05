@@ -484,7 +484,7 @@ def main():
     server_url = os.getenv("EVOLUTION_SERVER_URL")        # URL do servidor Evolution API
     api_key = os.getenv("EVOLUTION_API_KEY")              # Chave de API
     instance_name = os.getenv("EVOLUTION_INSTANCE_NAME")  # Nome da instância
-    current_month_year = "julho_2025"  # Altere conforme necessário
+    current_month_year = "agosto_2025"  # Altere conforme necessário
     start_from_index = int(os.getenv("START_FROM_INDEX", "0"))  # Para retomar de onde parou
 
     # Validação das variáveis de ambiente
