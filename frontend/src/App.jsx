@@ -7,6 +7,7 @@ import Layout from './components/Layout.jsx';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Employees from './pages/Employees.jsx';
+import PayrollProcessor from './pages/PayrollProcessor.jsx';
 import PayrollSender from './pages/PayrollSender.jsx';
 import CommunicationSender from './pages/CommunicationSender.jsx';
 import Settings from './pages/Settings.jsx';
@@ -54,6 +55,8 @@ function AppContent() {
                   <Routes>
                     <Route path="/" element={<Dashboard />} />
                     <Route path="/employees" element={<Employees />} />
+                    <Route path="/payroll-processor" element={<PayrollProcessor />} />
+                    <Route path="/payroll-sender" element={<PayrollSender />} />
                     <Route path="/payroll" element={<PayrollSender />} />
                     <Route path="/communications" element={<CommunicationSender />} />
                     <Route path="/reports" element={<Reports />} />

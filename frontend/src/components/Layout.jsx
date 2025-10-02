@@ -11,12 +11,25 @@ import {
   ArrowRightOnRectangleIcon,
   Bars3Icon,
   XMarkIcon,
+  DocumentArrowUpIcon,
+  PaperAirplaneIcon,
 } from '@heroicons/react/24/outline';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: HomeIcon },
   { name: 'Colaboradores', href: '/employees', icon: UsersIcon },
-  { name: 'Envio de Holerites', href: '/payroll', icon: DocumentTextIcon },
+  { 
+    name: 'Processar Holerites', 
+    href: '/payroll-processor', 
+    icon: DocumentArrowUpIcon,
+    description: 'Upload e segmentação de PDFs'
+  },
+  { 
+    name: 'Enviar Holerites', 
+    href: '/payroll-sender', 
+    icon: PaperAirplaneIcon,
+    description: 'Envio via WhatsApp'
+  },
   { name: 'Comunicados', href: '/communications', icon: ChatBubbleLeftRightIcon },
   { name: 'Relatórios', href: '/reports', icon: ChartBarIcon },
   { name: 'Configurações', href: '/settings', icon: CogIcon },
