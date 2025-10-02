@@ -15,3 +15,4 @@ enviados
 execution_status.json
 relatorio_envio_holerites*
 __pycache__
+debug.py
