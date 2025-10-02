@@ -94,12 +94,38 @@ const PayrollSender = () => {
     }
 
     setSending(true);
-    toast.success('Funcionalidade em desenvolvimento! Em breve será possível enviar holerites.');
     
-    // TODO: Implementar lógica de envio
-    setTimeout(() => {
+    try {
+      const response = await api.post('/payrolls/send', {
+        selectedEmployees,
+        uploadedFiles,
+        monthYear
+      });
+      
+      const { success_count, failed_employees, message: result_message } = response.data;
+      
+      if (success_count > 0) {
+        toast.success(result_message);
+      }
+      
+      if (failed_employees && failed_employees.length > 0) {
+        toast.error(`${failed_employees.length} envios falharam. Verifique os logs.`);
+        console.warn('Envios que falharam:', failed_employees);
+      }
+      
+      // Limpar formulário após envio bem-sucedido
+      if (success_count === selectedEmployees.length) {
+        setSelectedEmployees([]);
+        setUploadedFiles([]);
+        setMonthYear('');
+      }
+      
+    } catch (error) {
+      console.error('Erro ao enviar holerites:', error);
+      toast.error(error.response?.data?.detail || 'Erro ao enviar holerites');
+    } finally {
       setSending(false);
-    }, 2000);
+    }
   };
 
   return (

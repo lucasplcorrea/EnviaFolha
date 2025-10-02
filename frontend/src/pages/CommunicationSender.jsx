@@ -91,12 +91,38 @@ const CommunicationSender = () => {
     }
 
     setSending(true);
-    toast.success('Funcionalidade em desenvolvimento! Em breve será possível enviar comunicados.');
     
-    // TODO: Implementar lógica de envio
-    setTimeout(() => {
+    try {
+      const response = await api.post('/communications/send', {
+        selectedEmployees,
+        message,
+        uploadedFile
+      });
+      
+      const { success_count, failed_employees, message: result_message } = response.data;
+      
+      if (success_count > 0) {
+        toast.success(result_message);
+      }
+      
+      if (failed_employees && failed_employees.length > 0) {
+        toast.error(`${failed_employees.length} envios falharam. Verifique os logs.`);
+        console.warn('Envios que falharam:', failed_employees);
+      }
+      
+      // Limpar formulário após envio bem-sucedido
+      if (success_count === selectedEmployees.length) {
+        setMessage('');
+        setSelectedEmployees([]);
+        setUploadedFile(null);
+      }
+      
+    } catch (error) {
+      console.error('Erro ao enviar comunicado:', error);
+      toast.error(error.response?.data?.detail || 'Erro ao enviar comunicado');
+    } finally {
       setSending(false);
-    }, 2000);
+    }
   };
 
   const departments = [...new Set(employees.map(emp => emp.department).filter(Boolean))];

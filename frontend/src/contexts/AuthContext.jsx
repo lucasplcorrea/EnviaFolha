@@ -38,10 +38,14 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (username, password) => {
     try {
+      console.log('🔐 Tentando fazer login...', { username, password });
+      
       const response = await api.post('/auth/login', {
         username,
         password,
       });
+
+      console.log('📡 Resposta do servidor:', response.data);
 
       const { access_token, user: userData } = response.data;
       
@@ -53,6 +57,9 @@ export const AuthProvider = ({ children }) => {
       
       return { success: true };
     } catch (error) {
+      console.error('❌ Erro no login:', error);
+      console.error('📋 Detalhes do erro:', error.response);
+      
       const message = error.response?.data?.detail || 'Erro ao fazer login';
       toast.error(message);
       return { success: false, error: message };

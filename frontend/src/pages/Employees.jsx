@@ -9,6 +9,7 @@ const Employees = () => {
   const [showForm, setShowForm] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [editingEmployee, setEditingEmployee] = useState(null);
   const [formData, setFormData] = useState({
     unique_id: '',
     full_name: '',
@@ -37,8 +38,15 @@ const Employees = () => {
     e.preventDefault();
     
     try {
-      await api.post('/employees', formData);
-      toast.success('Colaborador criado com sucesso!');
+      if (editingEmployee) {
+        // Atualizar colaborador existente
+        await api.put(`/employees/${editingEmployee.id}`, formData);
+        toast.success('Colaborador atualizado com sucesso!');
+      } else {
+        // Criar novo colaborador
+        await api.post('/employees', formData);
+        toast.success('Colaborador criado com sucesso!');
+      }
       
       setFormData({
         unique_id: '',
@@ -49,10 +57,51 @@ const Employees = () => {
         position: ''
       });
       setShowForm(false);
+      setEditingEmployee(null);
       loadEmployees();
       
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Erro ao criar colaborador');
+      toast.error(error.response?.data?.detail || 'Erro ao salvar colaborador');
+    }
+  };
+
+  const handleEdit = (employee) => {
+    setEditingEmployee(employee);
+    setFormData({
+      unique_id: employee.unique_id,
+      full_name: employee.full_name,
+      phone_number: employee.phone_number,
+      email: employee.email || '',
+      department: employee.department || '',
+      position: employee.position || ''
+    });
+    setShowForm(true);
+  };
+
+  const handleCancel = () => {
+    setShowForm(false);
+    setEditingEmployee(null);
+    setFormData({
+      unique_id: '',
+      full_name: '',
+      phone_number: '',
+      email: '',
+      department: '',
+      position: ''
+    });
+  };
+
+  const handleDelete = async (employee) => {
+    if (!window.confirm(`Tem certeza que deseja remover ${employee.full_name}?`)) {
+      return;
+    }
+
+    try {
+      await api.delete(`/employees/${employee.id}`);
+      toast.success('Colaborador removido com sucesso!');
+      loadEmployees();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Erro ao remover colaborador');
     }
   };
 
@@ -119,7 +168,18 @@ const Employees = () => {
             Importar Excel
           </button>
           <button
-            onClick={() => setShowForm(true)}
+            onClick={() => {
+              setEditingEmployee(null);
+              setFormData({
+                unique_id: '',
+                full_name: '',
+                phone_number: '',
+                email: '',
+                department: '',
+                position: ''
+              });
+              setShowForm(true);
+            }}
             className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
           >
             <PlusIcon className="h-5 w-5 mr-2" />
@@ -183,7 +243,9 @@ const Employees = () => {
       {/* Formulário */}
       {showForm && (
         <div className="bg-white shadow rounded-lg p-6 mb-6">
-          <h2 className="text-lg font-medium text-gray-900 mb-4">Novo Colaborador</h2>
+          <h2 className="text-lg font-medium text-gray-900 mb-4">
+            {editingEmployee ? 'Editar Colaborador' : 'Novo Colaborador'}
+          </h2>
           <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className="block text-sm font-medium text-gray-700">ID Único</label>
@@ -253,7 +315,7 @@ const Employees = () => {
             <div className="sm:col-span-2 flex justify-end space-x-3">
               <button
                 type="button"
-                onClick={() => setShowForm(false)}
+                onClick={handleCancel}
                 className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 Cancelar
@@ -262,7 +324,7 @@ const Employees = () => {
                 type="submit"
                 className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"
               >
-                Salvar
+                {editingEmployee ? 'Atualizar' : 'Salvar'}
               </button>
             </div>
           </form>
@@ -319,9 +381,20 @@ const Employees = () => {
                       {employee.department}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      <button className="text-blue-600 hover:text-blue-900">
-                        Editar
-                      </button>
+                      <div className="flex space-x-2">
+                        <button 
+                          onClick={() => handleEdit(employee)}
+                          className="text-blue-600 hover:text-blue-900"
+                        >
+                          Editar
+                        </button>
+                        <button 
+                          onClick={() => handleDelete(employee)}
+                          className="text-red-600 hover:text-red-900"
+                        >
+                          Excluir
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

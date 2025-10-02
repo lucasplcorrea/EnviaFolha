@@ -93,3 +93,5 @@ Thumbs.db
 *.xlsx
 *.pdf
 backend/simple_db.json
+backend/testa_Evolution/testaevolution.py
+backend/employees.json
