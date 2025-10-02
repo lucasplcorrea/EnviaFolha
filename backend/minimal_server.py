@@ -364,23 +364,43 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             has_config = all([server_url, api_key, instance_name])
             
             if has_config:
-                # Tenta verificar conectividade com a Evolution API
+                # Verificar status real da Evolution API
                 try:
-                    # Simula verificação de status - em produção faria request real
-                    self.send_json_response({
-                        "connected": True,
-                        "instance_name": instance_name,
-                        "server_url": server_url,
-                        "config": {
-                            "server_url": bool(server_url),
-                            "api_key": bool(api_key),
-                            "instance_name": bool(instance_name)
-                        }
-                    })
+                    evolution = EvolutionAPI()
+                    connection_status = evolution.check_connection()
+                    
+                    if connection_status.get("connected"):
+                        instance_status = connection_status.get("status", {}).get("instance", {})
+                        instance_state = instance_status.get("state", "unknown")
+                        
+                        self.send_json_response({
+                            "connected": True,
+                            "instance_name": instance_name,
+                            "server_url": server_url,
+                            "state": instance_state,
+                            "config": {
+                                "server_url": bool(server_url),
+                                "api_key": bool(api_key),
+                                "instance_name": bool(instance_name)
+                            }
+                        })
+                    else:
+                        self.send_json_response({
+                            "connected": False,
+                            "error": connection_status.get("error", "Erro desconhecido"),
+                            "state": "disconnected",
+                            "config": {
+                                "server_url": bool(server_url),
+                                "api_key": bool(api_key),
+                                "instance_name": bool(instance_name)
+                            }
+                        })
+                        
                 except Exception as e:
                     self.send_json_response({
                         "connected": False,
                         "error": f"Erro ao conectar com Evolution API: {str(e)}",
+                        "state": "error",
                         "config": {
                             "server_url": bool(server_url),
                             "api_key": bool(api_key), 
