@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { PlusIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, DocumentArrowUpIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import api from '../services/api';
 
@@ -7,6 +7,8 @@ const Employees = () => {
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [formData, setFormData] = useState({
     unique_id: '',
     full_name: '',
@@ -54,6 +56,48 @@ const Employees = () => {
     }
   };
 
+  const handleFileImport = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
+      toast.error('Por favor, selecione um arquivo Excel (.xlsx ou .xls)');
+      return;
+    }
+
+    setImporting(true);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const response = await api.post('/employees/import', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      const { imported, errors, total_rows } = response.data;
+      
+      if (imported > 0) {
+        toast.success(`${imported} colaboradores importados com sucesso!`);
+        loadEmployees();
+      }
+      
+      if (errors.length > 0) {
+        toast.error(`${errors.length} erros encontrados. Verifique o console.`);
+        console.error('Erros na importação:', errors);
+      }
+
+      setShowImport(false);
+      
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Erro ao importar arquivo');
+    } finally {
+      setImporting(false);
+      event.target.value = '';
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -66,14 +110,75 @@ const Employees = () => {
     <div>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-semibold text-gray-900">Colaboradores</h1>
-        <button
-          onClick={() => setShowForm(true)}
-          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-        >
-          <PlusIcon className="h-5 w-5 mr-2" />
-          Adicionar Colaborador
-        </button>
+        <div className="flex space-x-3">
+          <button
+            onClick={() => setShowImport(true)}
+            className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+          >
+            <DocumentArrowUpIcon className="h-5 w-5 mr-2" />
+            Importar Excel
+          </button>
+          <button
+            onClick={() => setShowForm(true)}
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+          >
+            <PlusIcon className="h-5 w-5 mr-2" />
+            Adicionar Colaborador
+          </button>
+        </div>
       </div>
+
+      {/* Modal de Importação */}
+      {showImport && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+          <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div className="mt-3">
+              <h3 className="text-lg font-medium text-gray-900 mb-4">
+                Importar Colaboradores
+              </h3>
+              
+              <div className="mb-4">
+                <p className="text-sm text-gray-600 mb-2">
+                  Selecione um arquivo Excel (.xlsx ou .xls) com as colunas:
+                </p>
+                <ul className="text-xs text-gray-500 list-disc list-inside mb-4">
+                  <li><strong>unique_id</strong> - ID único do colaborador</li>
+                  <li><strong>full_name</strong> - Nome completo</li>
+                  <li><strong>phone_number</strong> - Telefone</li>
+                  <li><em>email</em> - Email (opcional)</li>
+                  <li><em>department</em> - Departamento (opcional)</li>
+                  <li><em>position</em> - Cargo (opcional)</li>
+                </ul>
+              </div>
+              
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                onChange={handleFileImport}
+                disabled={importing}
+                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+              />
+              
+              {importing && (
+                <div className="mt-4 flex items-center">
+                  <div className="spinner w-5 h-5 mr-2"></div>
+                  <span className="text-sm text-gray-600">Importando...</span>
+                </div>
+              )}
+              
+              <div className="flex justify-end mt-6 space-x-3">
+                <button
+                  onClick={() => setShowImport(false)}
+                  disabled={importing}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-500"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Formulário */}
       {showForm && (

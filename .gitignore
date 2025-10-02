@@ -92,3 +92,4 @@ Thumbs.db
 
 *.xlsx
 *.pdf
+backend/simple_db.json

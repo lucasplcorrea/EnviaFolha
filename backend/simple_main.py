@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -6,13 +6,28 @@ from typing import List, Optional
 import sys
 import os
 import json
+import pandas as pd
+import requests
 from datetime import datetime
+from dotenv import load_dotenv
 
-# Configuração simples
+# Carregar variáveis de ambiente
+load_dotenv()
+
+# Configuração com .env
 class Settings:
     APP_NAME = "Sistema de Envio RH"
     VERSION = "2.0.0"
     DATABASE_FILE = "simple_db.json"
+    
+    # Evolution API
+    EVOLUTION_SERVER_URL = os.getenv("EVOLUTION_SERVER_URL")
+    EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY")
+    EVOLUTION_INSTANCE_NAME = os.getenv("EVOLUTION_INSTANCE_NAME")
+    
+    # Configurações de upload
+    UPLOAD_FOLDER = "uploads"
+    MAX_FILE_SIZE = 25 * 1024 * 1024  # 25MB
 
 settings = Settings()
 
@@ -262,6 +277,151 @@ async def test_pandas():
             "error": str(e),
             "status": "❌ Pandas não disponível"
         }
+
+# Adicionar novos endpoints para Evolution API
+@app.get("/api/v1/evolution/status")
+async def check_evolution_status():
+    """Verificar status da Evolution API"""
+    if not all([settings.EVOLUTION_SERVER_URL, settings.EVOLUTION_API_KEY, settings.EVOLUTION_INSTANCE_NAME]):
+        return {
+            "connected": False,
+            "error": "Configurações da Evolution API não encontradas no .env",
+            "config": {
+                "server_url": bool(settings.EVOLUTION_SERVER_URL),
+                "api_key": bool(settings.EVOLUTION_API_KEY),
+                "instance_name": bool(settings.EVOLUTION_INSTANCE_NAME)
+            }
+        }
+    
+    try:
+        url = f"{settings.EVOLUTION_SERVER_URL.rstrip('/')}/instance/connectionState/{settings.EVOLUTION_INSTANCE_NAME}"
+        headers = {"apikey": settings.EVOLUTION_API_KEY}
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        result = response.json()
+        instance_state = result.get('instance', {}).get('state', 'unknown')
+        
+        return {
+            "connected": instance_state in ['open', 'connected'],
+            "state": instance_state,
+            "instance_name": settings.EVOLUTION_INSTANCE_NAME,
+            "server_url": settings.EVOLUTION_SERVER_URL
+        }
+        
+    except requests.exceptions.RequestException as e:
+        return {
+            "connected": False,
+            "error": f"Erro de conexão: {str(e)}",
+            "server_url": settings.EVOLUTION_SERVER_URL
+        }
+
+@app.post("/api/v1/employees/import")
+async def import_employees_from_excel(file: UploadFile = File(...)):
+    """Importar colaboradores de planilha Excel"""
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Arquivo deve ser Excel (.xlsx ou .xls)")
+    
+    try:
+        # Salvar arquivo temporariamente
+        temp_path = f"temp_{file.filename}"
+        with open(temp_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+        
+        # Ler planilha
+        df = pd.read_excel(temp_path)
+        
+        # Validar colunas obrigatórias
+        required_columns = ['unique_id', 'full_name', 'phone_number']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        
+        if missing_columns:
+            os.remove(temp_path)
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Colunas obrigatórias ausentes: {', '.join(missing_columns)}"
+            )
+        
+        # Processar dados
+        imported_count = 0
+        errors = []
+        
+        for index, row in df.iterrows():
+            try:
+                employee_data = {
+                    "unique_id": str(row['unique_id']).strip(),
+                    "full_name": str(row['full_name']).strip(),
+                    "phone_number": str(row['phone_number']).strip(),
+                    "email": str(row.get('email', '')).strip() if pd.notna(row.get('email')) else '',
+                    "department": str(row.get('department', '')).strip() if pd.notna(row.get('department')) else '',
+                    "position": str(row.get('position', '')).strip() if pd.notna(row.get('position')) else '',
+                    "is_active": True,
+                    "created_at": datetime.now().isoformat()
+                }
+                
+                # Verificar se já existe
+                existing = [emp for emp in db.data["employees"] 
+                           if emp.get("unique_id") == employee_data["unique_id"] and emp.get("is_active", True)]
+                
+                if existing:
+                    errors.append(f"Linha {index + 2}: ID {employee_data['unique_id']} já existe")
+                    continue
+                
+                # Adicionar ao banco
+                new_id = max([emp.get("id", 0) for emp in db.data["employees"]], default=0) + 1
+                employee_data["id"] = new_id
+                db.data["employees"].append(employee_data)
+                imported_count += 1
+                
+            except Exception as e:
+                errors.append(f"Linha {index + 2}: {str(e)}")
+        
+        # Salvar alterações
+        db.save_data()
+        
+        # Remover arquivo temporário
+        os.remove(temp_path)
+        
+        return {
+            "imported": imported_count,
+            "errors": errors,
+            "total_rows": len(df)
+        }
+        
+    except Exception as e:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise HTTPException(status_code=400, detail=f"Erro ao processar arquivo: {str(e)}")
+
+@app.post("/api/v1/files/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """Upload de arquivos (holerites, comunicados)"""
+    try:
+        # Criar pasta uploads se não existir
+        os.makedirs(settings.UPLOAD_FOLDER, exist_ok=True)
+        
+        # Gerar nome único
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{timestamp}_{file.filename}"
+        file_path = os.path.join(settings.UPLOAD_FOLDER, filename)
+        
+        # Salvar arquivo
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+        
+        return {
+            "filename": filename,
+            "original_name": file.filename,
+            "file_path": file_path,
+            "size": len(content),
+            "upload_time": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Erro no upload: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

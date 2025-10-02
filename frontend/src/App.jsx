@@ -3,14 +3,14 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { QueryClient, QueryClientProvider } from 'react-query';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import Layout from './components/Layout';
-import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-import Employees from './pages/Employees';
-import PayrollSender from './pages/PayrollSender';
-import CommunicationSender from './pages/CommunicationSender';
-import Settings from './pages/Settings';
-import Reports from './pages/Reports';
+import Layout from './components/Layout.jsx';
+import Login from './pages/Login.jsx';
+import Dashboard from './pages/Dashboard.jsx';
+import Employees from './pages/Employees.jsx';
+import PayrollSender from './pages/PayrollSender.jsx';
+import CommunicationSender from './pages/CommunicationSender.jsx';
+import Settings from './pages/Settings.jsx';
+import Reports from './pages/Reports.jsx';
 
 const queryClient = new QueryClient({
   defaultOptions: {
