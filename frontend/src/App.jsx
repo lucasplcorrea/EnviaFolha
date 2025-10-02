@@ -12,7 +12,6 @@ import CommunicationSender from './pages/CommunicationSender';
 import Settings from './pages/Settings';
 import Reports from './pages/Reports';
 
-// Configuração do React Query
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -22,14 +21,13 @@ const queryClient = new QueryClient({
   },
 });
 
-// Componente para rotas protegidas
 const ProtectedRoute = ({ children }) => {
   const { user, loading } = useAuth();
   
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary-500"></div>
+        <div className="spinner"></div>
       </div>
     );
   }
@@ -37,7 +35,6 @@ const ProtectedRoute = ({ children }) => {
   return user ? children : <Navigate to="/login" />;
 };
 
-// Componente principal
 function AppContent() {
   const { user } = useAuth();
   

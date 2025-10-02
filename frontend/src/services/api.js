@@ -6,6 +6,15 @@ const api = axios.create({
   timeout: 30000,
 });
 
+// Interceptor para adicionar token nas requisições
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 // Interceptor para tratamento de erros
 api.interceptors.response.use(
   (response) => response,

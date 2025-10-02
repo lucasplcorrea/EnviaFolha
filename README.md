@@ -34,35 +34,70 @@ Sistema completo para envio automatizado de holerites e comunicados via WhatsApp
 - Histórico completo de envios
 - Estatísticas por departamento
 
-### 🛠️ **Recursos Avançados**
-- Sistema de backup automático
-- Retry inteligente com delays
-- Monitoramento de sistema
-- API REST completa
+## 🏗️ Arquitetura v2.0
 
-## 🏗️ Arquitetura
+### **Stack Tecnológica**
+- **Frontend**: React + Tailwind CSS + React Router
+- **Backend**: FastAPI + Python 3.13 + JSON Database
+- **API WhatsApp**: Evolution API v2.2.2+
+- **Autenticação**: JWT (JSON Web Tokens)
 
-### **Visão Geral**
-- **Frontend**: Interface web em React para interação do usuário
-- **Backend**: API em Node.js com Express para lógica de negócio e integração com Evolution API
-- **Banco de Dados**: MongoDB para armazenamento de dados dos colaboradores e logs de envio
-- **Autenticação**: JWT (JSON Web Tokens) para controle de acesso seguro
-
-### **Fluxo de Dados**
-1. O usuário faz o upload do holerite em PDF.
-2. O sistema segmenta o PDF e extrai os dados necessários.
-3. Os dados são validados e um holerite protegido por senha é gerado.
-4. O holerite é enviado ao colaborador via WhatsApp, utilizando a API da Evolution.
-5. O status do envio é atualizado no sistema e um relatório é gerado.
+### **Estrutura do Projeto**
+```
+/enviafolha
+│
+├── /backend
+│   ├── main.py               # Ponto de entrada da API FastAPI
+│   ├── models.py             # Modelos de dados e validações
+│   ├── routes.py             # Definição das rotas da API
+│   ├── services.py           # Lógica de negócio e integração com Evolution API
+│   ├── utils.py              # Funções utilitárias (ex: geração de senhas)
+│   └── database.py           # Configuração da conexão com o banco de dados JSON
+│
+├── /frontend
+│   ├── src
+│   │   ├── App.js             # Componente principal do React
+│   │   ├── index.js           # Ponto de entrada do React
+│   │   ├── components         # Componentes reutilizáveis (ex: Botões, Inputs)
+│   │   ├── pages              # Páginas da aplicação (ex: Login, Dashboard)
+│   │   └── services           # Serviços para chamadas à API
+│   │
+│   └── public
+│       ├── index.html         # HTML principal
+│       └── favicon.ico        # Ícone da aplicação
+│
+├── .env                       # Variáveis de ambiente
+├── .gitignore                 # Arquivos e pastas a serem ignorados pelo Git
+├── README.md                  # Documentação do projeto
+└── requirements.txt           # Dependências do Python
+```
 
 ## 🚀 Como Usar
 
-### 1. **Executar a Interface**
-```bash
-npm start
-```
+### 1. **Configuração Inicial**
+- Clone o repositório: `git clone <URL_DO_REPOSITORIO>`
+- Acesse a pasta do projeto: `cd enviafolha`
+- Crie um ambiente virtual: `python -m venv venv`
+- Ative o ambiente virtual:
+  - Windows: `venv\Scripts\activate`
+  - Linux/Mac: `source venv/bin/activate`
+- Instale as dependências: `pip install -r requirements.txt`
+- Renomeie o arquivo `.env.example` para `.env` e preencha as variáveis necessárias
 
-### 2. **Fluxo de Trabalho**
+### 2. **Executar a Aplicação**
+- Para o backend:
+  ```bash
+  cd backend
+  uvicorn main:app --reload
+  ```
+- Para o frontend:
+  ```bash
+  cd frontend
+  npm install
+  npm start
+  ```
+
+### 3. **Fluxo de Trabalho**
 1. **Login**: Acesse com suas credenciais
 2. **Upload**: Envie os arquivos PDF de holerites
 3. **Segmentação**: Clique em "Segmentar holerites"
@@ -71,7 +106,7 @@ npm start
 6. **Acompanhamento**: Monitore o progresso no dashboard
 7. **Relatório**: Acesse relatórios detalhados de envio
 
-### 3. **Monitoramento**
+### 4. **Monitoramento**
 - **Dashboard**: Acompanhe métricas de desempenho e status de envios
 - **Logs**: Consulte logs de auditoria para rastrear atividades
 - **Notificações**: Receba alertas sobre falhas ou problemas no envio
@@ -163,22 +198,6 @@ Para dúvidas ou problemas:
 - **Benefícios**: Torna o sistema mais agradável e intuitivo de usar.
 
 ### 7. **Notificações por E-mail**
-- **Descrição**: Além do WhatsApp, enviar o relatório final de envio também por e-mail para um ou mais endereços configurados.
-- **Benefícios**: Redundância nas notificações e opção para usuários que preferem e-mail.
-
-
-**Desenvolvido com ❤️ para otimizar o processo de envio de holerites**
-- **Benefícios**: Torna o sistema mais genérico e reutilizável para diferentes períodos.
-
-### 6. **Validação de Dados Aprimorada**
-- **Descrição**: Implementar validações mais robustas para o arquivo `Colaboradores.xlsx` (ex: verificar formato do telefone, existência de IDs únicos) e para os PDFs segmentados antes do envio.
-- **Benefícios**: Reduz erros durante o envio e melhora a qualidade dos dados.
-
-### 7. **Interface de Usuário Aprimorada (UI/UX)**
-- **Descrição**: Melhorar a experiência do usuário com feedback visual mais rico, animações, e talvez um design mais moderno para a interface Streamlit.
-- **Benefícios**: Torna o sistema mais agradável e intuitivo de usar.
-
-### 8. **Notificações por E-mail**
 - **Descrição**: Além do WhatsApp, enviar o relatório final de envio também por e-mail para um ou mais endereços configurados.
 - **Benefícios**: Redundância nas notificações e opção para usuários que preferem e-mail.
 
