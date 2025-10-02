@@ -74,13 +74,29 @@ class EvolutionAPI:
                 "text": message
             }
             
-            # Simula envio por enquanto - em produção faria request real
-            print(f"[MOCK] Enviando mensagem para {phone_number}: {message[:50]}...")
-            time.sleep(random.uniform(1, 3))  # Simula delay da API
+            print(f"📞 Enviando mensagem para {phone_number}")
+            print(f"   - URL: {url}")
+            print(f"   - Headers: {self.headers}")
+            print(f"   - Data: {data}")
             
-            return {"success": True, "message": "Mensagem enviada com sucesso"}
+            # Fazer request real para Evolution API
+            import urllib.request
+            import urllib.error
             
+            json_data = json.dumps(data).encode('utf-8')
+            req = urllib.request.Request(url, data=json_data, headers=self.headers)
+            
+            with urllib.request.urlopen(req, timeout=30) as response:
+                response_data = json.loads(response.read().decode('utf-8'))
+                print(f"✅ Resposta da API: {response_data}")
+                return {"success": True, "message": "Mensagem enviada com sucesso", "response": response_data}
+                
+        except urllib.error.HTTPError as e:
+            error_message = e.read().decode('utf-8') if e.fp else str(e)
+            print(f"❌ Erro HTTP {e.code}: {error_message}")
+            return {"success": False, "error": f"HTTP {e.code}: {error_message}"}
         except Exception as e:
+            print(f"❌ Erro ao enviar mensagem: {str(e)}")
             return {"success": False, "error": str(e)}
     
     def send_file(self, phone_number, file_path, caption=""):
@@ -89,32 +105,94 @@ class EvolutionAPI:
             if not os.path.exists(file_path):
                 return {"success": False, "error": "Arquivo não encontrado"}
             
-            # Simula envio de arquivo por enquanto
-            print(f"[MOCK] Enviando arquivo para {phone_number}: {os.path.basename(file_path)}")
-            time.sleep(random.uniform(2, 5))  # Simula delay maior para arquivos
+            # Usar endpoint correto para mídia
+            url = f"{self.server_url}/message/sendMedia/{self.instance_name}"
             
-            return {"success": True, "message": "Arquivo enviado com sucesso"}
+            # Converter arquivo para base64
+            import base64
+            with open(file_path, 'rb') as f:
+                file_content = base64.b64encode(f.read()).decode('utf-8')
             
+            # Detectar tipo MIME
+            import mimetypes
+            mime_type, _ = mimetypes.guess_type(file_path)
+            if not mime_type:
+                mime_type = 'application/octet-stream'
+            
+            # Formato correto para Evolution API v2 - base64 puro
+            data = {
+                "number": phone_number,
+                "media": file_content,  # Base64 puro, sem prefixo data:
+                "mediatype": "image" if mime_type.startswith('image/') else "document",
+                "fileName": os.path.basename(file_path),
+                "mimeType": mime_type
+            }
+            
+            # Adicionar caption se fornecido
+            if caption.strip():
+                data["caption"] = caption
+            
+            print(f"📎 Enviando arquivo para {phone_number}: {os.path.basename(file_path)}")
+            print(f"   - URL: {url}")
+            print(f"   - MIME Type: {mime_type}")
+            print(f"   - Media Type: {data['mediatype']}")
+            print(f"   - Tamanho do base64: {len(data['media'])} chars")
+            print(f"   - Estrutura dos dados: {list(data.keys())}")
+            
+            # Fazer request real
+            import urllib.request
+            import urllib.error
+            
+            json_data = json.dumps(data).encode('utf-8')
+            req = urllib.request.Request(url, data=json_data, headers=self.headers)
+            
+            with urllib.request.urlopen(req, timeout=60) as response:
+                response_data = json.loads(response.read().decode('utf-8'))
+                print(f"✅ Arquivo enviado: {response_data}")
+                return {"success": True, "message": "Arquivo enviado com sucesso", "response": response_data}
+                
+        except urllib.error.HTTPError as e:
+            error_message = e.read().decode('utf-8') if e.fp else str(e)
+            print(f"❌ Erro HTTP {e.code} ao enviar arquivo: {error_message}")
+            return {"success": False, "error": f"HTTP {e.code}: {error_message}"}
         except Exception as e:
+            print(f"❌ Erro ao enviar arquivo: {str(e)}")
             return {"success": False, "error": str(e)}
     
     def check_connection(self):
         """Verifica conexão com a API"""
         if not all([self.server_url, self.api_key, self.instance_name]):
-            return {"connected": False, "error": "Configurações incompletas"}
+            missing = []
+            if not self.server_url: missing.append("EVOLUTION_SERVER_URL")
+            if not self.api_key: missing.append("EVOLUTION_API_KEY") 
+            if not self.instance_name: missing.append("EVOLUTION_INSTANCE_NAME")
+            return {"connected": False, "error": f"Configurações faltando: {', '.join(missing)}"}
         
-        # Em produção faria request real para verificar status
-        return {"connected": True, "instance": self.instance_name}
+        try:
+            # Testar conectividade básica
+            url = f"{self.server_url}/instance/connectionState/{self.instance_name}"
+            req = urllib.request.Request(url, headers={"apikey": self.api_key})
+            
+            with urllib.request.urlopen(req, timeout=10) as response:
+                status_data = json.loads(response.read().decode('utf-8'))
+                print(f"🔗 Status da instância: {status_data}")
+                return {"connected": True, "instance": self.instance_name, "status": status_data}
+                
+        except Exception as e:
+            print(f"⚠️  Não foi possível verificar status da instância: {str(e)}")
+            # Mesmo assim retorna connected=True se as configurações existem
+            return {"connected": True, "instance": self.instance_name, "warning": str(e)}
 
 # Configurações
 PORT = 8002
-UPLOAD_DIR = "uploads"
-ENVIADOS_DIR = "enviados" 
+UPLOAD_DIR = os.path.join(os.getcwd(), "uploads")
+ENVIADOS_DIR = os.path.join(os.getcwd(), "enviados")
 DATA_FILE = "employees.json"
 
 # Criar diretórios necessários
 for directory in [UPLOAD_DIR, ENVIADOS_DIR]:
     os.makedirs(directory, exist_ok=True)
+    print(f"📁 Diretório criado/verificado: {directory}")
 
 class SimpleDatabase:
     """Banco de dados simples usando JSON"""
@@ -205,6 +283,16 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+    
+    def do_OPTIONS(self):
+        """Handle preflight CORS requests"""
+        print(f"🔧 OPTIONS recebido: {self.path}")
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, apikey')
+        self.send_header('Access-Control-Max-Age', '86400')
+        self.end_headers()
     
     def send_json_response(self, data, status_code=200):
         """Enviar resposta JSON"""
@@ -316,6 +404,7 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         """Handle POST requests"""
         path = urllib.parse.urlparse(self.path).path
+        print(f"🔥 POST recebido: {path}")
         
         if path == '/api/v1/auth/login':
             data = self.get_request_data()
@@ -360,37 +449,127 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json_response({"detail": f"Erro ao criar colaborador: {str(e)}"}, 400)
         
         elif path == '/api/v1/files/upload':
-            # Simular upload de arquivo
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{timestamp}_arquivo_teste.pdf"
+            print("📤 Requisição de upload de arquivo recebida")
             
-            self.send_json_response({
-                "filename": filename,
-                "original_name": "arquivo_teste.pdf",
-                "file_path": f"uploads/{filename}",
-                "size": 1024,
-                "upload_time": datetime.now().isoformat()
-            })
+            try:
+                # Verificar se a requisição tem multipart/form-data
+                content_type = self.headers.get('Content-Type', '')
+                print(f"   - Content-Type: {content_type}")
+                
+                if not content_type.startswith('multipart/form-data'):
+                    print("❌ Content-Type deve ser multipart/form-data")
+                    self.send_json_response({"detail": "Content-Type deve ser multipart/form-data"}, 400)
+                    return
+                
+                # Obter o boundary do multipart
+                boundary = content_type.split('boundary=')[1] if 'boundary=' in content_type else None
+                if not boundary:
+                    print("❌ Boundary não encontrado")
+                    self.send_json_response({"detail": "Boundary não encontrado"}, 400)
+                    return
+                
+                # Ler o conteúdo da requisição
+                content_length = int(self.headers.get('Content-Length', 0))
+                print(f"   - Content-Length: {content_length}")
+                
+                if content_length == 0:
+                    print("❌ Nenhum arquivo enviado")
+                    self.send_json_response({"detail": "Nenhum arquivo enviado"}, 400)
+                    return
+                
+                # Ler dados do arquivo
+                post_data = self.rfile.read(content_length)
+                print(f"   - Dados recebidos: {len(post_data)} bytes")
+                
+                # Processar multipart data (implementação simples)
+                boundary_bytes = boundary.encode()
+                parts = post_data.split(b'--' + boundary_bytes)
+                
+                file_data = None
+                filename = None
+                
+                for part in parts:
+                    if b'Content-Disposition: form-data' in part and b'filename=' in part:
+                        # Extrair nome do arquivo
+                        lines = part.split(b'\r\n')
+                        for line in lines:
+                            if b'filename=' in line:
+                                filename_match = line.decode().split('filename="')[1].split('"')[0]
+                                filename = filename_match
+                                break
+                        
+                        # Extrair dados do arquivo (após headers)
+                        if b'\r\n\r\n' in part:
+                            file_data = part.split(b'\r\n\r\n', 1)[1]
+                            # Remover \r\n do final se existir
+                            if file_data.endswith(b'\r\n'):
+                                file_data = file_data[:-2]
+                            break
+                
+                if not file_data or not filename:
+                    print("❌ Arquivo não encontrado nos dados")
+                    self.send_json_response({"detail": "Arquivo não encontrado nos dados"}, 400)
+                    return
+                
+                # Gerar nome único para o arquivo
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                file_extension = os.path.splitext(filename)[1]
+                unique_filename = f"{timestamp}_{filename}"
+                file_path = os.path.join(UPLOAD_DIR, unique_filename)
+                
+                # Salvar arquivo
+                with open(file_path, 'wb') as f:
+                    f.write(file_data)
+                
+                print(f"✅ Arquivo salvo: {file_path} ({len(file_data)} bytes)")
+                
+                self.send_json_response({
+                    "filename": unique_filename,
+                    "original_name": filename,
+                    "file_path": file_path,
+                    "size": len(file_data),
+                    "upload_time": datetime.now().isoformat()
+                })
+                
+            except Exception as e:
+                print(f"❌ Erro no upload: {str(e)}")
+                self.send_json_response({"detail": f"Erro no upload: {str(e)}"}, 500)
         
         elif path == '/api/v1/communications/send':
             data = self.get_request_data()
+            print(f"📤 Requisição de envio de comunicado recebida:")
+            print(f"   - Dados: {data}")
+            
             selected_employees = data.get("selectedEmployees", [])
             message = data.get("message", "")
             uploaded_file = data.get("uploadedFile")
             
+            print(f"   - Colaboradores selecionados: {selected_employees}")
+            print(f"   - Mensagem: '{message}'")
+            print(f"   - Arquivo: {uploaded_file}")
+            
             if not message.strip() and not uploaded_file:
+                print("❌ Erro: Mensagem ou arquivo é obrigatório")
                 self.send_json_response({"detail": "Mensagem ou arquivo é obrigatório"}, 400)
                 return
             
             if not selected_employees:
+                print("❌ Erro: Nenhum colaborador selecionado")
                 self.send_json_response({"detail": "Selecione pelo menos um destinatário"}, 400)
                 return
             
             # Inicializar Evolution API
+            print("🔌 Inicializando Evolution API...")
             evolution = EvolutionAPI()
+            print(f"   - Server URL: {evolution.server_url}")
+            print(f"   - API Key: {'***' if evolution.api_key else 'Não configurado'}")
+            print(f"   - Instance: {evolution.instance_name}")
+            
             connection_status = evolution.check_connection()
+            print(f"   - Status de conexão: {connection_status}")
             
             if not connection_status.get("connected"):
+                print(f"❌ Erro na Evolution API: {connection_status.get('error', 'Não conectado')}")
                 self.send_json_response({
                     "detail": f"Erro na Evolution API: {connection_status.get('error', 'Não conectado')}"
                 }, 500)
@@ -438,8 +617,42 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                     if not clean_phone.startswith('55'):
                         clean_phone = '55' + clean_phone
                     
-                    # Enviar mensagem
-                    if message.strip():
+                    # Lógica de envio baseada no que foi preenchido
+                    has_message = message.strip()
+                    has_file = uploaded_file and uploaded_file.get("file_path") and os.path.exists(uploaded_file.get("file_path", ""))
+                    
+                    print(f"   - Tem mensagem: {has_message}")
+                    print(f"   - Tem arquivo: {has_file}")
+                    
+                    if has_file and has_message:
+                        # Caso 3: Texto + arquivo → Enviar arquivo com caption (texto)
+                        print("   - Enviando arquivo com caption (texto + mídia)")
+                        file_path = uploaded_file.get("file_path", "")
+                        result = evolution.send_file(clean_phone, file_path, message)
+                        if not result.get("success"):
+                            failed_employees.append({
+                                "id": emp_id,
+                                "name": employee.get("full_name", ""),
+                                "error": f"Erro ao enviar arquivo com caption: {result.get('error', 'Erro desconhecido')}"
+                            })
+                            continue
+                            
+                    elif has_file and not has_message:
+                        # Caso 2: Só arquivo → Enviar apenas arquivo (sem caption)
+                        print("   - Enviando apenas arquivo (sem caption)")
+                        file_path = uploaded_file.get("file_path", "")
+                        result = evolution.send_file(clean_phone, file_path, "")
+                        if not result.get("success"):
+                            failed_employees.append({
+                                "id": emp_id,
+                                "name": employee.get("full_name", ""),
+                                "error": f"Erro ao enviar arquivo: {result.get('error', 'Erro desconhecido')}"
+                            })
+                            continue
+                            
+                    elif has_message and not has_file:
+                        # Caso 1: Só texto → Enviar apenas mensagem de texto
+                        print("   - Enviando apenas mensagem de texto")
                         result = evolution.send_message(clean_phone, message)
                         if not result.get("success"):
                             failed_employees.append({
@@ -448,19 +661,14 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                                 "error": result.get("error", "Erro desconhecido")
                             })
                             continue
-                    
-                    # Enviar arquivo se houver
-                    if uploaded_file:
-                        file_path = uploaded_file.get("file_path", "")
-                        if file_path and os.path.exists(file_path):
-                            result = evolution.send_file(clean_phone, file_path, message)
-                            if not result.get("success"):
-                                failed_employees.append({
-                                    "id": emp_id,
-                                    "name": employee.get("full_name", ""),
-                                    "error": f"Erro ao enviar arquivo: {result.get('error', 'Erro desconhecido')}"
-                                })
-                                continue
+                    else:
+                        # Não deveria chegar aqui devido à validação anterior
+                        failed_employees.append({
+                            "id": emp_id,
+                            "name": employee.get("full_name", ""),
+                            "error": "Nenhum conteúdo para enviar"
+                        })
+                        continue
                     
                     success_count += 1
                     sent_employees.append({
