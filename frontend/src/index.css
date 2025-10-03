@@ -2,6 +2,28 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Tema Nexo RH - Configurações customizadas */
+.nexo-theme {
+  --bg-primary: #0f172a; /* slate-900 */
+  --bg-secondary: #1e293b; /* slate-800 */
+  --bg-card: #3730a3; /* brand-800 */
+  --text-primary: #ffffff;
+  --text-secondary: #cbd5e1; /* slate-300 */
+  --border-color: #4338ca; /* brand-700 */
+  --accent-cyan: #06b6d4;
+}
+
+/* Tema ABecker - Configurações customizadas */
+.abecker-theme {
+  --bg-primary: #f8fafc; /* slate-50 */
+  --bg-secondary: #ffffff; /* white */
+  --bg-card: #ffffff; /* white */
+  --text-primary: #0f172a; /* slate-900 */
+  --text-secondary: #475569; /* slate-600 */
+  --border-color: #bae6fd; /* abecker-200 */
+  --primary-color: #0ea5e9; /* abecker-500 */
+}
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
@@ -14,6 +36,56 @@ body {
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
+}
+
+/* Tema Nexo - Classes customizadas */
+.nexo-theme .nexo-card {
+  @apply bg-brand-800 border-brand-700;
+}
+
+.nexo-theme .nexo-button {
+  @apply bg-brand-500 hover:bg-brand-600 text-white;
+}
+
+.nexo-theme .nexo-link {
+  @apply text-cyan-400 hover:text-cyan-300;
+}
+
+.nexo-theme .nexo-accent-green {
+  color: #10b981;
+}
+
+.nexo-theme .nexo-accent-red {
+  color: #ef4444;
+}
+
+.nexo-theme .nexo-accent-yellow {
+  color: #f59e0b;
+}
+
+/* Tema ABecker - Classes customizadas */
+.abecker-theme .abecker-card {
+  @apply bg-white border-abecker-200 shadow-sm;
+}
+
+.abecker-theme .abecker-button {
+  @apply bg-abecker-500 hover:bg-abecker-600 text-white;
+}
+
+.abecker-theme .abecker-link {
+  @apply text-abecker-600 hover:text-abecker-700;
+}
+
+.abecker-theme .abecker-accent-orange {
+  color: #f97316;
+}
+
+.abecker-theme .abecker-accent-green {
+  color: #059669;
+}
+
+.abecker-theme .abecker-accent-red {
+  color: #dc2626;
 }
 
 /* Estilos personalizados */

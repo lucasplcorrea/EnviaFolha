@@ -3,16 +3,16 @@ import {
   ChartBarIcon, 
   DocumentTextIcon, 
   ChatBubbleLeftRightIcon,
-  CalendarIcon,
   ClockIcon,
   CheckCircleIcon,
   XCircleIcon,
   ArrowDownTrayIcon
 } from '@heroicons/react/24/outline';
-import api from '../services/api';
 import toast from 'react-hot-toast';
+import { useTheme } from '../contexts/ThemeContext';
 
 const Reports = () => {
+  const { config } = useTheme();
   const [reports, setReports] = useState({
     summary: {
       totalSent: 0,
@@ -88,7 +88,7 @@ const Reports = () => {
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900">Relatórios</h1>
+        <h1 className={`text-2xl font-semibold ${config.classes.text}`}>Relatórios</h1>
         <button
           onClick={exportReports}
           className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
@@ -99,39 +99,39 @@ const Reports = () => {
       </div>
 
       {/* Filtros */}
-      <div className="bg-white shadow rounded-lg p-6 mb-6">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">Filtros</h2>
+      <div className={`${config.classes.card} shadow rounded-lg p-6 mb-6 ${config.classes.border}`}>
+        <h2 className={`text-lg font-medium ${config.classes.text} mb-4`}>Filtros</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className={`block text-sm font-medium ${config.classes.text} mb-1`}>
               Data Inicial
             </label>
             <input
               type="date"
               value={filters.dateFrom}
               onChange={(e) => handleFilterChange('dateFrom', e.target.value)}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+              className={`w-full rounded-md px-3 py-2 text-sm ${config.classes.input}`}
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className={`block text-sm font-medium ${config.classes.text} mb-1`}>
               Data Final
             </label>
             <input
               type="date"
               value={filters.dateTo}
               onChange={(e) => handleFilterChange('dateTo', e.target.value)}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+              className={`w-full rounded-md px-3 py-2 text-sm ${config.classes.input}`}
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className={`block text-sm font-medium ${config.classes.text} mb-1`}>
               Tipo
             </label>
             <select
               value={filters.type}
               onChange={(e) => handleFilterChange('type', e.target.value)}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+              className={`w-full rounded-md px-3 py-2 text-sm ${config.classes.select}`}
             >
               <option value="all">Todos</option>
               <option value="communications">Comunicados</option>
@@ -165,7 +165,7 @@ const Reports = () => {
           </div>
         </div>
 
-        <div className="bg-white overflow-hidden shadow rounded-lg">
+        <div className={`${config.classes.card} overflow-hidden shadow rounded-lg ${config.classes.border}`}>
           <div className="p-5">
             <div className="flex items-center">
               <div className="flex-shrink-0">
@@ -175,10 +175,10 @@ const Reports = () => {
               </div>
               <div className="ml-5 w-0 flex-1">
                 <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">
+                  <dt className={`text-sm font-medium ${config.classes.textSecondary} truncate`}>
                     Sucessos
                   </dt>
-                  <dd className="text-lg font-medium text-gray-900">
+                  <dd className={`text-lg font-medium ${config.classes.text}`}>
                     {reports.summary.totalSuccess}
                   </dd>
                 </dl>
@@ -187,7 +187,7 @@ const Reports = () => {
           </div>
         </div>
 
-        <div className="bg-white overflow-hidden shadow rounded-lg">
+        <div className={`${config.classes.card} overflow-hidden shadow rounded-lg ${config.classes.border}`}>
           <div className="p-5">
             <div className="flex items-center">
               <div className="flex-shrink-0">
@@ -197,10 +197,10 @@ const Reports = () => {
               </div>
               <div className="ml-5 w-0 flex-1">
                 <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">
+                  <dt className={`text-sm font-medium ${config.classes.textSecondary} truncate`}>
                     Falhas
                   </dt>
-                  <dd className="text-lg font-medium text-gray-900">
+                  <dd className={`text-lg font-medium ${config.classes.text}`}>
                     {reports.summary.totalFailed}
                   </dd>
                 </dl>
@@ -209,7 +209,7 @@ const Reports = () => {
           </div>
         </div>
 
-        <div className="bg-white overflow-hidden shadow rounded-lg">
+        <div className={`${config.classes.card} overflow-hidden shadow rounded-lg ${config.classes.border}`}>
           <div className="p-5">
             <div className="flex items-center">
               <div className="flex-shrink-0">
@@ -219,10 +219,10 @@ const Reports = () => {
               </div>
               <div className="ml-5 w-0 flex-1">
                 <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">
+                  <dt className={`text-sm font-medium ${config.classes.textSecondary} truncate`}>
                     Taxa de Sucesso
                   </dt>
-                  <dd className="text-lg font-medium text-gray-900">
+                  <dd className={`text-lg font-medium ${config.classes.text}`}>
                     {reports.summary.successRate}%
                   </dd>
                 </dl>
@@ -233,9 +233,9 @@ const Reports = () => {
       </div>
 
       {/* Atividade Recente */}
-      <div className="bg-white shadow rounded-lg">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-medium text-gray-900">Atividade Recente</h3>
+      <div className={`${config.classes.card} shadow rounded-lg ${config.classes.border}`}>
+        <div className={`px-6 py-4 border-b ${config.classes.border}`}>
+          <h3 className={`text-lg font-medium ${config.classes.text}`}>Atividade Recente</h3>
         </div>
         <div className="divide-y divide-gray-200">
           {reports.recentActivity.length > 0 ? (

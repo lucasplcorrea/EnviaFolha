@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-hot-toast';
 import api from '../services/api';
+import { useTheme } from '../contexts/ThemeContext';
 import {
   PaperAirplaneIcon,
   TrashIcon,
@@ -13,6 +14,7 @@ import {
 } from '@heroicons/react/24/outline';
 
 const PayrollSender = () => {
+  const { config } = useTheme();
   const [payrollFiles, setPayrollFiles] = useState([]);
   const [statistics, setStatistics] = useState({});
   const [loading, setLoading] = useState(true);
@@ -34,7 +36,7 @@ const PayrollSender = () => {
 
   useEffect(() => {
     loadPayrollFiles();
-  }, [monthFilter]);
+  }, [monthFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadPayrollFiles = async () => {
     try {
@@ -230,6 +232,16 @@ const PayrollSender = () => {
     );
   };
 
+  const getItemStatusClass = (file) => {
+    if (file.is_orphan) {
+      return 'border-l-4 border-yellow-400 bg-yellow-50 dark:bg-yellow-900/20';
+    }
+    if (file.can_send) {
+      return 'border-l-4 border-green-400 bg-green-50 dark:bg-green-900/20';
+    }
+    return 'border-l-4 border-red-400 bg-red-50 dark:bg-red-900/20';
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -287,18 +299,18 @@ const PayrollSender = () => {
         </div>
 
         {/* Filtros */}
-        <div className="bg-white p-4 rounded-lg shadow mb-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Filtros</h3>
+        <div className={`${config.classes.card} p-4 rounded-lg shadow mb-6 ${config.classes.border}`}>
+          <h3 className={`text-lg font-medium ${config.classes.text} mb-4`}>Filtros</h3>
           <div className="flex flex-wrap gap-4">
             <div className="flex-1 min-w-64">
-              <label htmlFor="monthFilter" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="monthFilter" className={`block text-sm font-medium ${config.classes.text} mb-2`}>
                 Filtrar por Mês/Ano
               </label>
               <select
                 id="monthFilter"
                 value={monthFilter}
                 onChange={(e) => setMonthFilter(e.target.value)}
-                className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                className={`block w-full rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 ${config.classes.select}`}
               >
                 <option value="">Todos os meses</option>
                 {availableMonths.map(month => (
@@ -390,7 +402,7 @@ const PayrollSender = () => {
       </div>
 
       {/* Lista de arquivos */}
-      <div className="bg-white shadow overflow-hidden sm:rounded-md">
+      <div className={`${config.classes.card} shadow overflow-hidden sm:rounded-md ${config.classes.border}`}>
         <ul className="divide-y divide-gray-200">
           {payrollFiles.length === 0 ? (
             <li className="px-6 py-8 text-center">
@@ -402,7 +414,7 @@ const PayrollSender = () => {
             </li>
           ) : (
             payrollFiles.map((file) => (
-              <li key={file.filename} className="px-6 py-4">
+              <li key={file.filename} className={`px-6 py-4 ${getItemStatusClass(file)}`}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center flex-1">
                     {file.can_send && (
@@ -417,8 +429,8 @@ const PayrollSender = () => {
                     <div className="flex-1">
                       <div className="flex items-center justify-between">
                         <div>
-                          <h3 className="text-sm font-medium text-gray-900">{file.filename}</h3>
-                          <div className="mt-1 flex items-center space-x-4 text-sm text-gray-500">
+                          <h3 className={`text-sm font-medium ${config.classes.text}`}>{file.filename}</h3>
+                          <div className={`mt-1 flex items-center space-x-4 text-sm ${config.classes.textSecondary}`}>
                             <span>ID: {file.unique_id}</span>
                             <span>{formatFileSize(file.size)}</span>
                             <span>{file.month_year}</span>

@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { PaperAirplaneIcon, DocumentArrowUpIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import api from '../services/api';
+import { useTheme } from '../contexts/ThemeContext';
 
 const CommunicationSender = () => {
+  const { config } = useTheme();
   const [employees, setEmployees] = useState([]);
   const [selectedEmployees, setSelectedEmployees] = useState([]);
   const [message, setMessage] = useState('');
@@ -130,19 +132,19 @@ const CommunicationSender = () => {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-semibold text-gray-900">Envio de Comunicados</h1>
+        <h1 className={`text-2xl font-semibold ${config.classes.text}`}>Envio de Comunicados</h1>
       </div>
 
       {/* Conteúdo do Comunicado */}
-      <div className="bg-white shadow rounded-lg p-6">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">
+      <div className={`${config.classes.card} shadow rounded-lg p-6 ${config.classes.border}`}>
+        <h2 className={`text-lg font-medium ${config.classes.text} mb-4`}>
           1. Conteúdo do Comunicado
         </h2>
         
         <div className="space-y-4">
           {/* Mensagem de Texto */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className={`block text-sm font-medium ${config.classes.text} mb-2`}>
               Mensagem
             </label>
             <textarea
@@ -150,7 +152,7 @@ const CommunicationSender = () => {
               onChange={(e) => setMessage(e.target.value)}
               rows={4}
               placeholder="Digite a mensagem do comunicado..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className={`w-full px-3 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${config.classes.textarea || config.classes.input}`}
             />
           </div>
 
@@ -215,8 +217,8 @@ const CommunicationSender = () => {
       </div>
 
       {/* Seleção de Destinatários */}
-      <div className="bg-white shadow rounded-lg p-6">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">
+      <div className={`${config.classes.card} shadow rounded-lg p-6 ${config.classes.border}`}>
+        <h2 className={`text-lg font-medium ${config.classes.text} mb-4`}>
           2. Selecionar Destinatários
         </h2>
 
@@ -286,7 +288,7 @@ const CommunicationSender = () => {
               {employees.map((employee) => (
                 <div
                   key={employee.id}
-                  className="flex items-center p-3 border rounded-lg hover:bg-gray-50"
+                  className={`flex items-center p-3 rounded-lg ${config.classes.surface} ${config.classes.border} border`}
                 >
                   <input
                     type="checkbox"
@@ -295,10 +297,10 @@ const CommunicationSender = () => {
                     className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                   />
                   <div className="ml-3 flex-1">
-                    <p className="text-sm font-medium text-gray-900">
+                    <p className={`text-sm font-medium ${config.classes.text}`}>
                       {employee.full_name}
                     </p>
-                    <p className="text-xs text-gray-500">
+                    <p className={`text-xs ${config.classes.textSecondary}`}>
                       Tel: {employee.phone_number}
                       {employee.department && ` | Depto: ${employee.department}`}
                     </p>
@@ -315,11 +317,11 @@ const CommunicationSender = () => {
       </div>
 
       {/* Botão de Envio */}
-      <div className="bg-white shadow rounded-lg p-6">
+      <div className={`${config.classes.card} shadow rounded-lg p-6 ${config.classes.border}`}>
         <div className="flex justify-between items-center">
           <div>
-            <h2 className="text-lg font-medium text-gray-900">3. Enviar Comunicado</h2>
-            <p className="text-sm text-gray-600 mt-1">
+            <h2 className={`text-lg font-medium ${config.classes.text}`}>3. Enviar Comunicado</h2>
+            <p className={`text-sm ${config.classes.textSecondary} mt-1`}>
               O comunicado será enviado via WhatsApp usando a Evolution API
             </p>
           </div>

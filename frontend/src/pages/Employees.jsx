@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { PlusIcon, DocumentArrowUpIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import api from '../services/api';
+import { useTheme } from '../contexts/ThemeContext';
 
 const Employees = () => {
+  const { config } = useTheme();
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -125,7 +127,7 @@ const Employees = () => {
         },
       });
 
-      const { imported, errors, total_rows } = response.data;
+      const { imported, errors } = response.data;
       
       if (imported > 0) {
         toast.success(`${imported} colaboradores importados com sucesso!`);
@@ -158,7 +160,7 @@ const Employees = () => {
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900">Colaboradores</h1>
+        <h1 className={`text-2xl font-semibold ${config.classes.text}`}>Colaboradores</h1>
         <div className="flex space-x-3">
           <button
             onClick={() => setShowImport(true)}
@@ -191,17 +193,17 @@ const Employees = () => {
       {/* Modal de Importação */}
       {showImport && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-          <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+          <div className={`relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md ${config.classes.card} ${config.classes.border}`}>
             <div className="mt-3">
-              <h3 className="text-lg font-medium text-gray-900 mb-4">
+              <h3 className={`text-lg font-medium ${config.classes.text} mb-4`}>
                 Importar Colaboradores
               </h3>
               
               <div className="mb-4">
-                <p className="text-sm text-gray-600 mb-2">
+                <p className={`text-sm ${config.classes.textSecondary} mb-2`}>
                   Selecione um arquivo Excel (.xlsx ou .xls) com as colunas:
                 </p>
-                <ul className="text-xs text-gray-500 list-disc list-inside mb-4">
+                <ul className={`text-xs ${config.classes.textSecondary} list-disc list-inside mb-4`}>
                   <li><strong>unique_id</strong> - ID único do colaborador</li>
                   <li><strong>full_name</strong> - Nome completo</li>
                   <li><strong>phone_number</strong> - Telefone</li>
@@ -242,8 +244,8 @@ const Employees = () => {
 
       {/* Formulário */}
       {showForm && (
-        <div className="bg-white shadow rounded-lg p-6 mb-6">
-          <h2 className="text-lg font-medium text-gray-900 mb-4">
+        <div className={`${config.classes.card} shadow rounded-lg p-6 mb-6 ${config.classes.border}`}>
+          <h2 className={`text-lg font-medium ${config.classes.text} mb-4`}>
             {editingEmployee ? 'Editar Colaborador' : 'Novo Colaborador'}
           </h2>
           <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -332,40 +334,40 @@ const Employees = () => {
       )}
 
       {/* Lista de colaboradores */}
-      <div className="bg-white shadow rounded-lg">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-medium text-gray-900">
+      <div className={`${config.classes.card} shadow rounded-lg ${config.classes.border}`}>
+        <div className={`px-6 py-4 border-b ${config.classes.border}`}>
+          <h3 className={`text-lg font-medium ${config.classes.text}`}>
             Lista de Colaboradores ({employees.length})
           </h3>
         </div>
         
         {employees.length === 0 ? (
-          <div className="p-6 text-center text-gray-500">
+          <div className={`p-6 text-center ${config.classes.textSecondary}`}>
             Nenhum colaborador cadastrado ainda.
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+              <thead className={config.classes.tableHeader}>
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
                     ID
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
                     Nome
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
                     Telefone
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
                     Departamento
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
                     Ações
                   </th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className={`${config.classes.card} divide-y ${config.classes.border}`}>
                 {employees.map((employee) => (
                   <tr key={employee.id}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">

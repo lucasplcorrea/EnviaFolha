@@ -8,40 +8,42 @@ import {
   CheckCircleIcon,
   ExclamationTriangleIcon
 } from '@heroicons/react/24/outline';
+import { useTheme } from '../contexts/ThemeContext';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 
 const Dashboard = () => {
+  const { config } = useTheme();
   const [stats, setStats] = useState([
     {
       name: 'Colaboradores Cadastrados',
       value: '...',
       icon: UsersIcon,
-      color: 'bg-blue-500'
+      color: 'bg-brand-500'
     },
     {
       name: 'Holerites Processados',
       value: '...',
       icon: DocumentTextIcon,
-      color: 'bg-orange-500'
+      color: 'bg-accent-yellow'
     },
     {
       name: 'Holerites Enviados',
       value: '...',
       icon: CheckCircleIcon,
-      color: 'bg-green-500'
+      color: 'bg-accent-green'
     },
     {
       name: 'Comunicados Enviados',
       value: '...',
       icon: ChatBubbleLeftRightIcon,
-      color: 'bg-purple-500'
+      color: 'bg-accent-cyan'
     },
     {
       name: 'Taxa de Sucesso',
       value: '...',
       icon: ChartBarIcon,
-      color: 'bg-yellow-500'
+      color: 'bg-brand-600'
     }
   ]);
 
@@ -128,14 +130,14 @@ const Dashboard = () => {
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold text-gray-900 mb-6">Dashboard</h1>
+      <h1 className={`text-2xl font-semibold ${config.classes.text} mb-6`}>Dashboard</h1>
       
       {/* Estatísticas principais */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         {stats.map((stat) => {
           const Icon = stat.icon;
           return (
-            <div key={stat.name} className="bg-white overflow-hidden shadow rounded-lg">
+            <div key={stat.name} className={`${config.classes.card} overflow-hidden shadow rounded-lg ${config.classes.border}`}>
               <div className="p-5">
                 <div className="flex items-center">
                   <div className="flex-shrink-0">
@@ -145,13 +147,13 @@ const Dashboard = () => {
                   </div>
                   <div className="ml-5 w-0 flex-1">
                     <dl>
-                      <dt className="text-sm font-medium text-gray-500 truncate">
+                      <dt className={`text-sm font-medium ${config.classes.textSecondary} truncate`}>
                         {stat.name}
                       </dt>
-                      <dd className="text-lg font-medium text-gray-900">
+                      <dd className={`text-lg font-medium ${config.classes.text}`}>
                         {stat.value}
                         {stat.subtitle && (
-                          <div className="text-sm text-gray-500 mt-1">
+                          <div className={`text-sm ${config.classes.textSecondary} mt-1`}>
                             {stat.subtitle}
                           </div>
                         )}
@@ -169,10 +171,10 @@ const Dashboard = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
         
         {/* Status da Evolution API */}
-        <div className="bg-white overflow-hidden shadow rounded-lg">
+        <div className={`${config.classes.card} overflow-hidden shadow rounded-lg ${config.classes.border}`}>
           <div className="p-6">
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-medium text-gray-900">Status Evolution API</h3>
+              <h3 className={`text-lg font-medium ${config.classes.text}`}>Status Evolution API</h3>
               {evolutionStatus?.connected ? (
                 <CheckCircleIcon className="h-5 w-5 text-green-500" />
               ) : (
@@ -189,7 +191,7 @@ const Dashboard = () => {
                   {evolutionStatus?.connected ? 'Conectado' : 'Desconectado'}
                 </span>
                 {evolutionStatus?.instance_name && (
-                  <span className="ml-2 text-sm text-gray-500">
+                  <span className={`ml-2 text-sm ${config.classes.textSecondary}`}>
                     ({evolutionStatus.instance_name})
                   </span>
                 )}
@@ -202,10 +204,10 @@ const Dashboard = () => {
         </div>
 
         {/* Status de processamento */}
-        <div className="bg-white overflow-hidden shadow rounded-lg">
+        <div className={`${config.classes.card} overflow-hidden shadow rounded-lg ${config.classes.border}`}>
           <div className="p-6">
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-medium text-gray-900">Status de Processamento</h3>
+              <h3 className={`text-lg font-medium ${config.classes.text}`}>Status de Processamento</h3>
               {processingStatus?.hasActiveProcesses ? (
                 <ClockIcon className="h-5 w-5 text-yellow-500 animate-spin" />
               ) : (
@@ -215,15 +217,15 @@ const Dashboard = () => {
             <div className="mt-4">
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-500">Arquivos na fila:</span>
-                  <span className="font-medium">{processingStatus?.queuedFiles || 0}</span>
+                  <span className={config.classes.textSecondary}>Arquivos na fila:</span>
+                  <span className={`font-medium ${config.classes.text}`}>{processingStatus?.queuedFiles || 0}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-500">Uploads ativos:</span>
-                  <span className="font-medium">{processingStatus?.activeUploads || 0}</span>
+                  <span className={config.classes.textSecondary}>Uploads ativos:</span>
+                  <span className={`font-medium ${config.classes.text}`}>{processingStatus?.activeUploads || 0}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-500">Status:</span>
+                  <span className={config.classes.textSecondary}>Status:</span>
                   <span className={`font-medium ${
                     processingStatus?.hasActiveProcesses ? 'text-yellow-600' : 'text-green-600'
                   }`}>
@@ -237,12 +239,12 @@ const Dashboard = () => {
       </div>
 
       {/* Atividade recente */}
-      <div className="bg-white shadow rounded-lg">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-medium text-gray-900">Atividade Recente</h3>
+      <div className={`${config.classes.card} shadow rounded-lg ${config.classes.border}`}>
+        <div className={`px-6 py-4 border-b ${config.classes.border}`}>
+          <h3 className={`text-lg font-medium ${config.classes.text}`}>Atividade Recente</h3>
         </div>
         <div className="p-6">
-          <div className="text-center text-gray-500">
+          <div className={`text-center ${config.classes.textSecondary}`}>
             <ClockIcon className="mx-auto h-12 w-12 text-gray-400" />
             <p className="mt-2">Nenhuma atividade recente</p>
             <p className="text-sm">Envios e uploads aparecerão aqui</p>
