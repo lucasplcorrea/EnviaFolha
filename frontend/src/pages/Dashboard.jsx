@@ -20,9 +20,15 @@ const Dashboard = () => {
       color: 'bg-blue-500'
     },
     {
-      name: 'Holerites Enviados',
+      name: 'Holerites Processados',
       value: '...',
       icon: DocumentTextIcon,
+      color: 'bg-orange-500'
+    },
+    {
+      name: 'Holerites Enviados',
+      value: '...',
+      icon: CheckCircleIcon,
       color: 'bg-green-500'
     },
     {
@@ -50,27 +56,36 @@ const Dashboard = () => {
 
   const loadDashboardData = async () => {
     try {
-      // Buscar colaboradores
-      const employeesResponse = await api.get('/employees');
-      const activeEmployees = employeesResponse.data.filter(emp => emp.is_active !== false);
+      // Buscar estatísticas do dashboard
+      const dashboardResponse = await api.get('/dashboard/stats');
+      const dashboardData = dashboardResponse.data;
+      
+      // Buscar dados de holerites processados
+      const payrollsResponse = await api.get('/payrolls/processed');
+      const payrollsData = payrollsResponse.data;
       
       // Por enquanto, vamos usar dados simulados para envios
-      // Em uma implementação real, você teria endpoints específicos para essas estatísticas
-      const totalHolerites = 0; // TODO: Implementar endpoint /stats/payrolls
       const totalComunicados = 0; // TODO: Implementar endpoint /stats/communications
       const successRate = '100%'; // TODO: Calcular baseado em logs de envio
       
       setStats([
         {
           name: 'Colaboradores Cadastrados',
-          value: activeEmployees.length.toString(),
+          value: dashboardData.total_employees?.toString() || '0',
           icon: UsersIcon,
           color: 'bg-blue-500'
         },
         {
-          name: 'Holerites Enviados',
-          value: totalHolerites.toString(),
+          name: 'Holerites Processados',
+          value: payrollsData.statistics?.total?.toString() || '0',
           icon: DocumentTextIcon,
+          color: 'bg-orange-500',
+          subtitle: `${payrollsData.statistics?.ready || 0} prontos para envio`
+        },
+        {
+          name: 'Holerites Enviados',
+          value: '0', // TODO: Implementar contador de enviados
+          icon: CheckCircleIcon,
           color: 'bg-green-500'
         },
         {
@@ -135,6 +150,11 @@ const Dashboard = () => {
                       </dt>
                       <dd className="text-lg font-medium text-gray-900">
                         {stat.value}
+                        {stat.subtitle && (
+                          <div className="text-sm text-gray-500 mt-1">
+                            {stat.subtitle}
+                          </div>
+                        )}
                       </dd>
                     </dl>
                   </div>

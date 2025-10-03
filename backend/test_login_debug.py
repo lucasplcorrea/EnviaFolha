@@ -58,7 +58,7 @@ def test_login_with_different_passwords():
 def check_database_users():
     """Verifica usuários no banco de dados"""
     try:
-        with open('simple_db.json', 'r', encoding='utf-8') as f:
+        with open('employees.json', 'r', encoding='utf-8') as f:
             data = json.load(f)
             users = data.get('users', [])
             

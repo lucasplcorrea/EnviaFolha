@@ -641,6 +641,58 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
         except:
             return {}
     
+    def _process_message_variables(self, message_template, employee, month_year):
+        """Processa variáveis na mensagem como {nome}, {mes_anterior}"""
+        try:
+            if not message_template:
+                return ""
+            
+            # Variáveis disponíveis
+            variables = {
+                'nome': employee.get('full_name', ''),
+                'primeiro_nome': employee.get('full_name', '').split()[0] if employee.get('full_name') else '',
+                'mes_anterior': month_year,
+                'empresa': 'Abecker'  # Pode ser configurável
+            }
+            
+            # Substituir variáveis
+            processed_message = message_template
+            for var, value in variables.items():
+                processed_message = processed_message.replace(f'{{{var}}}', value)
+            
+            return processed_message
+            
+        except Exception as e:
+            print(f"⚠️ Erro ao processar variáveis da mensagem: {e}")
+            return message_template
+    
+    def _move_sent_file(self, filename):
+        """Move arquivo enviado para pasta 'enviados'"""
+        try:
+            source_path = os.path.join(HOLERITES_DIR, filename)
+            dest_path = os.path.join(ENVIADOS_DIR, filename)
+            
+            if os.path.exists(source_path):
+                import shutil
+                shutil.move(source_path, dest_path)
+                print(f"📂 Arquivo movido para enviados: {filename}")
+                return True
+            else:
+                print(f"⚠️ Arquivo não encontrado para mover: {filename}")
+                return False
+        except Exception as e:
+            print(f"❌ Erro ao mover arquivo {filename}: {e}")
+            return False
+    
+    def _add_random_delay(self):
+        """Adiciona delay aleatório entre 7.11 e 47.53 segundos para evitar detecção de bot"""
+        import random
+        import time
+        
+        delay = random.uniform(7.11, 47.53)
+        print(f"⏰ Aguardando {delay:.2f} segundos para evitar detecção de bot...")
+        time.sleep(delay)
+    
     def do_GET(self):
         """Handle GET requests"""
         path = urllib.parse.urlparse(self.path).path
@@ -658,10 +710,48 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             employees = db.get_employees()
             self.send_json_response(employees)
         
+        elif path == '/api/v1/dashboard/stats':
+            # Estatísticas para o dashboard
+            try:
+                employees = db.get_employees()
+                pending_payrolls = 0
+                
+                # Contar holerites processados não enviados
+                if os.path.exists(HOLERITES_DIR):
+                    for filename in os.listdir(HOLERITES_DIR):
+                        if filename.endswith('.pdf'):
+                            # Contar como pendente se existe arquivo processado
+                            pending_payrolls += 1
+                
+                stats = {
+                    "total_employees": len([emp for emp in employees if emp.get("is_active", True)]),
+                    "pending_payrolls": pending_payrolls,
+                    "processed_payrolls": pending_payrolls,  # Por ora, todos processados são pendentes
+                    "evolution_status": "connected",  # Pode ser verificado com Evolution API
+                    "last_update": datetime.now().isoformat()
+                }
+                
+                self.send_json_response(stats)
+                
+            except Exception as e:
+                print(f"❌ Erro ao obter estatísticas: {str(e)}")
+                self.send_json_response({"error": "Erro ao obter estatísticas"}, 500)
+        
         elif path == '/api/v1/payrolls/processed':
-            # Listar holerites processados
+            # Listar holerites processados com associação automática
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            month_filter = query_params.get('month', [None])[0]  # Filtro opcional por mês
+            
             try:
                 processed_files = []
+                employees = db.get_employees()
+                
+                print(f"🔍 Debug: {len(employees)} colaboradores encontrados no banco")
+                if month_filter:
+                    print(f"📅 Filtro de mês aplicado: {month_filter}")
+                
+                for emp in employees[:3]:  # Mostrar apenas os primeiros 3 para debug
+                    print(f"   - ID: {emp.get('id')}, unique_id: '{emp.get('unique_id')}', nome: {emp.get('full_name')}")
                 
                 if os.path.exists(HOLERITES_DIR):
                     for filename in os.listdir(HOLERITES_DIR):
@@ -669,8 +759,51 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                             file_path = os.path.join(HOLERITES_DIR, filename)
                             file_stats = os.stat(file_path)
                             
-                            # Extrair unique_id do nome do arquivo (formato: XXXXXXXXX_holerite_mesano.pdf)
+                            # Extrair informações do nome do arquivo
                             unique_id = filename.split('_')[0] if '_' in filename else 'unknown'
+                            
+                            # Extrair mês/ano do nome do arquivo
+                            month_year = "desconhecido"
+                            if '_holerite_' in filename:
+                                month_part = filename.split('_holerite_')[1].replace('.pdf', '')
+                                month_year = month_part.replace('_', ' ')
+                            
+                            # Aplicar filtro de mês se fornecido
+                            if month_filter and month_filter.lower() not in month_year.lower():
+                                continue
+                            
+                            # Buscar colaborador associado - lógica aprimorada
+                            associated_employee = None
+                            print(f"🔍 Buscando colaborador para arquivo: {filename} (unique_id extraído: '{unique_id}')")
+                            
+                            for emp in employees:
+                                emp_unique_id = str(emp.get('unique_id', ''))
+                                emp_id = str(emp.get('id', ''))
+                                
+                                # Debug: mostrar comparações
+                                print(f"   - Comparando com colaborador '{emp.get('full_name', 'N/A')}' (unique_id: '{emp_unique_id}', id: '{emp_id}')")
+                                
+                                # Estratégias de matching:
+                                # 1. Match exato com unique_id
+                                # 2. Match com unique_id normalizado (sem zeros à esquerda)
+                                # 3. Match com unique_id preenchido com zeros
+                                if (emp_unique_id == unique_id or                           # Match exato
+                                    emp_unique_id.lstrip('0') == unique_id.lstrip('0') or   # Sem zeros à esquerda
+                                    emp_unique_id.zfill(9) == unique_id or                  # Preenchido com zeros
+                                    unique_id.zfill(9) == emp_unique_id or                  # Arquivo preenchido com zeros
+                                    emp_id.zfill(9) == unique_id):                         # ID como fallback
+                                    associated_employee = emp
+                                    print(f"   ✅ MATCH encontrado! Colaborador: {emp.get('full_name')}")
+                                    break
+                            
+                            if not associated_employee:
+                                print(f"   ❌ Nenhum colaborador encontrado para unique_id: {unique_id}")
+                            
+                            # Extrair mês/ano do nome do arquivo
+                            month_year = "desconhecido"
+                            if '_holerite_' in filename:
+                                month_part = filename.split('_holerite_')[1].replace('.pdf', '')
+                                month_year = month_part.replace('_', ' ')
                             
                             processed_files.append({
                                 "filename": filename,
@@ -678,20 +811,83 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
                                 "file_path": file_path,
                                 "size": file_stats.st_size,
                                 "created_at": datetime.fromtimestamp(file_stats.st_ctime).isoformat(),
-                                "modified_at": datetime.fromtimestamp(file_stats.st_mtime).isoformat()
+                                "modified_at": datetime.fromtimestamp(file_stats.st_mtime).isoformat(),
+                                "month_year": month_year,
+                                "associated_employee": associated_employee,
+                                "is_orphan": associated_employee is None,
+                                "can_send": associated_employee is not None and associated_employee.get('phone_number'),
+                                "status": "ready" if associated_employee else "orphan"
                             })
                 
-                # Ordenar por data de criação (mais recente primeiro)
-                processed_files.sort(key=lambda x: x['created_at'], reverse=True)
+                # Ordenar: primeiro os associados, depois órfãos, por data
+                processed_files.sort(key=lambda x: (x['is_orphan'], -int(datetime.fromisoformat(x['created_at']).timestamp())))
+                
+                # Estatísticas
+                total_files = len(processed_files)
+                associated_files = len([f for f in processed_files if not f['is_orphan']])
+                orphan_files = total_files - associated_files
+                ready_to_send = len([f for f in processed_files if f['can_send']])
                 
                 self.send_json_response({
-                    "processed_count": len(processed_files),
-                    "files": processed_files
+                    "processed_count": total_files,
+                    "associated_count": associated_files,
+                    "orphan_count": orphan_files,
+                    "ready_to_send": ready_to_send,
+                    "files": processed_files,
+                    "statistics": {
+                        "total": total_files,
+                        "associated": associated_files,
+                        "orphan": orphan_files,
+                        "ready": ready_to_send
+                    }
                 })
                 
             except Exception as e:
                 print(f"❌ Erro ao listar holerites processados: {str(e)}")
+                import traceback
+                traceback.print_exc()
                 self.send_json_response({"error": "Erro ao listar holerites processados"}, 500)
+        
+        elif path == '/api/v1/payrolls/sent':
+            # Listar holerites enviados
+            try:
+                sent_files = []
+                
+                if os.path.exists(ENVIADOS_DIR):
+                    for filename in os.listdir(ENVIADOS_DIR):
+                        if filename.endswith('.pdf'):
+                            file_path = os.path.join(ENVIADOS_DIR, filename)
+                            file_stats = os.stat(file_path)
+                            
+                            # Extrair informações do nome do arquivo
+                            unique_id = filename.split('_')[0] if '_' in filename else 'unknown'
+                            
+                            # Extrair mês/ano do nome do arquivo
+                            month_year = "desconhecido"
+                            if '_holerite_' in filename:
+                                month_part = filename.split('_holerite_')[1].replace('.pdf', '')
+                                month_year = month_part.replace('_', ' ')
+                            
+                            sent_files.append({
+                                "filename": filename,
+                                "unique_id": unique_id,
+                                "file_path": file_path,
+                                "size": file_stats.st_size,
+                                "sent_at": datetime.fromtimestamp(file_stats.st_mtime).isoformat(),
+                                "month_year": month_year
+                            })
+                
+                # Ordenar por data de envio (mais recente primeiro)
+                sent_files.sort(key=lambda x: x['sent_at'], reverse=True)
+                
+                self.send_json_response({
+                    "sent_count": len(sent_files),
+                    "files": sent_files
+                })
+                
+            except Exception as e:
+                print(f"❌ Erro ao listar holerites enviados: {str(e)}")
+                self.send_json_response({"error": "Erro ao listar holerites enviados"}, 500)
         
         elif path.startswith('/api/v1/employees/'):
             try:
@@ -1120,6 +1316,178 @@ class APIHandler(http.server.SimpleHTTPRequestHandler):
             except Exception as e:
                 print(f"❌ Erro no processamento: {str(e)}")
                 self.send_json_response({"detail": f"Erro no processamento: {str(e)}"}, 500)
+        
+        elif path == '/api/v1/payrolls/send-individual':
+            # Envio individual de holerite com número manual
+            data = self.get_request_data()
+            filename = data.get("filename")
+            phone_number = data.get("phone_number")
+            message = data.get("message", "")
+            
+            if not filename or not phone_number:
+                self.send_json_response({"detail": "Filename e phone_number são obrigatórios"}, 400)
+                return
+            
+            file_path = os.path.join(HOLERITES_DIR, filename)
+            if not os.path.exists(file_path):
+                self.send_json_response({"detail": "Arquivo não encontrado"}, 404)
+                return
+            
+            # Inicializar Evolution API
+            evolution = EvolutionAPI()
+            connection_status = evolution.check_connection()
+            
+            if not connection_status.get("connected"):
+                self.send_json_response({
+                    "detail": f"Erro na Evolution API: {connection_status.get('error', 'Não conectado')}"
+                }, 500)
+                return
+            
+            try:
+                print(f"📱 Enviando holerite individual: {filename} para {phone_number}")
+                
+                # Enviar arquivo com mensagem como caption (em uma única requisição)
+                file_result = evolution.send_file(phone_number, file_path, message)
+                
+                if file_result.get("success"):
+                    # Mover arquivo para pasta enviados
+                    self._move_sent_file(filename)
+                    
+                    self.send_json_response({
+                        "success": True,
+                        "message": f"Holerite enviado com sucesso para {phone_number}",
+                        "filename": filename
+                    })
+                else:
+                    self.send_json_response({
+                        "detail": f"Erro ao enviar arquivo: {file_result.get('error')}"
+                    }, 500)
+                    
+            except Exception as e:
+                print(f"❌ Erro no envio individual: {str(e)}")
+                self.send_json_response({"detail": f"Erro no envio: {str(e)}"}, 500)
+        
+        elif path == '/api/v1/payrolls/delete-file':
+            # Remover arquivo de holerite
+            data = self.get_request_data()
+            filename = data.get("filename")
+            
+            if not filename:
+                self.send_json_response({"detail": "Filename é obrigatório"}, 400)
+                return
+            
+            file_path = os.path.join(HOLERITES_DIR, filename)
+            
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    print(f"🗑️ Arquivo removido: {filename}")
+                    self.send_json_response({
+                        "success": True,
+                        "message": f"Arquivo {filename} removido com sucesso"
+                    })
+                else:
+                    self.send_json_response({"detail": "Arquivo não encontrado"}, 404)
+                    
+            except Exception as e:
+                print(f"❌ Erro ao remover arquivo: {str(e)}")
+                self.send_json_response({"detail": f"Erro ao remover arquivo: {str(e)}"}, 500)
+        
+        elif path == '/api/v1/payrolls/bulk-send':
+            # Envio em lote com mensagem personalizada e variáveis
+            data = self.get_request_data()
+            selected_files = data.get("selected_files", [])
+            message_template = data.get("message_template", "")
+            
+            if not selected_files:
+                self.send_json_response({"detail": "Selecione pelo menos um arquivo"}, 400)
+                return
+            
+            # Inicializar Evolution API
+            evolution = EvolutionAPI()
+            connection_status = evolution.check_connection()
+            
+            if not connection_status.get("connected"):
+                self.send_json_response({
+                    "detail": f"Erro na Evolution API: {connection_status.get('error', 'Não conectado')}"
+                }, 500)
+                return
+            
+            success_count = 0
+            failed_sends = []
+            sent_files = []
+            
+            for file_info in selected_files:
+                try:
+                    filename = file_info.get("filename")
+                    employee = file_info.get("employee")
+                    
+                    if not employee or not employee.get("phone_number"):
+                        failed_sends.append({
+                            "filename": filename,
+                            "error": "Colaborador sem telefone"
+                        })
+                        continue
+                    
+                    file_path = os.path.join(HOLERITES_DIR, filename)
+                    if not os.path.exists(file_path):
+                        failed_sends.append({
+                            "filename": filename,
+                            "error": "Arquivo não encontrado"
+                        })
+                        continue
+                    
+                    # Processar variáveis na mensagem
+                    personalized_message = self._process_message_variables(
+                        message_template, 
+                        employee, 
+                        file_info.get("month_year", "")
+                    )
+                    
+                    phone_number = employee["phone_number"]
+                    
+                    print(f"📱 Enviando para {employee.get('full_name', 'N/A')}: {filename}")
+                    
+                    # Enviar arquivo com mensagem como caption (uma única requisição)
+                    file_result = evolution.send_file(phone_number, file_path, personalized_message)
+                    
+                    if file_result.get("success"):
+                        success_count += 1
+                        sent_files.append({
+                            "filename": filename,
+                            "employee": employee.get("full_name", ""),
+                            "phone": phone_number
+                        })
+                        
+                        # Mover arquivo para pasta enviados
+                        self._move_sent_file(filename)
+                        
+                        print(f"✅ Enviado: {filename} para {employee.get('full_name')}")
+                    else:
+                        failed_sends.append({
+                            "filename": filename,
+                            "employee": employee.get("full_name", ""),
+                            "error": f"Erro no arquivo: {file_result.get('error')}"
+                        })
+                    
+                    # Delay aleatório anti-bot entre envios (exceto no último)
+                    if len(selected_files) > 1 and file_info != selected_files[-1]:
+                        self._add_random_delay()
+                        
+                except Exception as e:
+                    failed_sends.append({
+                        "filename": file_info.get("filename", ""),
+                        "error": str(e)
+                    })
+            
+            self.send_json_response({
+                "success_count": success_count,
+                "total_count": len(selected_files),
+                "failed_count": len(failed_sends),
+                "sent_files": sent_files,
+                "failed_sends": failed_sends,
+                "message": f"Envio concluído: {success_count}/{len(selected_files)} arquivos enviados"
+            })
         
         elif path == '/api/v1/payrolls/send':
             data = self.get_request_data()

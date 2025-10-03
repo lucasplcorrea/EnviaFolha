@@ -18,7 +18,7 @@ load_dotenv()
 class Settings:
     APP_NAME = "Sistema de Envio RH"
     VERSION = "2.0.0"
-    DATABASE_FILE = "simple_db.json"
+    DATABASE_FILE = "employees.json"  # Arquivo unificado
     
     # Evolution API
     EVOLUTION_SERVER_URL = os.getenv("EVOLUTION_SERVER_URL")
