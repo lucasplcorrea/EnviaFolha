@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     
     # Configurações do banco de dados
-    DATABASE_URL: str = "sqlite:///./app.db"
+    DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/enviafolha_db"
     
     # Configurações de autenticação
     SECRET_KEY: str = "your-secret-key-change-this"
