@@ -5,43 +5,62 @@ services:
     build: 
       context: ./backend
       dockerfile: Dockerfile
+    container_name: enviafolha-backend
+    restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8002:8002"
     environment:
-      - DATABASE_URL=sqlite:///./app.db
-      - SECRET_KEY=your-secret-key-change-this
+      - PORT=8002
+      - PYTHONUNBUFFERED=1
+      # Evolution API Configuration
+      - EVOLUTION_SERVER_URL=${EVOLUTION_SERVER_URL:-}
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-}
+      - EVOLUTION_INSTANCE_NAME=${EVOLUTION_INSTANCE_NAME:-}
     volumes:
-      - ./backend:/app
-      - ./uploads:/app/uploads
-      - ./processed:/app/processed
-      - ./sent:/app/sent
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-    
+      # Persistir uploads e arquivos processados
+      - ./data/uploads:/app/uploads
+      - ./data/enviados:/app/enviados
+      - ./data/holerites_formatados_final:/app/holerites_formatados_final
+      # Persistir dados dos funcionários
+      - ./backend/employees.json:/app/employees.json
+      # Arquivo de configuração (se existir)
+      - ./.env:/app/.env:ro
+    networks:
+      - enviafolha-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+  
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    container_name: enviafolha-frontend
+    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
-      - REACT_APP_API_URL=http://localhost:8000/api/v1
+      - REACT_APP_API_URL=http://localhost:8002/api/v1
     volumes:
       - ./frontend:/app
       - /app/node_modules
     command: npm start
     depends_on:
       - backend
+    networks:
+      - enviafolha-network
+    profiles:
+      - with-frontend
 
-  postgres:
-    image: postgres:15
-    environment:
-      POSTGRES_DB: sistema_rh
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+networks:
+  enviafolha-network:
+    driver: bridge
 
 volumes:
+  uploads_data:
+  enviados_data:
+  holerites_data:
   postgres_data:

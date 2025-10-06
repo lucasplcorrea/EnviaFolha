@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     
     # Configurações de upload
     UPLOAD_FOLDER: str = "uploads"
-    MAX_FILE_SIZE: int = 25 * 1024 * 1024  # 25MB
+    MAX_FILE_SIZE: int = 60 * 1024 * 1024  # 60MB
     
     # Configurações de notificação
     ADMIN_WHATSAPP_NUMBER: Optional[str] = None

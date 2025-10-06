@@ -27,7 +27,7 @@ const PayrollProcessor = () => {
       return;
     }
 
-    if (file.size > 25 * 1024 * 1024) { // 25MB
+    if (file.size > 60 * 1024 * 1024) { // 60MB
       toast.error('Arquivo muito grande. Máximo 25MB');
       return;
     }
