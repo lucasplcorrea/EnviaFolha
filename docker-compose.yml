@@ -1,6 +1,50 @@
 version: '3.8'
 
 services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: enviafolha_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: enviafolha_db
+      POSTGRES_USER: enviafolha_user
+      POSTGRES_PASSWORD: secure_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/init_scripts:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U enviafolha_user -d enviafolha_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - enviafolha-network
+
+  # pgAdmin para gerenciamento do banco
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: enviafolha_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@enviafolha.local
+      PGADMIN_DEFAULT_PASSWORD: admin_password
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "8080:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - enviafolha-network
+
+  # Backend API
   backend:
     build: 
       context: ./backend
@@ -12,6 +56,13 @@ services:
     environment:
       - PORT=8002
       - PYTHONUNBUFFERED=1
+      # Database Configuration
+      - DATABASE_URL=postgresql://enviafolha_user:secure_password@postgres:5432/enviafolha_db
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=enviafolha_db
+      - DB_USER=enviafolha_user
+      - DB_PASSWORD=secure_password
       # Evolution API Configuration
       - EVOLUTION_SERVER_URL=${EVOLUTION_SERVER_URL:-}
       - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-}
@@ -25,6 +76,9 @@ services:
       - ./backend/employees.json:/app/employees.json
       # Arquivo de configuração (se existir)
       - ./.env:/app/.env:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - enviafolha-network
     healthcheck:
@@ -60,7 +114,7 @@ networks:
     driver: bridge
 
 volumes:
-  uploads_data:
-  enviados_data:
-  holerites_data:
   postgres_data:
+    driver: local
+  pgadmin_data:
+    driver: local
