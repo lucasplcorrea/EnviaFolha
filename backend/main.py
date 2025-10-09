@@ -255,7 +255,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     def send_cors_headers(self):
         """Enviar headers CORS"""
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, apikey')
         self.send_header('Access-Control-Max-Age', '86400')
     
@@ -326,6 +326,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_login()
         elif path == '/api/v1/employees':
             self.handle_create_employee()
+        elif path == '/api/v1/employees/import':
+            self.handle_import_employees()
         else:
             self.send_json_response({"error": "Endpoint não encontrado"}, 404)
     
@@ -345,9 +347,21 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         print(f"🗑️ DELETE recebido: {path}")
         
-        if path.startswith('/api/v1/employees/'):
+        if path == '/api/v1/employees/bulk':
+            self.handle_bulk_delete_employees()
+        elif path.startswith('/api/v1/employees/'):
             employee_id = path.split('/')[-1]
             self.handle_delete_employee(employee_id)
+        else:
+            self.send_json_response({"error": "Endpoint não encontrado"}, 404)
+    
+    def do_PATCH(self):
+        """Handle PATCH requests"""
+        path = urllib.parse.urlparse(self.path).path
+        print(f"🔄 PATCH recebido: {path}")
+        
+        if path == '/api/v1/employees/bulk':
+            self.handle_bulk_update_employees()
         else:
             self.send_json_response({"error": "Endpoint não encontrado"}, 404)
     
@@ -713,6 +727,326 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
         except Exception as e:
             print(f"❌ Erro ao deletar funcionário: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_import_employees(self):
+        """Handle Excel file import for employees"""
+        try:
+            # Parse multipart form data
+            content_type = self.headers.get('Content-Type', '')
+            if not content_type.startswith('multipart/form-data'):
+                self.send_json_response({"error": "Content-Type deve ser multipart/form-data"}, 400)
+                return
+            
+            # Get boundary from content type
+            boundary = None
+            for part in content_type.split(';'):
+                if 'boundary=' in part:
+                    boundary = part.split('boundary=')[1].strip()
+                    break
+            
+            if not boundary:
+                self.send_json_response({"error": "Boundary não encontrado no Content-Type"}, 400)
+                return
+            
+            # Read the body
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            
+            # Parse multipart data
+            file_data = self.parse_multipart_data(body, boundary)
+            
+            if not file_data:
+                self.send_json_response({"error": "Arquivo não encontrado no upload"}, 400)
+                return
+            
+            # Process Excel file
+            import_result = self.process_excel_import(file_data)
+            
+            self.send_json_response(import_result, 200)
+            
+        except Exception as e:
+            print(f"❌ Erro ao importar funcionários: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def parse_multipart_data(self, body, boundary):
+        """Parse multipart form data to extract file"""
+        try:
+            boundary_bytes = boundary.encode('utf-8')
+            parts = body.split(b'--' + boundary_bytes)
+            
+            for part in parts:
+                if b'Content-Disposition' in part and b'filename=' in part:
+                    # Find the start of file data (after headers)
+                    header_end = part.find(b'\r\n\r\n')
+                    if header_end != -1:
+                        file_data = part[header_end + 4:]
+                        # Remove trailing boundary markers
+                        if file_data.endswith(b'\r\n'):
+                            file_data = file_data[:-2]
+                        return file_data
+            
+            return None
+        except Exception as e:
+            print(f"❌ Erro ao parsear multipart data: {e}")
+            return None
+    
+    def process_excel_import(self, file_data):
+        """Process Excel file and import employees"""
+        try:
+            # Try to import pandas and openpyxl
+            try:
+                import pandas as pd
+                import io
+                EXCEL_AVAILABLE = True
+            except ImportError:
+                EXCEL_AVAILABLE = False
+            
+            if not EXCEL_AVAILABLE:
+                return {
+                    "error": "Bibliotecas necessárias não instaladas. Execute: pip install pandas openpyxl",
+                    "imported": 0,
+                    "errors": []
+                }
+            
+            # Read Excel file
+            excel_file = io.BytesIO(file_data)
+            df = pd.read_excel(excel_file)
+            
+            # Validate required columns
+            required_columns = ['unique_id', 'full_name', 'cpf', 'phone_number']
+            missing_columns = [col for col in required_columns if col not in df.columns]
+            
+            if missing_columns:
+                return {
+                    "error": f"Colunas obrigatórias ausentes: {', '.join(missing_columns)}",
+                    "imported": 0,
+                    "errors": []
+                }
+            
+            # Process each row
+            imported = 0
+            errors = []
+            
+            if SessionLocal:
+                from sqlalchemy import text
+                db = SessionLocal()
+                
+                try:
+                    for index, row in df.iterrows():
+                        try:
+                            # Validate required fields
+                            unique_id = str(row['unique_id']).strip()
+                            full_name = str(row['full_name']).strip()
+                            cpf = str(row['cpf']).strip()
+                            phone_number = str(row['phone_number']).strip()
+                            
+                            if not unique_id or not full_name or not cpf or not phone_number:
+                                errors.append(f"Linha {index + 2}: Campos obrigatórios em branco")
+                                continue
+                            
+                            # Optional fields
+                            email = str(row.get('email', '')).strip() if pd.notna(row.get('email')) else ''
+                            department = str(row.get('department', '')).strip() if pd.notna(row.get('department')) else ''
+                            position = str(row.get('position', '')).strip() if pd.notna(row.get('position')) else ''
+                            
+                            # Check if employee already exists
+                            existing = db.execute(text("""
+                                SELECT id FROM employees WHERE unique_id = :unique_id AND is_active = true
+                            """), {"unique_id": unique_id}).fetchone()
+                            
+                            if existing:
+                                errors.append(f"Linha {index + 2}: ID {unique_id} já existe")
+                                continue
+                            
+                            # Check if CPF already exists
+                            existing_cpf = db.execute(text("""
+                                SELECT id FROM employees WHERE cpf = :cpf AND is_active = true
+                            """), {"cpf": cpf}).fetchone()
+                            
+                            if existing_cpf:
+                                errors.append(f"Linha {index + 2}: CPF {cpf} já existe")
+                                continue
+                            
+                            # Insert new employee
+                            db.execute(text("""
+                                INSERT INTO employees (unique_id, name, cpf, phone, email, department, position, is_active, created_by, created_at, updated_at)
+                                VALUES (:unique_id, :name, :cpf, :phone, :email, :department, :position, true, 3, NOW(), NOW())
+                            """), {
+                                "unique_id": unique_id,
+                                "name": full_name,
+                                "cpf": cpf,
+                                "phone": phone_number,
+                                "email": email,
+                                "department": department,
+                                "position": position
+                            })
+                            
+                            imported += 1
+                            
+                        except Exception as row_error:
+                            errors.append(f"Linha {index + 2}: {str(row_error)}")
+                    
+                    db.commit()
+                    
+                    # Reload global data
+                    global employees_data
+                    employees_data = load_employees_data()
+                    
+                finally:
+                    db.close()
+            
+            else:
+                return {
+                    "error": "PostgreSQL não disponível",
+                    "imported": 0,
+                    "errors": []
+                }
+            
+            return {
+                "message": f"Importação concluída: {imported} funcionários importados",
+                "imported": imported,
+                "errors": errors
+            }
+            
+        except Exception as e:
+            print(f"❌ Erro ao processar Excel: {e}")
+            return {
+                "error": f"Erro ao processar arquivo Excel: {str(e)}",
+                "imported": 0,
+                "errors": []
+            }
+
+    def handle_bulk_delete_employees(self):
+        """Handle bulk deletion of employees"""
+        try:
+            data = self.get_request_data()
+            employee_ids = data.get('employee_ids', [])
+            
+            if not employee_ids:
+                self.send_json_response({"error": "Nenhum funcionário selecionado"}, 400)
+                return
+            
+            if not isinstance(employee_ids, list):
+                self.send_json_response({"error": "employee_ids deve ser uma lista"}, 400)
+                return
+            
+            if SessionLocal:
+                from sqlalchemy import text
+                db = SessionLocal()
+                
+                try:
+                    # Soft delete (marcar como inativo)
+                    placeholders = ','.join([':id' + str(i) for i in range(len(employee_ids))])
+                    params = {f'id{i}': emp_id for i, emp_id in enumerate(employee_ids)}
+                    
+                    result = db.execute(text(f"""
+                        UPDATE employees 
+                        SET is_active = false, updated_at = NOW()
+                        WHERE id IN ({placeholders}) AND is_active = true
+                    """), params)
+                    
+                    deleted_count = result.rowcount
+                    db.commit()
+                    db.close()
+                    
+                    # Recarregar dados globais
+                    global employees_data
+                    employees_data = load_employees_data()
+                    
+                    self.send_json_response({
+                        "message": f"{deleted_count} funcionários removidos com sucesso",
+                        "deleted_count": deleted_count
+                    }, 200)
+                    print(f"✅ {deleted_count} funcionários marcados como inativos em lote!")
+                    
+                except Exception as e:
+                    db.rollback()
+                    db.close()
+                    raise e
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao deletar funcionários em lote: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_bulk_update_employees(self):
+        """Handle bulk update of employees"""
+        try:
+            data = self.get_request_data()
+            employee_ids = data.get('employee_ids', [])
+            updates = data.get('updates', {})
+            
+            if not employee_ids:
+                self.send_json_response({"error": "Nenhum funcionário selecionado"}, 400)
+                return
+            
+            if not isinstance(employee_ids, list):
+                self.send_json_response({"error": "employee_ids deve ser uma lista"}, 400)
+                return
+                
+            if not updates:
+                self.send_json_response({"error": "Nenhum campo para atualizar fornecido"}, 400)
+                return
+            
+            # Validar campos permitidos para atualização em lote
+            allowed_fields = ['department', 'position']
+            update_fields = []
+            params = {}
+            
+            for field, value in updates.items():
+                if field in allowed_fields and value.strip():
+                    update_fields.append(f"{field} = :{field}")
+                    params[field] = value.strip()
+            
+            if not update_fields:
+                self.send_json_response({"error": "Nenhum campo válido para atualizar"}, 400)
+                return
+            
+            if SessionLocal:
+                from sqlalchemy import text
+                db = SessionLocal()
+                
+                try:
+                    # Atualizar funcionários em lote
+                    placeholders = ','.join([':id' + str(i) for i in range(len(employee_ids))])
+                    id_params = {f'id{i}': emp_id for i, emp_id in enumerate(employee_ids)}
+                    params.update(id_params)
+                    params['updated_at'] = 'NOW()'
+                    
+                    set_clause = ', '.join(update_fields) + ', updated_at = NOW()'
+                    
+                    result = db.execute(text(f"""
+                        UPDATE employees 
+                        SET {set_clause}
+                        WHERE id IN ({placeholders}) AND is_active = true
+                    """), params)
+                    
+                    updated_count = result.rowcount
+                    db.commit()
+                    db.close()
+                    
+                    # Recarregar dados globais
+                    global employees_data
+                    employees_data = load_employees_data()
+                    
+                    self.send_json_response({
+                        "message": f"{updated_count} funcionários atualizados com sucesso",
+                        "updated_count": updated_count,
+                        "updates": updates
+                    }, 200)
+                    print(f"✅ {updated_count} funcionários atualizados em lote!")
+                    
+                except Exception as e:
+                    db.rollback()
+                    db.close()
+                    raise e
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao atualizar funcionários em lote: {e}")
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
 
 if __name__ == "__main__":

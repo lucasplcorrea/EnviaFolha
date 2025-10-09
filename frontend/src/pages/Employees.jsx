@@ -12,6 +12,15 @@ const Employees = () => {
   const [showImport, setShowImport] = useState(false);
   const [importing, setImporting] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState(null);
+  
+  // Estados para seleção múltipla
+  const [selectedEmployees, setSelectedEmployees] = useState([]);
+  const [showBulkEdit, setShowBulkEdit] = useState(false);
+  const [bulkEditData, setBulkEditData] = useState({
+    department: '',
+    position: ''
+  });
+  
   const [formData, setFormData] = useState({
     unique_id: '',
     full_name: '',
@@ -30,10 +39,16 @@ const Employees = () => {
       const response = await api.get('/employees');
       // Backend retorna { employees: [...], total: number, source: string }
       setEmployees(response.data.employees || []);
+      
+      // Limpar seleções inválidas quando os funcionários são recarregados
+      const currentEmployeeIds = response.data.employees?.map(emp => emp.id) || [];
+      setSelectedEmployees(prev => prev.filter(id => currentEmployeeIds.includes(id)));
+      
     } catch (error) {
       console.error('Erro ao carregar colaboradores:', error);
       toast.error('Erro ao carregar colaboradores');
       setEmployees([]); // Garantir que employees seja sempre um array
+      setSelectedEmployees([]); // Limpar seleções em caso de erro
     } finally {
       setLoading(false);
     }
@@ -152,6 +167,99 @@ const Employees = () => {
     }
   };
 
+  // Funções para seleção múltipla
+  const handleSelectEmployee = (employeeId, checked) => {
+    if (checked) {
+      setSelectedEmployees(prev => [...prev, employeeId]);
+    } else {
+      setSelectedEmployees(prev => prev.filter(id => id !== employeeId));
+    }
+  };
+
+  const handleSelectAll = (checked) => {
+    if (checked) {
+      setSelectedEmployees(employees.map(emp => emp.id));
+    } else {
+      setSelectedEmployees([]);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedEmployees.length === 0) return;
+    
+    if (!window.confirm(`Tem certeza que deseja remover ${selectedEmployees.length} colaboradores selecionados?`)) {
+      return;
+    }
+
+    try {
+      await api.delete('/employees/bulk', {
+        data: { employee_ids: selectedEmployees }
+      });
+      
+      toast.success(`${selectedEmployees.length} colaboradores removidos com sucesso!`);
+      setSelectedEmployees([]);
+      loadEmployees();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Erro ao remover colaboradores');
+    }
+  };
+
+  const handleBulkEdit = async () => {
+    console.log('handleBulkEdit chamado!');
+    console.log('selectedEmployees:', selectedEmployees);
+    console.log('bulkEditData:', bulkEditData);
+    
+    if (selectedEmployees.length === 0) {
+      console.log('Nenhum funcionário selecionado');
+      toast.error('Selecione pelo menos um funcionário para editar');
+      return;
+    }
+    
+    try {
+      const updateData = {};
+      if (bulkEditData.department && bulkEditData.department.trim()) {
+        updateData.department = bulkEditData.department.trim();
+      }
+      if (bulkEditData.position && bulkEditData.position.trim()) {
+        updateData.position = bulkEditData.position.trim();
+      }
+      
+      console.log('updateData preparado:', updateData);
+      
+      if (Object.keys(updateData).length === 0) {
+        toast.error('Selecione pelo menos um campo para atualizar');
+        return;
+      }
+
+      console.log('Enviando bulk edit:', {
+        employee_ids: selectedEmployees,
+        updates: updateData
+      });
+
+      const response = await api.patch('/employees/bulk', {
+        employee_ids: selectedEmployees,
+        updates: updateData
+      });
+      
+      console.log('Resposta do bulk edit:', response.data);
+      
+      const updated_count = response.data.updated_count || 0;
+      if (updated_count > 0) {
+        toast.success(`${updated_count} colaboradores atualizados com sucesso!`);
+      } else {
+        toast.warning('Nenhum colaborador foi atualizado. Verifique se os funcionários selecionados ainda existem.');
+      }
+      
+      setSelectedEmployees([]);
+      setShowBulkEdit(false);
+      setBulkEditData({ department: '', position: '' });
+      loadEmployees();
+    } catch (error) {
+      console.error('Erro no bulk edit:', error);
+      toast.error(error.response?.data?.detail || error.response?.data?.error || 'Erro ao atualizar colaboradores');
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -193,6 +301,39 @@ const Employees = () => {
         </div>
       </div>
 
+      {/* Barra de ações em lote */}
+      {selectedEmployees.length > 0 && (
+        <div className={`${config.classes.card} shadow rounded-lg p-4 mb-6 ${config.classes.border}`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <span className={`text-sm font-medium ${config.classes.text}`}>
+                {selectedEmployees.length} colaborador(es) selecionado(s)
+              </span>
+              <button
+                onClick={() => setSelectedEmployees([])}
+                className="text-sm text-gray-500 hover:text-gray-700"
+              >
+                Limpar seleção
+              </button>
+            </div>
+            <div className="flex space-x-3">
+              <button
+                onClick={() => setShowBulkEdit(true)}
+                className="inline-flex items-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              >
+                Editar em Lote
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                className="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+              >
+                Excluir Selecionados
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal de Importação */}
       {showImport && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
@@ -209,6 +350,7 @@ const Employees = () => {
                 <ul className={`text-xs ${config.classes.textSecondary} list-disc list-inside mb-4`}>
                   <li><strong>unique_id</strong> - ID único do colaborador</li>
                   <li><strong>full_name</strong> - Nome completo</li>
+                  <li><strong>cpf</strong> - CPF do colaborador (obrigatório)</li>
                   <li><strong>phone_number</strong> - Telefone</li>
                   <li><em>email</em> - Email (opcional)</li>
                   <li><em>department</em> - Departamento (opcional)</li>
@@ -238,6 +380,65 @@ const Employees = () => {
                   className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-500"
                 >
                   Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Edição em Lote */}
+      {showBulkEdit && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+          <div className={`relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md ${config.classes.card} ${config.classes.border}`}>
+            <div className="mt-3">
+              <h3 className={`text-lg font-medium ${config.classes.text} mb-4`}>
+                Editar {selectedEmployees.length} Colaborador(es)
+              </h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Departamento
+                  </label>
+                  <input
+                    type="text"
+                    value={bulkEditData.department}
+                    onChange={(e) => setBulkEditData({...bulkEditData, department: e.target.value})}
+                    placeholder="Deixe em branco para não alterar"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Cargo
+                  </label>
+                  <input
+                    type="text"
+                    value={bulkEditData.position}
+                    onChange={(e) => setBulkEditData({...bulkEditData, position: e.target.value})}
+                    placeholder="Deixe em branco para não alterar"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+              
+              <div className="flex justify-end mt-6 space-x-3">
+                <button
+                  onClick={() => {
+                    setShowBulkEdit(false);
+                    setBulkEditData({ department: '', position: '' });
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-500"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleBulkEdit}
+                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  Atualizar
                 </button>
               </div>
             </div>
@@ -354,6 +555,14 @@ const Employees = () => {
               <thead className={config.classes.tableHeader}>
                 <tr>
                   <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
+                    <input
+                      type="checkbox"
+                      checked={employees.length > 0 && selectedEmployees.length === employees.length}
+                      onChange={(e) => handleSelectAll(e.target.checked)}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                  </th>
+                  <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
                     ID
                   </th>
                   <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
@@ -373,6 +582,14 @@ const Employees = () => {
               <tbody className={`${config.classes.card} divide-y ${config.classes.border}`}>
                 {employees.map((employee) => (
                   <tr key={employee.id}>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={selectedEmployees.includes(employee.id)}
+                        onChange={(e) => handleSelectEmployee(employee.id, e.target.checked)}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                       {employee.unique_id}
                     </td>
