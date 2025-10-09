@@ -28,9 +28,12 @@ const Employees = () => {
   const loadEmployees = async () => {
     try {
       const response = await api.get('/employees');
-      setEmployees(response.data);
+      // Backend retorna { employees: [...], total: number, source: string }
+      setEmployees(response.data.employees || []);
     } catch (error) {
+      console.error('Erro ao carregar colaboradores:', error);
       toast.error('Erro ao carregar colaboradores');
+      setEmployees([]); // Garantir que employees seja sempre um array
     } finally {
       setLoading(false);
     }

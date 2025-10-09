@@ -266,6 +266,21 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         except:
             return {}
     
+    def send_error(self, code, message=None):
+        """Send error response with CORS headers"""
+        self.send_response(code)
+        self.send_cors_headers()
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        
+        error_response = {
+            "error": message or "Erro interno do servidor",
+            "code": code
+        }
+        
+        response = json.dumps(error_response, ensure_ascii=False)
+        self.wfile.write(response.encode('utf-8'))
+    
     def do_GET(self):
         parsed_path = urllib.parse.urlparse(self.path)
         path = parsed_path.path
@@ -276,6 +291,14 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_health_check()
         elif path == '/api/v1/employees':
             self.send_employees_list()
+        elif path == '/api/v1/auth/me':
+            self.handle_auth_me()
+        elif path == '/api/v1/dashboard/stats':
+            self.handle_dashboard_stats()
+        elif path == '/api/v1/evolution/status':
+            self.handle_evolution_status()
+        elif path == '/api/v1/payrolls/processed':
+            self.handle_payrolls_processed()
         elif path.startswith('/api/v1/employees/'):
             employee_id = path.split('/')[-1]
             self.send_employee_detail(employee_id)
@@ -414,6 +437,73 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
         except Exception as e:
             self.send_json_response({"error": f"Erro ao buscar funcionário: {str(e)}"}, 500)
+    
+    def handle_auth_me(self):
+        """Endpoint para verificar usuário autenticado"""
+        # Simular verificação de token - em produção, validar o token JWT
+        auth_header = self.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            self.send_json_response({"detail": "Token de acesso necessário"}, 401)
+            return
+        
+        # Retornar dados do usuário (simulado)
+        user_data = {
+            "id": 1,
+            "username": "admin",
+            "full_name": "Administrador",
+            "email": "admin@empresa.com",
+            "is_admin": True
+        }
+        self.send_json_response(user_data)
+    
+    def handle_dashboard_stats(self):
+        """Estatísticas do dashboard"""
+        try:
+            current_data = load_employees_data()
+            employees_count = len(current_data.get('employees', []))
+            
+            stats = {
+                "total_employees": employees_count,
+                "active_employees": employees_count,  # Assumindo todos ativos
+                "payrolls_sent_this_month": 0,  # TODO: implementar contagem real
+                "communications_sent_this_month": 0,  # TODO: implementar contagem real
+                "last_payroll_send": None,  # TODO: implementar data real
+                "evolution_api_status": "connected"  # TODO: verificar status real
+            }
+            
+            self.send_json_response(stats)
+            
+        except Exception as e:
+            self.send_json_response({"error": f"Erro ao carregar estatísticas: {str(e)}"}, 500)
+    
+    def handle_evolution_status(self):
+        """Status da Evolution API"""
+        # TODO: Implementar verificação real da Evolution API
+        status = {
+            "status": "connected",
+            "instance_name": os.getenv('EVOLUTION_INSTANCE_NAME', 'API-Abecker'),
+            "server_url": os.getenv('EVOLUTION_SERVER_URL', 'http://192.168.230.253:8080/'),
+            "last_check": datetime.now().isoformat(),
+            "message": "Simulado - verificação real da API não implementada"
+        }
+        
+        self.send_json_response(status)
+    
+    def handle_payrolls_processed(self):
+        """Lista de holerites processados"""
+        try:
+            # TODO: Implementar listagem real de holerites processados
+            # Por enquanto, retornar lista vazia
+            payrolls = {
+                "payrolls": [],
+                "total": 0,
+                "message": "Nenhum holerite processado encontrado"
+            }
+            
+            self.send_json_response(payrolls)
+            
+        except Exception as e:
+            self.send_json_response({"error": f"Erro ao carregar holerites: {str(e)}"}, 500)
 
 if __name__ == "__main__":
     PORT = int(os.getenv('PORT', 8003))  # Usar porta diferente para evitar conflito
