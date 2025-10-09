@@ -1,140 +1,89 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Sistema de Envio RH - Inicializador do Projeto (PostgreSQL)
+"""
+
 import subprocess
 import sys
 import os
 import time
-import webbrowser
 from pathlib import Path
 
-def check_requirements():
-    """Verifica se Python e Node.js estão instalados"""
-    print("🔍 Verificando pré-requisitos...")
-    
-    # Verificar Python
+def run_command(command, cwd=None, background=False):
+    """Executa comando no terminal"""
     try:
-        python_version = subprocess.check_output([sys.executable, "--version"], text=True).strip()
-        print(f"✅ {python_version}")
-    except:
-        print("❌ Python não encontrado!")
+        if background:
+            if sys.platform == "win32":
+                subprocess.Popen(command, shell=True, cwd=cwd, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            else:
+                subprocess.Popen(command, shell=True, cwd=cwd)
+        else:
+            result = subprocess.run(command, shell=True, cwd=cwd, capture_output=True, text=True)
+            return result.returncode == 0
+    except Exception as e:
+        print(f"Erro ao executar comando: {e}")
         return False
-    
-    # Verificar Node.js
-    try:
-        node_version = subprocess.check_output(["node", "--version"], text=True).strip()
-        print(f"✅ Node.js {node_version}")
-    except:
-        print("❌ Node.js não encontrado!")
-        print("💡 Instale Node.js em: https://nodejs.org/")
-        return False
-    
-    # Verificar npm
-    try:
-        npm_version = subprocess.check_output(["npm", "--version"], text=True).strip()
-        print(f"✅ npm {npm_version}")
-    except:
-        print("❌ npm não encontrado!")
-        return False
-    
-    return True
-
-def start_backend():
-    """Inicia o servidor backend"""
-    print("\n🔧 Iniciando Backend...")
-    
-    backend_dir = Path("backend")
-    if not backend_dir.exists():
-        print("❌ Pasta backend não encontrada!")
-        return None
-    
-    os.chdir(backend_dir)
-    
-    # Instalar dependências Python se necessário
-    if not Path(".venv").exists():
-        print("📦 Instalando dependências Python...")
-        subprocess.run([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
-    
-    # Iniciar servidor
-    print("🚀 Iniciando servidor API...")
-    backend_process = subprocess.Popen([
-        sys.executable, "run_server.py"
-    ])
-    
-    os.chdir("..")
-    return backend_process
-
-def start_frontend():
-    """Inicia o servidor frontend"""
-    print("\n🎨 Iniciando Frontend...")
-    
-    frontend_dir = Path("frontend")
-    if not frontend_dir.exists():
-        print("❌ Pasta frontend não encontrada!")
-        return None
-    
-    os.chdir(frontend_dir)
-    
-    # Instalar dependências Node.js se necessário
-    if not Path("node_modules").exists():
-        print("📦 Instalando dependências Node.js...")
-        subprocess.run(["npm", "install"])
-    
-    # Iniciar servidor
-    print("🚀 Iniciando interface web...")
-    frontend_process = subprocess.Popen([
-        "npm", "start"
-    ])
-    
-    os.chdir("..")
-    return frontend_process
 
 def main():
-    print("🚀 Sistema de Envio RH v2.0")
-    print("=" * 40)
+    print("🚀 Sistema de Envio RH v2.0 - PostgreSQL Edition")
+    print("=" * 60)
     
-    if not check_requirements():
-        print("\n❌ Pré-requisitos não atendidos!")
+    project_root = Path(__file__).parent
+    backend_path = project_root / "backend"
+    frontend_path = project_root / "frontend"
+    
+    # Verificar se os diretórios existem
+    if not backend_path.exists():
+        print("❌ Diretório backend não encontrado!")
         return
     
-    try:
-        # Iniciar backend
-        backend_process = start_backend()
-        if not backend_process:
-            print("❌ Falha ao iniciar backend!")
-            return
-        
-        print("⏳ Aguardando backend inicializar...")
-        time.sleep(5)
-        
-        # Iniciar frontend  
-        frontend_process = start_frontend()
-        if not frontend_process:
-            print("❌ Falha ao iniciar frontend!")
-            backend_process.terminate()
-            return
-        
-        print("⏳ Aguardando frontend inicializar...")
-        time.sleep(10)
-        
-        # Abrir navegador
-        print("\n✅ Sistema iniciado com sucesso!")
-        print("🌐 Backend: http://localhost:8000")
-        print("🌐 Frontend: http://localhost:3000")
-        print("📚 Docs: http://localhost:8000/docs")
-        print("\n🔑 Credenciais: admin / admin123")
-        print("\n🛑 Para parar: Ctrl+C")
-        
-        webbrowser.open("http://localhost:3000")
-        
-        # Aguardar interrupção
-        try:
-            backend_process.wait()
-        except KeyboardInterrupt:
-            print("\n🛑 Parando serviços...")
-            backend_process.terminate()
-            frontend_process.terminate()
-            print("✅ Serviços parados!")
+    if not frontend_path.exists():
+        print("❌ Diretório frontend não encontrado!")
+        return
     
-    except Exception as e:
-        print(f"❌ Erro: {e}")
+    print("📁 Diretórios encontrados:")
+    print(f"   Backend: {backend_path}")
+    print(f"   Frontend: {frontend_path}")
+    print()
+    
+    # Verificar dependências Python
+    print("🐍 Verificando ambiente Python...")
+    if not run_command("python --version"):
+        print("❌ Python não encontrado! Instale Python 3.11+")
+        return
+    
+    # Verificar Node.js
+    print("📦 Verificando Node.js...")
+    if not run_command("node --version"):
+        print("❌ Node.js não encontrado! Instale Node.js 16+")
+        return
+    
+    print("✅ Dependências básicas verificadas!")
+    print()
+    
+    # Iniciar backend
+    print("🔧 Iniciando backend PostgreSQL...")
+    backend_command = "python main.py"
+    run_command(backend_command, cwd=backend_path, background=True)
+    
+    # Aguardar backend inicializar
+    print("⏳ Aguardando backend inicializar...")
+    time.sleep(3)
+    
+    # Iniciar frontend
+    print("🎨 Iniciando frontend React...")
+    frontend_command = "npm start"
+    run_command(frontend_command, cwd=frontend_path, background=True)
+    
+    print()
+    print("✅ Projeto iniciado com sucesso!")
+    print("=" * 60)
+    print("🌐 Frontend: http://localhost:3000")
+    print("🔧 Backend: http://localhost:8002")
+    print("📊 API Docs: http://localhost:8002/docs")
+    print("=" * 60)
+    print("💡 Pressione Ctrl+C nos terminais para parar os serviços")
 
 if __name__ == "__main__":
     main()

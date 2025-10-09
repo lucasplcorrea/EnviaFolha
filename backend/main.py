@@ -150,13 +150,25 @@ def load_employees_data():
         print(f"❌ Erro ao carregar employees.json: {e}")
         return {"employees": [], "users": []}
 
-def save_employee_to_db(employee_data):
+def save_employee_to_db(employee_data, created_by_user_id=3):
     """Salva funcionário no PostgreSQL ou JSON como fallback"""
     if SessionLocal:
         try:
-            from app.models import Employee
+            from app.models import Employee, User
             
             db = SessionLocal()
+            
+            # Verificar se o usuário existe
+            user_exists = db.query(User).filter(User.id == created_by_user_id).first()
+            if not user_exists:
+                # Se não existe, buscar o primeiro usuário disponível
+                first_user = db.query(User).first()
+                if first_user:
+                    created_by_user_id = first_user.id
+                else:
+                    db.close()
+                    print("❌ Nenhum usuário encontrado no banco para created_by")
+                    return False
             
             # Verificar se funcionário já existe
             existing = db.query(Employee).filter(
@@ -182,7 +194,7 @@ def save_employee_to_db(employee_data):
                     department=employee_data.get('department'),
                     position=employee_data.get('position'),
                     is_active=employee_data.get('is_active', True),
-                    created_by=1
+                    created_by=created_by_user_id
                 )
                 db.add(new_employee)
             
@@ -312,6 +324,30 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         
         if path == '/api/v1/auth/login':
             self.handle_login()
+        elif path == '/api/v1/employees':
+            self.handle_create_employee()
+        else:
+            self.send_json_response({"error": "Endpoint não encontrado"}, 404)
+    
+    def do_PUT(self):
+        """Handle PUT requests"""
+        path = urllib.parse.urlparse(self.path).path
+        print(f"🔄 PUT recebido: {path}")
+        
+        if path.startswith('/api/v1/employees/'):
+            employee_id = path.split('/')[-1]
+            self.handle_update_employee(employee_id)
+        else:
+            self.send_json_response({"error": "Endpoint não encontrado"}, 404)
+    
+    def do_DELETE(self):
+        """Handle DELETE requests"""
+        path = urllib.parse.urlparse(self.path).path
+        print(f"🗑️ DELETE recebido: {path}")
+        
+        if path.startswith('/api/v1/employees/'):
+            employee_id = path.split('/')[-1]
+            self.handle_delete_employee(employee_id)
         else:
             self.send_json_response({"error": "Endpoint não encontrado"}, 404)
     
@@ -504,9 +540,183 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             
         except Exception as e:
             self.send_json_response({"error": f"Erro ao carregar holerites: {str(e)}"}, 500)
+    
+    def handle_create_employee(self):
+        """Criar novo funcionário"""
+        try:
+            data = self.get_request_data()
+            print(f"📝 Criando funcionário: {data}")
+            
+            # Validar dados obrigatórios
+            required_fields = ['unique_id', 'full_name', 'phone_number']
+            for field in required_fields:
+                if not data.get(field):
+                    self.send_json_response({"error": f"Campo obrigatório: {field}"}, 400)
+                    return
+            
+            # Verificar se unique_id já existe
+            current_data = load_employees_data()
+            existing_employees = current_data.get('employees', [])
+            
+            for emp in existing_employees:
+                if emp.get('unique_id') == data.get('unique_id'):
+                    self.send_json_response({"error": f"ID único {data.get('unique_id')} já existe"}, 400)
+                    return
+            
+            # Preparar dados do funcionário
+            employee_data = {
+                "unique_id": data.get('unique_id'),
+                "full_name": data.get('full_name'),
+                "phone_number": data.get('phone_number'),
+                "email": data.get('email', ''),
+                "department": data.get('department', ''),
+                "position": data.get('position', ''),
+                "is_active": True
+            }
+            
+            # Salvar no banco
+            if save_employee_to_db(employee_data):
+                # Recarregar dados para obter o ID gerado
+                global employees_data
+                employees_data = load_employees_data()
+                
+                # Encontrar o funcionário recém-criado
+                for emp in employees_data.get('employees', []):
+                    if emp.get('unique_id') == employee_data.get('unique_id'):
+                        employee_data = emp
+                        break
+                
+                self.send_json_response(employee_data, 201)
+                print(f"✅ Funcionário {employee_data.get('full_name')} criado com sucesso!")
+            else:
+                self.send_json_response({"error": "Erro ao salvar funcionário"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao criar funcionário: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_update_employee(self, employee_id):
+        """Atualizar funcionário existente"""
+        try:
+            data = self.get_request_data()
+            print(f"🔄 Atualizando funcionário ID {employee_id}: {data}")
+            
+            # Buscar funcionário no PostgreSQL
+            if SessionLocal:
+                from app.models import Employee
+                
+                db = SessionLocal()
+                
+                # Buscar por ID ou unique_id
+                employee = db.query(Employee).filter(
+                    (Employee.id == employee_id) | (Employee.unique_id == employee_id)
+                ).first()
+                
+                if not employee:
+                    db.close()
+                    self.send_json_response({"error": "Funcionário não encontrado"}, 404)
+                    return
+                
+                # Verificar se unique_id já existe em outro funcionário
+                if data.get('unique_id') and data.get('unique_id') != employee.unique_id:
+                    existing = db.query(Employee).filter(
+                        Employee.unique_id == data.get('unique_id'),
+                        Employee.id != employee.id
+                    ).first()
+                    
+                    if existing:
+                        db.close()
+                        self.send_json_response({"error": f"ID único {data.get('unique_id')} já existe"}, 400)
+                        return
+                
+                # Atualizar campos
+                if 'unique_id' in data:
+                    employee.unique_id = data['unique_id']
+                if 'full_name' in data:
+                    employee.name = data['full_name']
+                if 'phone_number' in data:
+                    employee.phone = data['phone_number']
+                if 'email' in data:
+                    employee.email = data['email']
+                if 'department' in data:
+                    employee.department = data['department']
+                if 'position' in data:
+                    employee.position = data['position']
+                if 'is_active' in data:
+                    employee.is_active = data['is_active']
+                
+                db.commit()
+                
+                # Preparar resposta
+                updated_employee = {
+                    "id": employee.id,
+                    "unique_id": employee.unique_id,
+                    "full_name": employee.name,
+                    "phone_number": employee.phone,
+                    "email": employee.email or "",
+                    "department": employee.department or "",
+                    "position": employee.position or "",
+                    "is_active": employee.is_active
+                }
+                
+                db.close()
+                
+                # Recarregar dados globais
+                global employees_data
+                employees_data = load_employees_data()
+                
+                self.send_json_response(updated_employee, 200)
+                print(f"✅ Funcionário {updated_employee.get('full_name')} atualizado com sucesso!")
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao atualizar funcionário: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_delete_employee(self, employee_id):
+        """Deletar funcionário (soft delete)"""
+        try:
+            print(f"🗑️ Deletando funcionário ID {employee_id}")
+            
+            # Buscar e deletar do PostgreSQL
+            if SessionLocal:
+                from app.models import Employee
+                
+                db = SessionLocal()
+                
+                # Buscar por ID ou unique_id
+                employee = db.query(Employee).filter(
+                    (Employee.id == employee_id) | (Employee.unique_id == employee_id)
+                ).first()
+                
+                if not employee:
+                    db.close()
+                    self.send_json_response({"error": "Funcionário não encontrado"}, 404)
+                    return
+                
+                # Soft delete (marcar como inativo)
+                employee.is_active = False
+                db.commit()
+                
+                employee_name = employee.name
+                db.close()
+                
+                # Recarregar dados globais
+                global employees_data
+                employees_data = load_employees_data()
+                
+                self.send_json_response({"message": f"Funcionário {employee_name} removido com sucesso"}, 200)
+                print(f"✅ Funcionário {employee_name} marcado como inativo!")
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao deletar funcionário: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
 
 if __name__ == "__main__":
-    PORT = int(os.getenv('PORT', 8003))  # Usar porta diferente para evitar conflito
+    PORT = int(os.getenv('PORT', 8002))  # Usar porta 8002 como padrão
     
     print("=" * 60)
     print("🚀 Sistema de Envio RH v2.0 - PostgreSQL Edition (Corrigido)")

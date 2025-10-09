@@ -1,17 +1,17 @@
-# 🚀 Sistema de Envio RH v2.0
+# 🚀 Sistema de Envio RH v2.0 - PostgreSQL Edition
 
-Sistema completo para envio automatizado de holerites e comunicados via WhatsApp usando Evolution API.
+Sistema completo para envio automatizado de holerites e comunicados via WhatsApp usando Evolution API com banco PostgreSQL.
 
 ## ✨ Funcionalidades
 
 ### 🔐 **Autenticação e Segurança**
-- Login JWT com controle de sessão
+- Login JWT com PostgreSQL backend
 - Controle de acesso por usuário
 - Logs de auditoria completos
 - Sistema de permissões (admin/usuário)
 
 ### 👥 **Gestão de Colaboradores**
-- Cadastro unificado de colaboradores
+- Cadastro unificado no PostgreSQL
 - Validação internacional de telefones
 - Importação via planilha Excel
 - Verificação de WhatsApp disponível
@@ -20,13 +20,13 @@ Sistema completo para envio automatizado de holerites e comunicados via WhatsApp
 - Upload e segmentação automática de PDFs
 - Proteção com senha (4 primeiros dígitos do CPF)
 - **Mensagem única otimizada** (redução de 50% no tempo)
-- Movimentação automática de arquivos enviados
+- Histórico completo no banco de dados
 
 ### 📢 **Envio de Comunicados**
 - Suporte a múltiplos formatos (PDF, imagens)
 - Seleção flexível de destinatários
 - Templates de mensagem personalizáveis
-- Agendamento de envios
+- Rastreamento no PostgreSQL
 
 ### 📊 **Dashboard e Analytics**
 - Gráficos de performance em tempo real
@@ -34,11 +34,12 @@ Sistema completo para envio automatizado de holerites e comunicados via WhatsApp
 - Histórico completo de envios
 - Estatísticas por departamento
 
-## 🏗️ Arquitetura v2.0
+## 🏗️ Arquitetura v2.0 - PostgreSQL
 
 ### **Stack Tecnológica**
 - **Frontend**: React + Tailwind CSS + React Router
-- **Backend**: FastAPI + Python 3.13 + JSON Database
+- **Backend**: FastAPI + Python 3.13 + PostgreSQL
+- **Database**: PostgreSQL 16.10+
 - **API WhatsApp**: Evolution API v2.2.2+
 - **Autenticação**: JWT (JSON Web Tokens)
 
@@ -47,7 +48,14 @@ Sistema completo para envio automatizado de holerites e comunicados via WhatsApp
 /enviafolha
 │
 ├── /backend
-│   ├── main.py               # Ponto de entrada da API FastAPI
+│   ├── main.py               # Servidor principal PostgreSQL
+│   ├── /app                  # Aplicação FastAPI
+│   │   ├── /models          # Modelos SQLAlchemy
+│   │   ├── /schemas         # Schemas Pydantic
+│   │   ├── /services        # Serviços de negócio
+│   │   └── /core            # Configurações e auth
+│   ├── /migrations          # Migrações Alembic
+│   └── requirements.txt     # Dependências Python
 │   ├── models.py             # Modelos de dados e validações
 │   ├── routes.py             # Definição das rotas da API
 │   ├── services.py           # Lógica de negócio e integração com Evolution API
