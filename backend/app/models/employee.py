@@ -23,8 +23,9 @@ class Employee(Base, TimestampMixin):
     # Relacionamentos
     creator = relationship("User", foreign_keys=[created_by], back_populates="created_employees")
     updater = relationship("User", foreign_keys=[updated_by], back_populates="updated_employees")
-    payroll_sends = relationship("PayrollSend", back_populates="employee")
-    communication_recipients = relationship("CommunicationRecipient", back_populates="employee")
+    # payroll_sends = relationship("PayrollSend", back_populates="employee")
+    # communication_recipients = relationship("CommunicationRecipient", back_populates="employee")
+    payroll_data = relationship("PayrollData", back_populates="employee")
     
     def __repr__(self):
         return f"<Employee(unique_id='{self.unique_id}', name='{self.name}')>"

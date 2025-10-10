@@ -13,6 +13,8 @@ import PayrollSender from './pages/PayrollSender.jsx';
 import CommunicationSender from './pages/CommunicationSender.jsx';
 import Settings from './pages/Settings.jsx';
 import Reports from './pages/Reports.jsx';
+import UserManagement from './pages/UserManagement.jsx';
+import PayrollDataProcessor from './pages/PayrollDataProcessor.jsx';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -62,6 +64,7 @@ function AppContent() {
                     <Route path="/communications" element={<CommunicationSender />} />
                     <Route path="/reports" element={<Reports />} />
                     <Route path="/settings" element={<Settings />} />
+                    <Route path="/payroll-data" element={<PayrollDataProcessor />} />
                   </Routes>
                 </Layout>
               </ProtectedRoute>

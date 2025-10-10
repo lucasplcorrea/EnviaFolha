@@ -68,6 +68,23 @@ def load_env_file():
 env_vars = load_env_file()
 
 # Configuração do banco de dados PostgreSQL
+def check_database_health():
+    """Verifica se o banco de dados está online e acessível"""
+    try:
+        if not db_engine:
+            return {"status": "error", "message": "Engine do banco não inicializada"}
+        
+        # Importar SQLAlchemy text
+        from sqlalchemy import text
+        
+        # Testar conexão simples
+        with db_engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+            return {"status": "online", "message": "Banco de dados PostgreSQL está online"}
+            
+    except Exception as e:
+        return {"status": "offline", "message": f"Banco de dados offline: {str(e)}"}
+
 def setup_database():
     """Configura conexão com PostgreSQL e cria tabelas se necessário"""
     try:
@@ -86,6 +103,13 @@ def setup_database():
             result = connection.execute(text("SELECT version()"))
             version = result.fetchone()[0]
             print(f"✅ Conectado ao PostgreSQL: {version}")
+        
+        # Importar todos os modelos para garantir que estejam registrados
+        from app.models import Base, User, Employee, Permission, Role, RolePermission, PayrollPeriod, PayrollData, PayrollTemplate, PayrollProcessingLog
+        
+        # Criar tabelas se não existirem
+        Base.metadata.create_all(bind=engine)
+        print("✅ Tabelas do banco de dados verificadas/criadas")
         
         # Criar sessão
         SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -280,18 +304,40 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     
     def send_error(self, code, message=None):
         """Send error response with CORS headers"""
-        self.send_response(code)
-        self.send_cors_headers()
-        self.send_header('Content-Type', 'application/json')
-        self.end_headers()
-        
-        error_response = {
-            "error": message or "Erro interno do servidor",
-            "code": code
-        }
-        
-        response = json.dumps(error_response, ensure_ascii=False)
-        self.wfile.write(response.encode('utf-8'))
+        try:
+            self.send_response(code)
+            self.send_cors_headers()
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            
+            error_response = {
+                "error": message or "Erro interno do servidor",
+                "code": code
+            }
+            
+            response = json.dumps(error_response, ensure_ascii=False)
+            self.wfile.write(response.encode('utf-8'))
+        except (ConnectionAbortedError, BrokenPipeError):
+            # Cliente desconectou antes de receber a resposta
+            print("⚠️  Conexão abortada pelo cliente")
+        except Exception as e:
+            print(f"❌ Erro ao enviar resposta de erro: {e}")
+
+    def send_json_response(self, data, status_code=200):
+        """Send JSON response with CORS headers and error handling"""
+        try:
+            self.send_response(status_code)
+            self.send_cors_headers()
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.end_headers()
+            
+            response = json.dumps(data, ensure_ascii=False)
+            self.wfile.write(response.encode('utf-8'))
+        except (ConnectionAbortedError, BrokenPipeError):
+            # Cliente desconectou antes de receber a resposta
+            print("⚠️  Conexão abortada pelo cliente")
+        except Exception as e:
+            print(f"❌ Erro ao enviar resposta JSON: {e}")
     
     def do_GET(self):
         parsed_path = urllib.parse.urlparse(self.path)
@@ -301,6 +347,19 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_status_response()
         elif path == '/health':
             self.send_health_check()
+        elif path == '/api/v1/database/health':
+            self.send_database_health()
+        elif path == '/api/v1/users':
+            self.handle_users_list()
+        elif path == '/api/v1/users/permissions':
+            self.handle_available_permissions()
+        elif path == '/api/v1/payroll/periods':
+            self.handle_payroll_periods_list()
+        elif path == '/api/v1/payroll/templates':
+            self.handle_payroll_templates_list()
+        elif path.startswith('/api/v1/payroll/periods/'):
+            period_id = path.split('/')[-1]
+            self.handle_payroll_period_summary(period_id)
         elif path == '/api/v1/employees':
             self.send_employees_list()
         elif path == '/api/v1/auth/me':
@@ -309,6 +368,10 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_dashboard_stats()
         elif path == '/api/v1/evolution/status':
             self.handle_evolution_status()
+        elif path == '/api/v1/system/status':
+            self.handle_system_status()
+        elif path == '/api/v1/database/health':
+            self.handle_database_health()
         elif path == '/api/v1/payrolls/processed':
             self.handle_payrolls_processed()
         elif path.startswith('/api/v1/employees/'):
@@ -328,6 +391,16 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_create_employee()
         elif path == '/api/v1/employees/import':
             self.handle_import_employees()
+        elif path == '/api/v1/users':
+            self.handle_create_user()
+        elif path == '/api/v1/users/permissions':
+            self.handle_update_user_permissions()
+        elif path == '/api/v1/payroll/periods':
+            self.handle_create_payroll_period()
+        elif path == '/api/v1/payroll/templates':
+            self.handle_create_payroll_template()
+        elif path == '/api/v1/payroll/process':
+            self.handle_process_payroll_file()
         else:
             self.send_json_response({"error": "Endpoint não encontrado"}, 404)
     
@@ -339,12 +412,25 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         if path.startswith('/api/v1/employees/'):
             employee_id = path.split('/')[-1]
             self.handle_update_employee(employee_id)
+        elif path.startswith('/api/v1/users/'):
+            user_id = path.split('/')[-1]
+            self.handle_update_user(user_id)
         else:
             self.send_json_response({"error": "Endpoint não encontrado"}, 404)
     
     def do_DELETE(self):
         """Handle DELETE requests"""
         path = urllib.parse.urlparse(self.path).path
+        print(f"🗑️  DELETE recebido: {path}")
+        
+        if path.startswith('/api/v1/employees/'):
+            employee_id = path.split('/')[-1]
+            self.handle_delete_employee(employee_id)
+        elif path.startswith('/api/v1/users/'):
+            user_id = path.split('/')[-1]
+            self.handle_delete_user(user_id)
+        else:
+            self.send_json_response({"error": "Endpoint não encontrado"}, 404)
         print(f"🗑️ DELETE recebido: {path}")
         
         if path == '/api/v1/employees/bulk':
@@ -442,13 +528,50 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     
     def send_health_check(self):
         """Health check com status do banco"""
+        db_health = check_database_health()
+        
         health_status = {
-            "status": "healthy",
-            "database": "connected" if SessionLocal else "json_fallback",
+            "status": "healthy" if db_health["status"] == "online" else "degraded",
+            "database": {
+                "status": db_health["status"],
+                "message": db_health["message"],
+                "type": "PostgreSQL" if SessionLocal else "JSON Fallback"
+            },
             "timestamp": datetime.now().isoformat()
         }
         
-        self.send_json_response(health_status)
+        # Retornar status HTTP 503 se banco estiver offline
+        if db_health["status"] == "offline":
+            self.send_response(503)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_cors_headers()
+            self.end_headers()
+        else:
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_cors_headers()
+            self.end_headers()
+        
+        response = json.dumps(health_status, ensure_ascii=False)
+        self.wfile.write(response.encode('utf-8'))
+    
+    def send_database_health(self):
+        """Endpoint específico para verificar saúde do banco"""
+        try:
+            db_health = check_database_health()
+            
+            # Retornar status HTTP apropriado baseado na saúde do banco
+            if db_health["status"] == "online":
+                status_code = 200
+            elif db_health["status"] == "offline":
+                status_code = 503
+            else:
+                status_code = 500
+                
+            self.send_json_response(db_health, status_code)
+        except Exception as e:
+            print(f"❌ Erro ao verificar saúde do banco: {e}")
+            self.send_json_response({"error": "Erro interno ao verificar banco"}, 500)
     
     def send_employees_list(self):
         """Lista todos os funcionários"""
@@ -1048,8 +1171,489 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"❌ Erro ao atualizar funcionários em lote: {e}")
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_users_list(self):
+        """Lista todos os usuários do sistema"""
+        try:
+            if SessionLocal:
+                from app.services.user_management import UserManagementService
+                
+                db = SessionLocal()
+                user_service = UserManagementService(db)
+                
+                # Inicializar sistema de permissões se necessário
+                user_service.initialize_system()
+                
+                users = user_service.get_all_users()
+                db.close()
+                
+                self.send_json_response({
+                    "users": users,
+                    "total": len(users)
+                })
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao listar usuários: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_available_permissions(self):
+        """Lista todas as permissões disponíveis"""
+        try:
+            if SessionLocal:
+                from app.services.user_management import UserManagementService
+                
+                db = SessionLocal()
+                user_service = UserManagementService(db)
+                
+                # Inicializar sistema de permissões se necessário
+                user_service.initialize_system()
+                
+                permissions = user_service.get_available_permissions()
+                db.close()
+                
+                self.send_json_response({
+                    "permissions": permissions,
+                    "modules": list(permissions.keys())
+                })
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao listar permissões: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_create_user(self):
+        """Criar novo usuário"""
+        try:
+            data = self.get_request_data()
+            print(f"📝 Criando usuário: {data.get('username')}")
+            
+            if SessionLocal:
+                from app.services.user_management import UserManagementService
+                
+                db = SessionLocal()
+                user_service = UserManagementService(db)
+                
+                result = user_service.create_user(data)
+                db.close()
+                
+                if result["success"]:
+                    self.send_json_response(result, 201)
+                else:
+                    self.send_json_response(result, 400)
+                    
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao criar usuário: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_update_user_permissions(self):
+        """Atualizar permissões de usuário"""
+        try:
+            data = self.get_request_data()
+            user_id = data.get('user_id')
+            permissions = data.get('permissions', [])
+            
+            print(f"📝 Atualizando permissões do usuário {user_id}")
+            
+            if SessionLocal:
+                from app.services.user_management import UserManagementService
+                
+                db = SessionLocal()
+                user_service = UserManagementService(db)
+                
+                result = user_service.update_user_permissions(user_id, permissions)
+                db.close()
+                
+                if result["success"]:
+                    self.send_json_response(result, 200)
+                else:
+                    self.send_json_response(result, 400)
+                    
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao atualizar permissões: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_update_user(self, user_id):
+        """Atualizar dados de usuário"""
+        try:
+            data = self.get_request_data()
+            print(f"📝 Atualizando usuário {user_id}: {data}")
+            
+            if SessionLocal:
+                from app.services.user_management import UserManagementService
+                
+                db = SessionLocal()
+                user_service = UserManagementService(db)
+                
+                # Buscar usuário existente
+                user = user_service.get_user_by_id(int(user_id))
+                if not user:
+                    db.close()
+                    self.send_json_response({"error": "Usuário não encontrado"}, 404)
+                    return
+                
+                # Atualizar campos
+                update_data = {}
+                if 'username' in data:
+                    update_data['username'] = data['username']
+                if 'email' in data:
+                    update_data['email'] = data['email']
+                if 'password' in data and data['password']:
+                    from app.core.auth import get_password_hash
+                    update_data['password'] = get_password_hash(data['password'])
+                if 'is_active' in data:
+                    update_data['is_active'] = data['is_active']
+                
+                result = user_service.update_user(int(user_id), update_data)
+                db.close()
+                
+                if result["success"]:
+                    self.send_json_response(result, 200)
+                else:
+                    self.send_json_response(result, 400)
+                    
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao atualizar usuário: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_delete_user(self, user_id):
+        """Deletar usuário"""
+        try:
+            print(f"🗑️ Deletando usuário {user_id}")
+            
+            if SessionLocal:
+                from app.services.user_management import UserManagementService
+                
+                db = SessionLocal()
+                user_service = UserManagementService(db)
+                
+                # Verificar se usuário existe
+                user = user_service.get_user_by_id(int(user_id))
+                if not user:
+                    db.close()
+                    self.send_json_response({"error": "Usuário não encontrado"}, 404)
+                    return
+                
+                # Não permitir deletar o último admin
+                if user.username == 'admin':
+                    db.close()
+                    self.send_json_response({"error": "Não é possível deletar o usuário admin principal"}, 400)
+                    return
+                
+                result = user_service.delete_user(int(user_id))
+                db.close()
+                
+                if result["success"]:
+                    self.send_json_response(result, 200)
+                else:
+                    self.send_json_response(result, 400)
+                    
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao deletar usuário: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_payroll_periods_list(self):
+        """Lista períodos de folha de pagamento"""
+        try:
+            if SessionLocal:
+                from app.models.payroll import PayrollPeriod
+                
+                db = SessionLocal()
+                periods = db.query(PayrollPeriod).filter(PayrollPeriod.is_active == True).order_by(
+                    PayrollPeriod.year.desc(), PayrollPeriod.month.desc()
+                ).all()
+                
+                periods_data = []
+                for period in periods:
+                    periods_data.append({
+                        "id": period.id,
+                        "year": period.year,
+                        "month": period.month,
+                        "period_name": period.period_name,
+                        "description": period.description,
+                        "is_closed": period.is_closed,
+                        "created_at": period.created_at.isoformat() if hasattr(period, 'created_at') else None
+                    })
+                
+                db.close()
+                self.send_json_response({"periods": periods_data, "total": len(periods_data)})
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao listar períodos: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_payroll_templates_list(self):
+        """Lista templates de folha de pagamento"""
+        try:
+            if SessionLocal:
+                from app.models.payroll import PayrollTemplate
+                
+                db = SessionLocal()
+                templates = db.query(PayrollTemplate).filter(PayrollTemplate.is_active == True).all()
+                
+                templates_data = []
+                for template in templates:
+                    templates_data.append({
+                        "id": template.id,
+                        "name": template.name,
+                        "description": template.description,
+                        "column_mapping": template.column_mapping,
+                        "is_default": template.is_default,
+                        "created_at": template.created_at.isoformat() if hasattr(template, 'created_at') else None
+                    })
+                
+                db.close()
+                self.send_json_response({"templates": templates_data, "total": len(templates_data)})
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao listar templates: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_payroll_period_summary(self, period_id: str):
+        """Retorna resumo de um período de folha de pagamento"""
+        try:
+            if SessionLocal:
+                from app.services.payroll_processing import PayrollProcessingService
+                
+                db = SessionLocal()
+                payroll_service = PayrollProcessingService(db)
+                
+                result = payroll_service.get_payroll_summary(int(period_id))
+                db.close()
+                
+                if result["success"]:
+                    self.send_json_response(result)
+                else:
+                    self.send_json_response({"error": result["message"]}, 404)
+                    
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao obter resumo do período: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_create_payroll_period(self):
+        """Criar novo período de folha de pagamento"""
+        try:
+            data = self.get_request_data()
+            print(f"📝 Criando período: {data.get('period_name')}")
+            
+            if SessionLocal:
+                from app.services.payroll_processing import PayrollProcessingService
+                
+                db = SessionLocal()
+                payroll_service = PayrollProcessingService(db)
+                
+                result = payroll_service.create_period(
+                    year=data["year"],
+                    month=data["month"],
+                    period_name=data["period_name"],
+                    description=data.get("description")
+                )
+                db.close()
+                
+                if result["success"]:
+                    self.send_json_response(result, 201)
+                else:
+                    self.send_json_response(result, 400)
+                    
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao criar período: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_create_payroll_template(self):
+        """Criar novo template de folha de pagamento"""
+        try:
+            data = self.get_request_data()
+            print(f"📝 Criando template: {data.get('name')}")
+            
+            if SessionLocal:
+                from app.services.payroll_processing import PayrollProcessingService
+                
+                db = SessionLocal()
+                payroll_service = PayrollProcessingService(db)
+                
+                result = payroll_service.create_template(data)
+                db.close()
+                
+                if result["success"]:
+                    self.send_json_response(result, 201)
+                else:
+                    self.send_json_response(result, 400)
+                    
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao criar template: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_process_payroll_file(self):
+        """Processar arquivo de folha de pagamento"""
+        try:
+            # Este endpoint será implementado quando tivermos upload de arquivos
+            # Por enquanto, retornar não implementado
+            self.send_json_response({
+                "error": "Funcionalidade de upload não implementada ainda",
+                "message": "Use a interface de upload de arquivos"
+            }, 501)
+                
+        except Exception as e:
+            print(f"❌ Erro ao processar arquivo: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_system_status(self):
+        """Endpoint para status do sistema"""
+        try:
+            import time
+            uptime = time.time() - start_time if 'start_time' in globals() else 0
+            uptime_str = f"{int(uptime // 3600)}h {int((uptime % 3600) // 60)}m"
+            
+            self.send_json_response({
+                "status": "online",
+                "uptime": uptime_str,
+                "version": "2.0.0",
+                "database": "PostgreSQL" if SessionLocal else "JSON",
+                "timestamp": datetime.now().isoformat()
+            })
+        except Exception as e:
+            print(f"❌ Erro ao obter status do sistema: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_evolution_status(self):
+        """Endpoint para status da Evolution API"""
+        try:
+            # Verificar se as variáveis de ambiente estão configuradas
+            evolution_url = os.getenv('EVOLUTION_SERVER_URL')
+            evolution_key = os.getenv('EVOLUTION_API_KEY')
+            evolution_instance = os.getenv('EVOLUTION_INSTANCE_NAME')
+            
+            if not all([evolution_url, evolution_key, evolution_instance]):
+                self.send_json_response({
+                    "connected": False,
+                    "message": "Evolution API não configurada",
+                    "instance": evolution_instance or "N/A"
+                })
+                return
+            
+            # Tentar verificar conexão com a Evolution API
+            try:
+                import requests
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                
+                headers = {
+                    'apikey': evolution_key,
+                    'Content-Type': 'application/json'
+                }
+                
+                response = requests.get(
+                    f"{evolution_url}/instance/fetchInstances",
+                    headers=headers,
+                    timeout=5,
+                    verify=False
+                )
+                
+                if response.status_code == 200:
+                    self.send_json_response({
+                        "connected": True,
+                        "message": "Evolution API conectada",
+                        "instance": evolution_instance
+                    })
+                else:
+                    self.send_json_response({
+                        "connected": False,
+                        "message": f"Erro de conexão: {response.status_code}",
+                        "instance": evolution_instance
+                    })
+                    
+            except requests.exceptions.RequestException as e:
+                self.send_json_response({
+                    "connected": False,
+                    "message": f"Erro de rede: {str(e)}",
+                    "instance": evolution_instance
+                })
+                
+        except Exception as e:
+            print(f"❌ Erro ao verificar Evolution API: {e}")
+            self.send_json_response({
+                "connected": False,
+                "message": f"Erro interno: {str(e)}",
+                "instance": "N/A"
+            })
+
+    def handle_database_health(self):
+        """Endpoint para health check do banco de dados"""
+        try:
+            if SessionLocal:
+                from sqlalchemy import text
+                db = SessionLocal()
+                try:
+                    # Testar conexão com uma query simples
+                    result = db.execute(text("SELECT version();"))
+                    version = result.fetchone()[0]
+                    
+                    self.send_json_response({
+                        "connected": True,
+                        "type": "PostgreSQL",
+                        "version": version,
+                        "status": "online"
+                    })
+                except Exception as e:
+                    self.send_json_response({
+                        "connected": False,
+                        "type": "PostgreSQL",
+                        "error": str(e),
+                        "status": "offline"
+                    })
+                finally:
+                    db.close()
+            else:
+                self.send_json_response({
+                    "connected": True,
+                    "type": "JSON Fallback",
+                    "status": "online",
+                    "message": "Usando armazenamento JSON local"
+                })
+                
+        except Exception as e:
+            print(f"❌ Erro ao verificar saúde do banco: {e}")
+            self.send_json_response({
+                "connected": False,
+                "error": str(e),
+                "status": "error"
+            })
 
 if __name__ == "__main__":
+    import time
+    start_time = time.time()  # Para calcular uptime
+    
     PORT = int(os.getenv('PORT', 8002))  # Usar porta 8002 como padrão
     
     print("=" * 60)
