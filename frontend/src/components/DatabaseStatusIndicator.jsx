@@ -1,8 +1,18 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useDatabaseHealth } from '../hooks/useDatabaseHealth';
 
 const DatabaseStatusIndicator = ({ className = '' }) => {
   const { databaseStatus, refreshDatabaseHealth } = useDatabaseHealth();
+  const [currentTime, setCurrentTime] = useState(new Date());
+  
+  // Atualizar o tempo atual a cada segundo para recalcular o "há Xs"
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+    
+    return () => clearInterval(interval);
+  }, []);
   
   const getStatusColor = () => {
     switch (databaseStatus.status) {
@@ -34,8 +44,7 @@ const DatabaseStatusIndicator = ({ className = '' }) => {
     if (!databaseStatus.lastCheck) return '';
     
     const lastCheck = new Date(databaseStatus.lastCheck);
-    const now = new Date();
-    const diffInSeconds = Math.floor((now - lastCheck) / 1000);
+    const diffInSeconds = Math.floor((currentTime - lastCheck) / 1000);
     
     if (diffInSeconds < 60) {
       return `há ${diffInSeconds}s`;

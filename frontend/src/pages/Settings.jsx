@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline';
 import { useTheme } from '../contexts/ThemeContext';
+import { usePermissions } from '../hooks/usePermissions';
 import ThemeSelector from '../components/ThemeSelector';
-import UserManagement from './UserManagement';
+import Users from './Users';
 import SystemInfo from './SystemInfo';
 import toast from 'react-hot-toast';
 import api from '../services/api';
@@ -12,6 +13,7 @@ const Settings = () => {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('general');
   const { config } = useTheme();
+  const { isAdmin } = usePermissions();
 
   useEffect(() => {
     checkEvolutionStatus();
@@ -30,7 +32,7 @@ const Settings = () => {
 
   const tabs = [
     { id: 'general', name: 'Geral', icon: '⚙️' },
-    { id: 'users', name: 'Usuários', icon: '👥' },
+    ...(isAdmin() ? [{ id: 'users', name: 'Usuários', icon: '👥' }] : []),
     { id: 'system', name: 'Sistema', icon: '🖥️' }
   ];
 
@@ -129,7 +131,7 @@ const Settings = () => {
       case 'general':
         return renderGeneralSettings();
       case 'users':
-        return <UserManagement />;
+        return isAdmin() ? <Users /> : renderGeneralSettings();
       case 'system':
         return <SystemInfo />;
       default:

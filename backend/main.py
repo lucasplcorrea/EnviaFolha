@@ -105,7 +105,7 @@ def setup_database():
             print(f"✅ Conectado ao PostgreSQL: {version}")
         
         # Importar todos os modelos para garantir que estejam registrados
-        from app.models import Base, User, Employee, Permission, Role, RolePermission, PayrollPeriod, PayrollData, PayrollTemplate, PayrollProcessingLog
+        from app.models import Base, User, Employee, Role, PayrollPeriod, PayrollData, PayrollTemplate, PayrollProcessingLog
         
         # Criar tabelas se não existirem
         Base.metadata.create_all(bind=engine)
@@ -351,6 +351,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_database_health()
         elif path == '/api/v1/users':
             self.handle_users_list()
+        elif path == '/api/v1/roles':
+            self.handle_roles_list()
         elif path == '/api/v1/users/permissions':
             self.handle_available_permissions()
         elif path == '/api/v1/payroll/periods':
@@ -421,7 +423,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     def do_DELETE(self):
         """Handle DELETE requests"""
         path = urllib.parse.urlparse(self.path).path
-        print(f"🗑️  DELETE recebido: {path}")
+        print(f"🗑️ DELETE recebido: {path}")
         
         if path.startswith('/api/v1/employees/'):
             employee_id = path.split('/')[-1]
@@ -429,15 +431,6 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         elif path.startswith('/api/v1/users/'):
             user_id = path.split('/')[-1]
             self.handle_delete_user(user_id)
-        else:
-            self.send_json_response({"error": "Endpoint não encontrado"}, 404)
-        print(f"🗑️ DELETE recebido: {path}")
-        
-        if path == '/api/v1/employees/bulk':
-            self.handle_bulk_delete_employees()
-        elif path.startswith('/api/v1/employees/'):
-            employee_id = path.split('/')[-1]
-            self.handle_delete_employee(employee_id)
         else:
             self.send_json_response({"error": "Endpoint não encontrado"}, 404)
     
@@ -457,8 +450,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         username = data.get('username')
         password = data.get('password')
         
-        print(f"🔐 Tentativa de login - Username: '{username}', Password: '{password}'")
-        print(f"📥 Dados recebidos: {data}")
+        print(f"🔐 Tentativa de login - Username: '{username}'")
         
         # Verificar no PostgreSQL se disponível
         if SessionLocal:
@@ -468,9 +460,14 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
                 db = SessionLocal()
                 user = db.query(User).filter(User.username == username).first()
-                db.close()
                 
-                if user and user.verify_password(password):
+                if user and user.is_active and user.verify_password(password):
+                    # Atualizar o último acesso com timezone brasileiro
+                    from datetime import datetime, timezone, timedelta
+                    brazil_tz = timezone(timedelta(hours=-3))  # GMT-3 (Brasília)
+                    user.last_login = datetime.now(brazil_tz)
+                    db.commit()
+                    
                     print("✅ Login bem-sucedido com PostgreSQL!")
                     self.send_json_response({
                         "access_token": "postgres-token-123",
@@ -480,17 +477,28 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                             "username": user.username,
                             "full_name": user.full_name,
                             "email": user.email,
-                            "is_admin": user.is_admin
+                            "is_admin": user.is_admin,
+                            "role": user.role.name if user.role else None
                         }
                     })
+                    db.close()
                     return
                 else:
-                    print("❌ Credenciais inválidas no PostgreSQL!")
-                    self.send_json_response({"detail": "Credenciais inválidas"}, 401)
-                    return
+                    if user and not user.is_active:
+                        print("❌ Usuário inativo no PostgreSQL!")
+                        db.close()
+                        self.send_json_response({"detail": "Usuário inativo ou removido"}, 401)
+                        return
+                    else:
+                        print("❌ Credenciais inválidas no PostgreSQL!")
+                        db.close()
+                        self.send_json_response({"detail": "Credenciais inválidas"}, 401)
+                        return
                     
             except Exception as e:
                 print(f"❌ Erro na autenticação PostgreSQL: {e}")
+                if 'db' in locals():
+                    db.close()
         
         # Fallback para credenciais padrão
         if username == 'admin' and password == 'admin123':
@@ -1176,7 +1184,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         """Lista todos os usuários do sistema"""
         try:
             if SessionLocal:
-                from app.services.user_management import UserManagementService
+                from app.services.user_management_simple import UserManagementServiceSimple as UserManagementService
                 
                 db = SessionLocal()
                 user_service = UserManagementService(db)
@@ -1199,11 +1207,32 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             print(f"❌ Erro ao listar usuários: {e}")
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
     
+    def handle_roles_list(self):
+        """Lista todos os roles disponíveis"""
+        try:
+            if SessionLocal:
+                from app.services.user_management_simple import UserManagementServiceSimple as UserManagementService
+                
+                db = SessionLocal()
+                user_service = UserManagementService(db)
+                
+                roles = user_service.get_all_roles()
+                db.close()
+                
+                self.send_json_response(roles)
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao listar roles: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
     def handle_available_permissions(self):
         """Lista todas as permissões disponíveis"""
         try:
             if SessionLocal:
-                from app.services.user_management import UserManagementService
+                from app.services.user_management_simple import UserManagementServiceSimple as UserManagementService
                 
                 db = SessionLocal()
                 user_service = UserManagementService(db)
@@ -1233,18 +1262,23 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             print(f"📝 Criando usuário: {data.get('username')}")
             
             if SessionLocal:
-                from app.services.user_management import UserManagementService
+                from app.services.user_management_simple import UserManagementServiceSimple as UserManagementService
                 
                 db = SessionLocal()
                 user_service = UserManagementService(db)
                 
                 result = user_service.create_user(data)
+                print(f"Debug create - resultado: {result}")
+                print(f"Debug create - tipo: {type(result)}")
                 db.close()
                 
-                if result["success"]:
+                if isinstance(result, dict) and result.get("success"):
                     self.send_json_response(result, 201)
                 else:
-                    self.send_json_response(result, 400)
+                    if isinstance(result, dict):
+                        self.send_json_response(result, 400)
+                    else:
+                        self.send_json_response({"error": f"Resposta inesperada: {result}"}, 500)
                     
             else:
                 self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
@@ -1263,7 +1297,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             print(f"📝 Atualizando permissões do usuário {user_id}")
             
             if SessionLocal:
-                from app.services.user_management import UserManagementService
+                from app.services.user_management_simple import UserManagementServiceSimple as UserManagementService
                 
                 db = SessionLocal()
                 user_service = UserManagementService(db)
@@ -1285,12 +1319,14 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
 
     def handle_update_user(self, user_id):
         """Atualizar dados de usuário"""
+        print(f"📝 Iniciando atualização do usuário {user_id}")
         try:
             data = self.get_request_data()
+            print(f"📝 Dados recebidos: {data}")
             print(f"📝 Atualizando usuário {user_id}: {data}")
             
             if SessionLocal:
-                from app.services.user_management import UserManagementService
+                from app.services.user_management_simple import UserManagementServiceSimple as UserManagementService
                 
                 db = SessionLocal()
                 user_service = UserManagementService(db)
@@ -1308,52 +1344,69 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     update_data['username'] = data['username']
                 if 'email' in data:
                     update_data['email'] = data['email']
+                if 'full_name' in data:
+                    update_data['full_name'] = data['full_name']
                 if 'password' in data and data['password']:
                     from app.core.auth import get_password_hash
-                    update_data['password'] = get_password_hash(data['password'])
+                    update_data['password_hash'] = get_password_hash(data['password'])
                 if 'is_active' in data:
                     update_data['is_active'] = data['is_active']
+                if 'is_admin' in data:
+                    update_data['is_admin'] = data['is_admin']
+                if 'role_id' in data and data['role_id']:
+                    update_data['role_id'] = int(data['role_id'])
                 
                 result = user_service.update_user(int(user_id), update_data)
+                print(f"Debug - resultado update_user: {result}")
+                print(f"Debug - tipo do resultado: {type(result)}")
                 db.close()
                 
-                if result["success"]:
+                if isinstance(result, dict) and result.get("success"):
                     self.send_json_response(result, 200)
                 else:
-                    self.send_json_response(result, 400)
+                    if isinstance(result, dict):
+                        self.send_json_response(result, 400)
+                    else:
+                        self.send_json_response({"error": f"Resposta inesperada: {result}"}, 500)
                     
             else:
                 self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
                 
         except Exception as e:
             print(f"❌ Erro ao atualizar usuário: {e}")
+            print(f"❌ Tipo do erro: {type(e)}")
+            import traceback
+            traceback.print_exc()
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
 
     def handle_delete_user(self, user_id):
         """Deletar usuário"""
+        print(f"🗑️ Iniciando exclusão do usuário {user_id}")
         try:
             print(f"🗑️ Deletando usuário {user_id}")
             
             if SessionLocal:
-                from app.services.user_management import UserManagementService
+                from app.services.user_management_simple import UserManagementServiceSimple as UserManagementService
                 
                 db = SessionLocal()
                 user_service = UserManagementService(db)
                 
                 # Verificar se usuário existe
                 user = user_service.get_user_by_id(int(user_id))
+                print(f"🗑️ Usuário encontrado: {user}")
                 if not user:
                     db.close()
                     self.send_json_response({"error": "Usuário não encontrado"}, 404)
                     return
                 
                 # Não permitir deletar o último admin
-                if user.username == 'admin':
+                if user.get("username") == 'admin':
                     db.close()
                     self.send_json_response({"error": "Não é possível deletar o usuário admin principal"}, 400)
                     return
                 
                 result = user_service.delete_user(int(user_id))
+                print(f"🗑️ Resultado delete: {result}")
                 db.close()
                 
                 if result["success"]:
@@ -1366,6 +1419,9 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
         except Exception as e:
             print(f"❌ Erro ao deletar usuário: {e}")
+            print(f"❌ Tipo do erro: {type(e)}")
+            import traceback
+            traceback.print_exc()
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
     
     def handle_payroll_periods_list(self):

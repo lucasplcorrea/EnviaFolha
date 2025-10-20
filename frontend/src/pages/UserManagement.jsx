@@ -16,9 +16,20 @@ const UserManagement = () => {
   const [permissions, setPermissions] = useState({});
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [showPermissionsModal, setShowPermissionsModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [dataLoaded, setDataLoaded] = useState(false);
+  const [editUser, setEditUser] = useState({
+    id: null,
+    username: '',
+    email: '',
+    full_name: '',
+    is_active: true,
+    password: '',
+    role_name: '',
+    is_admin: false
+  });
   const [newUser, setNewUser] = useState({
     username: '',
     email: '',
@@ -121,6 +132,71 @@ const UserManagement = () => {
     }
   };
 
+  const handleEditUser = (user) => {
+    setEditUser({
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      full_name: user.full_name,
+      is_active: user.is_active,
+      password: '',
+      role_name: user.role || 'viewer',
+      is_admin: user.is_admin
+    });
+    setShowEditModal(true);
+  };
+
+  const handleUpdateUser = async (e) => {
+    e.preventDefault();
+    
+    try {
+      const response = await api.put(`/users/${editUser.id}`, editUser);
+      
+      if (response.data.success) {
+        toast.success('Usuário atualizado com sucesso!');
+        setShowEditModal(false);
+        setEditUser({
+          id: null,
+          username: '',
+          email: '',
+          full_name: '',
+          is_active: true,
+          password: '',
+          role_name: '',
+          is_admin: false
+        });
+        loadUsers();
+      } else {
+        toast.error(response.data.message || 'Erro ao atualizar usuário');
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Erro ao atualizar usuário');
+    }
+  };
+
+  const handleDeleteUser = async (user) => {
+    if (user.username === 'admin') {
+      toast.error('Não é possível excluir o usuário administrador');
+      return;
+    }
+
+    const confirmDelete = window.confirm(`Tem certeza que deseja excluir o usuário "${user.full_name}"?`);
+    if (!confirmDelete) return;
+
+    try {
+      const response = await api.delete(`/users/${user.id}`);
+      
+      if (response.data.success) {
+        toast.success('Usuário excluído com sucesso!');
+        loadUsers();
+      } else {
+        toast.error(response.data.message || 'Erro ao excluir usuário');
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Erro ao excluir usuário');
+    }
+  };
+
   const getRoleLabel = (roleName) => {
     const role = roles.find(r => r.value === roleName);
     return role ? role.label : roleName || 'Sem papel';
@@ -191,9 +267,6 @@ const UserManagement = () => {
                   Permissões
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Último Acesso
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -231,29 +304,29 @@ const UserManagement = () => {
                       </div>
                     )}
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm text-gray-900">
-                      {user.permissions.length} permissões
+                      {user.permissions?.length || 0} permissões
                     </div>
                     <div className="text-xs text-gray-500">
-                      {user.permissions.slice(0, 3).join(', ')}
-                      {user.permissions.length > 3 && '...'}
+                      {user.permissions?.slice(0, 3).join(', ') || 'Nenhuma permissão'}
+                      {user.permissions?.length > 3 && '...'}
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                      user.is_active 
-                        ? 'bg-green-100 text-green-800' 
-                        : 'bg-red-100 text-red-800'
-                    }`}>
-                      {user.is_active ? 'Ativo' : 'Inativo'}
-                    </span>
-                  </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {user.last_login 
-                      ? new Date(user.last_login).toLocaleDateString() 
-                      : 'Nunca'
-                    }
+                    {user.last_login ? (
+                      <div>
+                        <div>{new Date(user.last_login).toLocaleDateString('pt-BR')}</div>
+                        <div className="text-xs text-gray-400">
+                          {new Date(user.last_login).toLocaleTimeString('pt-BR', { 
+                            hour: '2-digit', 
+                            minute: '2-digit' 
+                          })}
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-gray-400">Nunca acessou</span>
+                    )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <div className="flex justify-end space-x-2">
@@ -268,12 +341,14 @@ const UserManagement = () => {
                         <KeyIcon className="h-5 w-5" />
                       </button>
                       <button
+                        onClick={() => handleEditUser(user)}
                         className="text-gray-600 hover:text-gray-900"
                         title="Editar Usuário"
                       >
                         <PencilIcon className="h-5 w-5" />
                       </button>
                       <button
+                        onClick={() => handleDeleteUser(user)}
                         className="text-red-600 hover:text-red-900"
                         title="Excluir Usuário"
                       >
@@ -389,6 +464,120 @@ const UserManagement = () => {
         </div>
       )}
 
+      {/* Edit User Modal */}
+      {showEditModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+          <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div className="mt-3">
+              <h3 className="text-lg font-medium text-gray-900 mb-4">Editar Usuário</h3>
+              
+              <form onSubmit={handleUpdateUser} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Nome Completo</label>
+                  <input
+                    type="text"
+                    value={editUser.full_name}
+                    onChange={(e) => setEditUser({ ...editUser, full_name: e.target.value })}
+                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Nome de Usuário</label>
+                  <input
+                    type="text"
+                    value={editUser.username}
+                    onChange={(e) => setEditUser({ ...editUser, username: e.target.value })}
+                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Email</label>
+                  <input
+                    type="email"
+                    value={editUser.email}
+                    onChange={(e) => setEditUser({ ...editUser, email: e.target.value })}
+                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Nova Senha (deixe em branco para manter)</label>
+                  <input
+                    type="password"
+                    value={editUser.password}
+                    onChange={(e) => setEditUser({ ...editUser, password: e.target.value })}
+                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Digite nova senha ou deixe em branco"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Papel</label>
+                  <select
+                    value={editUser.role_name}
+                    onChange={(e) => setEditUser({ ...editUser, role_name: e.target.value })}
+                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    {roles.map(role => (
+                      <option key={role.value} value={role.value}>
+                        {role.label} - {role.description}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="editIsAdmin"
+                    checked={editUser.is_admin}
+                    onChange={(e) => setEditUser({ ...editUser, is_admin: e.target.checked })}
+                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                  />
+                  <label htmlFor="editIsAdmin" className="ml-2 block text-sm text-gray-900">
+                    Administrador (acesso total)
+                  </label>
+                </div>
+
+                <div className="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="editIsActive"
+                    checked={editUser.is_active}
+                    onChange={(e) => setEditUser({ ...editUser, is_active: e.target.checked })}
+                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                  />
+                  <label htmlFor="editIsActive" className="ml-2 block text-sm text-gray-900">
+                    Usuário ativo
+                  </label>
+                </div>
+
+                <div className="flex justify-end space-x-3 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowEditModal(false)}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
+                  >
+                    Atualizar Usuário
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Permissions Modal */}
       {showPermissionsModal && selectedUser && (
         <PermissionsModal
@@ -407,7 +596,12 @@ const UserManagement = () => {
 
 // Component for managing user permissions
 const PermissionsModal = ({ user, permissions, onSave, onClose }) => {
-  const [selectedPermissions, setSelectedPermissions] = useState(user.permissions || []);
+  const [selectedPermissions, setSelectedPermissions] = useState([]);
+
+  // Atualizar permissões selecionadas quando o usuário mudar
+  useEffect(() => {
+    setSelectedPermissions(user.permissions || []);
+  }, [user.permissions]);
 
   const handlePermissionToggle = (permissionName) => {
     setSelectedPermissions(prev => {

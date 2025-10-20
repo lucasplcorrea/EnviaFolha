@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
+import { usePermissions } from '../hooks/usePermissions';
 import DatabaseStatusIndicator from './DatabaseStatusIndicator';
 import {
   HomeIcon,
@@ -40,13 +41,13 @@ const navigation = [
   { name: 'Comunicados', href: '/communications', icon: ChatBubbleLeftRightIcon },
   { name: 'Relatórios', href: '/reports', icon: ChartBarIcon },
   { name: 'Configurações', href: '/settings', icon: CogIcon },
-  { name: 'Usuários', href: '/users', icon: UsersIcon, adminOnly: true },
 ];
 
 const Layout = ({ children }) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { user, logout } = useAuth();
   const { config } = useTheme();
+  const { canAccessRoute } = usePermissions();
   const location = useLocation();
 
   const SidebarContent = () => (
@@ -58,7 +59,7 @@ const Layout = ({ children }) => {
         
         <nav className="mt-5 flex-1 px-2 space-y-1">
           {navigation
-            .filter(item => !item.adminOnly || user?.is_admin)
+            .filter(item => canAccessRoute(item.href))
             .map((item) => {
             const isActive = location.pathname === item.href;
             return (

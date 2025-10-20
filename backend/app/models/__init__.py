@@ -2,7 +2,7 @@
 from .base import Base, TimestampMixin
 from .user import User
 from .employee import Employee
-from .permission import Permission, Role, RolePermission
+from .role_simple import Role
 from .payroll import PayrollPeriod, PayrollData, PayrollTemplate, PayrollProcessingLog
 # from .audit_log import AuditLog
 # from .payroll_send import PayrollSend
@@ -16,9 +16,7 @@ __all__ = [
     "TimestampMixin",
     "User",
     "Employee",
-    "Permission",
     "Role",
-    "RolePermission",
     "PayrollPeriod",
     "PayrollData",
     "PayrollTemplate",

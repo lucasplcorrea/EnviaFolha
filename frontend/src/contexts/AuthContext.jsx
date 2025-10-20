@@ -38,14 +38,14 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (username, password) => {
     try {
-      console.log('🔐 Tentando fazer login...', { username, password });
+      console.log('🔐 Tentando fazer login para usuário:', username);
       
       const response = await api.post('/auth/login', {
         username,
         password,
       });
 
-      console.log('📡 Resposta do servidor:', response.data);
+      console.log('📡 Login bem-sucedido para usuário:', username);
 
       const { access_token, user: userData } = response.data;
       

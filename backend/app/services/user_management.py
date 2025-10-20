@@ -218,13 +218,19 @@ class UserManagementService:
             return {"success": False, "message": f"Erro ao atualizar permissões: {str(e)}"}
     
     def get_all_users(self) -> List[Dict]:
-        """Retorna lista de todos os usuários com suas permissões"""
+        """Retorna lista de usuários ativos com suas permissões"""
         from ..models.user import User
         
+        # Buscar apenas usuários ativos para exibir na interface
         users = self.db.query(User).filter(User.is_active == True).all()
         
         users_list = []
         for user in users:
+            # Obter permissões do usuário
+            user_permissions = []
+            if user.permissions:
+                user_permissions = [perm.name for perm in user.permissions if perm.is_active]
+            
             user_dict = {
                 "id": user.id,
                 "username": user.username,
@@ -233,9 +239,9 @@ class UserManagementService:
                 "is_active": user.is_active,
                 "is_admin": user.is_admin,
                 "role": user.role.name if user.role else None,
-                "permissions": user.get_user_permissions(),
+                "permissions": user_permissions,
                 "last_login": user.last_login.isoformat() if user.last_login else None,
-                "created_at": user.created_at.isoformat() if hasattr(user, 'created_at') else None
+                "created_at": user.created_at.isoformat() if hasattr(user, 'created_at') and user.created_at else None
             }
             users_list.append(user_dict)
         
@@ -333,7 +339,7 @@ class UserManagementService:
             return {"success": False, "message": f"Erro interno: {str(e)}"}
 
     def delete_user(self, user_id: int):
-        """Deletar um usuário"""
+        """Realizar deleção lógica de um usuário (marcar como inativo)"""
         try:
             user = self.db.query(User).filter(User.id == user_id).first()
             if not user:
@@ -349,12 +355,17 @@ class UserManagementService:
                 return {"success": False, "message": "Não é possível deletar o último usuário ativo"}
             
             username = user.username
-            self.db.delete(user)
+            
+            # Deleção lógica - marcar como inativo em vez de deletar fisicamente
+            user.is_active = False
+            user.username = f"{user.username}_deleted_{user.id}"  # Prevenir conflitos futuros
+            user.email = f"deleted_{user.id}_{user.email}"  # Prevenir conflitos futuros
+            
             self.db.commit()
             
             return {
                 "success": True,
-                "message": f"Usuário '{username}' deletado com sucesso"
+                "message": f"Usuário '{username}' desativado com sucesso"
             }
             
         except Exception as e:
@@ -368,4 +379,14 @@ class UserManagementService:
             return self.db.query(User).filter(User.id == user_id).first()
         except Exception as e:
             logger.error(f"Erro ao buscar usuário: {e}")
+            return None
+
+    def get_role_id_by_name(self, role_name: str):
+        """Buscar ID do role pelo nome"""
+        try:
+            from ..models.role import Role
+            role = self.db.query(Role).filter(Role.name == role_name).first()
+            return role.id if role else None
+        except Exception as e:
+            logger.error(f"Erro ao buscar role: {e}")
             return None

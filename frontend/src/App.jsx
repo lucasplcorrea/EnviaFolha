@@ -5,6 +5,7 @@ import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import Layout from './components/Layout.jsx';
+import ProtectedRoute from './components/ProtectedRoute.jsx';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Employees from './pages/Employees.jsx';
@@ -13,7 +14,7 @@ import PayrollSender from './pages/PayrollSender.jsx';
 import CommunicationSender from './pages/CommunicationSender.jsx';
 import Settings from './pages/Settings.jsx';
 import Reports from './pages/Reports.jsx';
-import UserManagement from './pages/UserManagement.jsx';
+import Users from './pages/Users.jsx';
 import PayrollDataProcessor from './pages/PayrollDataProcessor.jsx';
 
 const queryClient = new QueryClient({
@@ -25,7 +26,7 @@ const queryClient = new QueryClient({
   },
 });
 
-const ProtectedRoute = ({ children }) => {
+const AuthProtectedRoute = ({ children }) => {
   const { user, loading } = useAuth();
   
   if (loading) {
@@ -53,21 +54,22 @@ function AppContent() {
           <Route
             path="/*"
             element={
-              <ProtectedRoute>
+              <AuthProtectedRoute>
                 <Layout>
                   <Routes>
-                    <Route path="/" element={<Dashboard />} />
-                    <Route path="/employees" element={<Employees />} />
-                    <Route path="/payroll-processor" element={<PayrollProcessor />} />
-                    <Route path="/payroll-sender" element={<PayrollSender />} />
-                    <Route path="/payroll" element={<PayrollSender />} />
-                    <Route path="/communications" element={<CommunicationSender />} />
-                    <Route path="/reports" element={<Reports />} />
-                    <Route path="/settings" element={<Settings />} />
-                    <Route path="/payroll-data" element={<PayrollDataProcessor />} />
+                    <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+                    <Route path="/employees" element={<ProtectedRoute><Employees /></ProtectedRoute>} />
+                    <Route path="/payroll-processor" element={<ProtectedRoute><PayrollProcessor /></ProtectedRoute>} />
+                    <Route path="/payroll-sender" element={<ProtectedRoute><PayrollSender /></ProtectedRoute>} />
+                    <Route path="/payroll" element={<ProtectedRoute><PayrollSender /></ProtectedRoute>} />
+                    <Route path="/communications" element={<ProtectedRoute><CommunicationSender /></ProtectedRoute>} />
+                    <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
+                    <Route path="/users" element={<ProtectedRoute><Users /></ProtectedRoute>} />
+                    <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+                    <Route path="/payroll-data" element={<ProtectedRoute><PayrollDataProcessor /></ProtectedRoute>} />
                   </Routes>
                 </Layout>
-              </ProtectedRoute>
+              </AuthProtectedRoute>
             }
           />
         </Routes>
