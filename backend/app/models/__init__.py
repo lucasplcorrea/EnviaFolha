@@ -7,6 +7,8 @@ from .payroll import PayrollRecord
 from .benefit import BenefitRecord
 from .movement import MovementRecord
 from .leave import LeaveRecord
+from .system_log import SystemLog, LogLevel, LogCategory
+
 # keep older payroll-related imports if they exist elsewhere; import safe names
 try:
     from .payroll import PayrollPeriod, PayrollData, PayrollTemplate, PayrollProcessingLog
@@ -33,6 +35,9 @@ __all__ = [
     "BenefitRecord",
     "MovementRecord",
     "LeaveRecord",
+    "SystemLog",
+    "LogLevel",
+    "LogCategory",
     "PayrollPeriod",
     "PayrollData",
     "PayrollTemplate",

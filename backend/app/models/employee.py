@@ -18,7 +18,7 @@ class Employee(Base, TimestampMixin):
     registration_number = Column(String(20), nullable=True)
     sector = Column(String(100), nullable=True)
     is_active = Column(Boolean, default=True)
-    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # Permitir NULL para importações
     updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     # Additional fields for metrics

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline';
+import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../contexts/ThemeContext';
 import { usePermissions } from '../hooks/usePermissions';
 import ThemeSelector from '../components/ThemeSelector';
@@ -14,6 +15,7 @@ const Settings = () => {
   const [activeTab, setActiveTab] = useState('general');
   const { config } = useTheme();
   const { isAdmin } = usePermissions();
+  const navigate = useNavigate();
 
   useEffect(() => {
     checkEvolutionStatus();
@@ -122,6 +124,26 @@ const Settings = () => {
             <strong>Última sessão:</strong> Ativa
           </p>
         </div>
+      </div>
+
+      {/* Logs do Sistema */}
+      <div className={`${config.classes.card} shadow rounded-lg p-6 ${config.classes.border}`}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className={`text-lg font-medium ${config.classes.text}`}>
+            📋 Logs do Sistema
+          </h2>
+        </div>
+        
+        <p className={`${config.classes.textSecondary} mb-4`}>
+          Visualize os registros de atividade do sistema, incluindo importações, autenticações, erros e outras operações.
+        </p>
+        
+        <button
+          onClick={() => navigate('/system-logs')}
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+        >
+          Ver Logs do Sistema
+        </button>
       </div>
     </div>
   );

@@ -581,6 +581,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_database_health()
         elif path == '/api/v1/payrolls/processed':
             self.handle_payrolls_processed()
+        elif path == '/api/v1/system/logs':
+            self.handle_system_logs()
         else:
             self.send_error(404, "Endpoint não encontrado")
     
@@ -666,13 +668,18 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 if user and user.is_active and user.verify_password(password):
                     # Atualizar o último acesso com timezone brasileiro
                     from datetime import datetime, timezone, timedelta
+                    from app.core.auth import create_access_token
+                    
                     brazil_tz = timezone(timedelta(hours=-3))  # GMT-3 (Brasília)
                     user.last_login = datetime.now(brazil_tz)
                     db.commit()
                     
+                    # Gerar JWT token real
+                    access_token = create_access_token(data={"sub": user.username})
+                    
                     print("✅ Login bem-sucedido com PostgreSQL!")
                     self.send_json_response({
-                        "access_token": "postgres-token-123",
+                        "access_token": access_token,
                         "token_type": "bearer",
                         "user": {
                             "id": user.id,
@@ -821,23 +828,63 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             traceback.print_exc()
             self.send_json_response({"error": f"Erro ao buscar funcionário: {str(e)}"}, 500)
     
+    def get_authenticated_user(self, db=None):
+        """Extrai e valida usuário autenticado do token JWT"""
+        from app.core.auth import verify_token
+        from app.models.user import User
+        
+        auth_header = self.headers.get('Authorization')
+        
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return None
+        
+        # Extrair token
+        token = auth_header.replace('Bearer ', '')
+        
+        # Validar token
+        payload = verify_token(token)
+        if not payload:
+            return None
+        
+        username = payload.get('sub')
+        if not username:
+            return None
+        
+        # Usar sessão existente ou criar nova
+        close_db = False
+        if db is None:
+            db = SessionLocal()
+            close_db = True
+        
+        try:
+            user = db.query(User).filter(User.username == username).first()
+            return user
+        finally:
+            if close_db:
+                db.close()
+    
     def handle_auth_me(self):
         """Endpoint para verificar usuário autenticado"""
-        # Simular verificação de token - em produção, validar o token JWT
-        auth_header = self.headers.get('Authorization')
-        if not auth_header or not auth_header.startswith('Bearer '):
-            self.send_json_response({"detail": "Token de acesso necessário"}, 401)
-            return
-        
-        # Retornar dados do usuário (simulado)
-        user_data = {
-            "id": 1,
-            "username": "admin",
-            "full_name": "Administrador",
-            "email": "admin@empresa.com",
-            "is_admin": True
-        }
-        self.send_json_response(user_data)
+        db = SessionLocal()
+        try:
+            user = self.get_authenticated_user(db)
+            
+            if not user:
+                self.send_json_response({"detail": "Token de acesso necessário"}, 401)
+                return
+            
+            # Retornar dados do usuário
+            user_data = {
+                "id": user.id,
+                "username": user.username,
+                "full_name": user.full_name,
+                "email": user.email,
+                "is_admin": user.is_admin,
+                "role": user.role
+            }
+            self.send_json_response(user_data)
+        finally:
+            db.close()
     
     def handle_dashboard_stats(self):
         """Estatísticas do dashboard"""
@@ -1190,30 +1237,67 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             
             db = SessionLocal()
             try:
-                import_service = DataImportService(db)
+                # Obter usuário autenticado usando a mesma sessão do banco
+                authenticated_user = self.get_authenticated_user(db)
+                if not authenticated_user:
+                    self.send_json_response({"error": "Usuário não autenticado"}, 401)
+                    return
+                
+                print(f"👤 Usuário autenticado: {authenticated_user.username} (ID: {authenticated_user.id})")
+                
+                # Extrair dados da requisição HTTP
+                ip_address = self.headers.get('X-Forwarded-For', self.client_address[0] if self.client_address else None)
+                user_agent = self.headers.get('User-Agent')
+                request_method = self.command
+                request_path = self.path
+                
+                print("📦 Criando DataImportService...")
+                import_service = DataImportService(
+                    db, 
+                    user_id=authenticated_user.id, 
+                    username=authenticated_user.username,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    request_method=request_method,
+                    request_path=request_path
+                )
+                
+                print(f"📂 Tipo de arquivo: {filename}")
                 
                 # Determine file type and parse
                 if filename.endswith('.csv'):
+                    print("📄 Parseando CSV...")
                     rows = import_service.parse_csv(file_data)
                 elif filename.endswith(('.xlsx', '.xls')):
+                    print("📊 Parseando XLSX...")
                     rows = import_service.parse_xlsx(file_data)
+                    print(f"✅ Parse XLSX concluído: {len(rows)} linhas")
                 else:
                     self.send_json_response({
                         "error": "Formato de arquivo não suportado. Use CSV ou XLSX."
                     }, 400)
                     return
                 
-                print(f"Linhas parseadas: {len(rows)}")
+                print(f"📋 Linhas parseadas: {len(rows)}")
+                print(f"📋 Primeiras 2 linhas: {rows[:2] if len(rows) > 0 else 'nenhuma'}")
                 
                 # Import employees
+                print("🚀 Iniciando importação de employees...")
                 result = import_service.import_employees(rows)
                 
-                print(f"Resultado da importação: {result}")
+                print(f"✅ Resultado da importação: {result}")
+                
+                # Invalidar cache após importação bem-sucedida
+                if result['created'] > 0 or result['updated'] > 0:
+                    print("🔄 Invalidando cache de employees...")
+                    invalidate_employees_cache()
                 
                 self.send_json_response({
                     "success": True,
                     "imported_count": result['created'],
                     "updated_count": result['updated'],
+                    "created_list": result.get('created_list', []),
+                    "updated_list": result.get('updated_list', []),
                     "errors": result['errors']
                 }, 200)
                 
@@ -1972,6 +2056,55 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"❌ Erro ao obter status do sistema: {e}")
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_system_logs(self):
+        """Endpoint para listar logs do sistema"""
+        db = SessionLocal()
+        try:
+            from app.services.logging_service import LoggingService
+            
+            # Verificar autenticação com a mesma sessão do banco
+            authenticated_user = self.get_authenticated_user(db)
+            if not authenticated_user:
+                self.send_json_response({"error": "Usuário não autenticado"}, 401)
+                return
+            
+            # Parse query parameters
+            parsed = urllib.parse.urlparse(self.path)
+            query_params = urllib.parse.parse_qs(parsed.query)
+            
+            # Filtros opcionais
+            level = query_params.get('level', [None])[0]
+            category = query_params.get('category', [None])[0]
+            user_id = query_params.get('user_id', [None])[0]
+            limit = int(query_params.get('limit', [100])[0])
+            offset = int(query_params.get('offset', [0])[0])
+            
+            # Buscar logs usando a mesma sessão
+            logger = LoggingService(db)
+            logs_data = logger.get_logs(
+                level=level,
+                category=category,
+                user_id=int(user_id) if user_id else None,
+                limit=limit,
+                offset=offset
+            )
+            
+            # get_logs já retorna lista de dicionários
+            self.send_json_response({
+                "logs": logs_data,
+                "total": len(logs_data),
+                "limit": limit,
+                "offset": offset
+            })
+        except Exception as e:
+            print(f"❌ Erro ao buscar logs: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro ao buscar logs: {str(e)}"}, 500)
+        finally:
+            db.close()
+
 
     def handle_evolution_status(self):
         """Endpoint para status da Evolution API"""

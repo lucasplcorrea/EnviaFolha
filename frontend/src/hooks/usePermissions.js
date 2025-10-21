@@ -20,26 +20,30 @@ const ROUTE_TO_PAGE = {
   '/communications': 'communications',
   '/reports': 'reports',
   '/users': 'users',
-  '/settings': 'settings'
+  '/settings': 'settings',
+  '/system-logs': 'settings'  // Logs fazem parte de settings (admin only)
 };
 
 export const usePermissions = () => {
   const { user } = useAuth();
+  
+  // Flag para controlar logs (somente em desenvolvimento)
+  const DEBUG_PERMISSIONS = false; // Mude para true se precisar debugar
 
   const getUserRole = () => {
     if (!user) {
-      console.log('🔒 Nenhum usuário logado');
+      if (DEBUG_PERMISSIONS) console.log('🔒 Nenhum usuário logado');
       return null;
     }
     
     // Admin sempre tem acesso total
     if (user.is_admin) {
-      console.log('👑 Usuário admin - acesso total');
+      if (DEBUG_PERMISSIONS) console.log('👑 Usuário admin - acesso total');
       return 'admin';
     }
     
     const role = user.role || user.role_name;
-    console.log('🔖 Role do usuário:', role);
+    if (DEBUG_PERMISSIONS) console.log('🔖 Role do usuário:', role);
     return role;
   };
 
@@ -48,7 +52,7 @@ export const usePermissions = () => {
     const pathParts = route.split('/').filter(Boolean);
     const basePath = pathParts[0] ? `/${pathParts[0]}` : '/';
     
-    console.log('🔍 Extraindo página da rota:', route, '-> basePath:', basePath);
+    if (DEBUG_PERMISSIONS) console.log('🔍 Extraindo página da rota:', route, '-> basePath:', basePath);
     
     return ROUTE_TO_PAGE[basePath] || ROUTE_TO_PAGE[route] || basePath.replace('/', '');
   };
@@ -56,7 +60,7 @@ export const usePermissions = () => {
   const canAccessPage = (pageOrRoute) => {
     const role = getUserRole();
     if (!role) {
-      console.log('❌ Sem role - acesso negado para:', pageOrRoute);
+      if (DEBUG_PERMISSIONS) console.log('❌ Sem role - acesso negado para:', pageOrRoute);
       return false;
     }
 
@@ -64,8 +68,10 @@ export const usePermissions = () => {
     const allowedPages = ROLE_PAGES[role] || [];
     
     const hasAccess = allowedPages.includes(page);
-    console.log(`🔍 Verificando acesso: role=${role}, page=${page}, permitido=${hasAccess}`);
-    console.log('📄 Páginas permitidas:', allowedPages);
+    if (DEBUG_PERMISSIONS) {
+      console.log(`🔍 Verificando acesso: role=${role}, page=${page}, permitido=${hasAccess}`);
+      console.log('📄 Páginas permitidas:', allowedPages);
+    }
     
     return hasAccess;
   };
@@ -83,7 +89,7 @@ export const usePermissions = () => {
     const allowedPages = getAllowedPages();
     
     if (allowedPages.length === 0) {
-      console.log('⚠️ Nenhuma página permitida - redirecionando para login');
+      if (DEBUG_PERMISSIONS) console.log('⚠️ Nenhuma página permitida - redirecionando para login');
       return '/login';
     }
 
@@ -101,7 +107,7 @@ export const usePermissions = () => {
     const firstPage = allowedPages[0];
     const route = pageToRoute[firstPage] || '/';
     
-    console.log('🎯 Primeira rota permitida:', route, 'para página:', firstPage);
+    if (DEBUG_PERMISSIONS) console.log('🎯 Primeira rota permitida:', route, 'para página:', firstPage);
     return route;
   };
 

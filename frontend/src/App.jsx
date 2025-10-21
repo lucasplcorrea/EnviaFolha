@@ -18,6 +18,7 @@ import Users from './pages/Users.jsx';
 import PayrollDataProcessor from './pages/PayrollDataProcessor.jsx';
 import DataImport from './pages/DataImport.jsx';
 import EmployeeDetail from './pages/EmployeeDetail.jsx';
+import SystemLogs from './pages/SystemLogs.jsx';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -70,6 +71,7 @@ function AppContent() {
                     <Route path="reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
                     <Route path="users" element={<ProtectedRoute><Users /></ProtectedRoute>} />
                     <Route path="settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+                    <Route path="system-logs" element={<ProtectedRoute><SystemLogs /></ProtectedRoute>} />
                     <Route path="payroll-data" element={<ProtectedRoute><PayrollDataProcessor /></ProtectedRoute>} />
                   </Routes>
                 </Layout>
