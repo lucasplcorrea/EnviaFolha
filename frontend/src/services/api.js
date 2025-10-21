@@ -34,3 +34,15 @@ api.interceptors.response.use(
 );
 
 export default api;
+
+// Funções específicas para verificação de saúde
+export const healthAPI = {
+  // Verificação geral de saúde
+  checkHealth: () => api.get('/health', { baseURL: 'http://localhost:8002' }),
+  
+  // Verificação específica do banco de dados
+  checkDatabaseHealth: () => api.get('/database/health'),
+  
+  // Verificação com timeout menor para detectar problemas rapidamente
+  quickHealthCheck: () => api.get('/database/health', { timeout: 5000 })
+};

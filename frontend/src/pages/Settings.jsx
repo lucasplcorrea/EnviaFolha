@@ -1,14 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline';
+import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../contexts/ThemeContext';
+import { usePermissions } from '../hooks/usePermissions';
 import ThemeSelector from '../components/ThemeSelector';
+import Users from './Users';
+import SystemInfo from './SystemInfo';
 import toast from 'react-hot-toast';
 import api from '../services/api';
 
 const Settings = () => {
   const [evolutionStatus, setEvolutionStatus] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('general');
   const { config } = useTheme();
+  const { isAdmin } = usePermissions();
+  const navigate = useNavigate();
 
   useEffect(() => {
     checkEvolutionStatus();
@@ -25,166 +32,161 @@ const Settings = () => {
     }
   };
 
+  const tabs = [
+    { id: 'general', name: 'Geral', icon: '⚙️' },
+    ...(isAdmin() ? [{ id: 'users', name: 'Usuários', icon: '👥' }] : []),
+    { id: 'system', name: 'Sistema', icon: '🖥️' }
+  ];
+
+  const renderGeneralSettings = () => (
+    <div className="space-y-6">
+      {/* Configurações de Tema */}
+      <div className={`${config.classes.card} shadow rounded-lg p-6 ${config.classes.border}`}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className={`text-lg font-medium ${config.classes.text}`}>
+            🎨 Tema da Interface
+          </h2>
+        </div>
+        
+        <p className={`${config.classes.textSecondary} mb-4`}>
+          Escolha o tema que melhor se adapta ao seu ambiente de trabalho.
+        </p>
+        
+        <div className="flex flex-col space-y-4">
+          <div className="flex items-center justify-between">
+            <span className={`text-sm ${config.classes.text}`}>Selecionar Tema:</span>
+            <ThemeSelector />
+          </div>
+          <div className={`text-xs ${config.classes.textSecondary}`}>
+            O tema selecionado será aplicado imediatamente a toda a interface.
+          </div>
+        </div>
+      </div>
+
+      {/* Status da Evolution API */}
+      <div className={`${config.classes.card} shadow rounded-lg p-6 ${config.classes.border}`}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className={`text-lg font-medium ${config.classes.text}`}>
+            📱 WhatsApp Integration (Evolution API)
+          </h2>
+          {!loading && (
+            <button
+              onClick={checkEvolutionStatus}
+              className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+            >
+              🔄 Verificar novamente
+            </button>
+          )}
+        </div>
+        
+        {loading ? (
+          <div className="flex items-center space-x-2">
+            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+            <span className={config.classes.textSecondary}>Verificando status...</span>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center space-x-2">
+              {evolutionStatus?.connected ? (
+                <CheckCircleIcon className="h-5 w-5 text-green-500" />
+              ) : (
+                <XCircleIcon className="h-5 w-5 text-red-500" />
+              )}
+              <span className={`font-medium ${evolutionStatus?.connected ? 'text-green-700' : 'text-red-700'}`}>
+                {evolutionStatus?.connected ? 'Conectado' : 'Desconectado'}
+              </span>
+            </div>
+            
+            {evolutionStatus?.instance && (
+              <div className={`text-sm ${config.classes.textSecondary}`}>
+                <strong>Instância:</strong> {evolutionStatus.instance}
+              </div>
+            )}
+            
+            {evolutionStatus?.message && (
+              <div className={`text-sm ${config.classes.textSecondary}`}>
+                {evolutionStatus.message}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Informações da Sessão */}
+      <div className={`${config.classes.card} shadow rounded-lg p-6 ${config.classes.border}`}>
+        <h2 className={`text-lg font-medium ${config.classes.text} mb-4`}>
+          👤 Sessão Atual
+        </h2>
+        <div className={`${config.classes.background === 'bg-white' ? 'bg-gray-50' : config.classes.surface} rounded-lg p-4`}>
+          <p className={`text-sm ${config.classes.textSecondary}`}>
+            <strong>Usuário atual:</strong> admin<br />
+            <strong>Permissões:</strong> Administrador<br />
+            <strong>Última sessão:</strong> Ativa
+          </p>
+        </div>
+      </div>
+
+      {/* Logs do Sistema */}
+      <div className={`${config.classes.card} shadow rounded-lg p-6 ${config.classes.border}`}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className={`text-lg font-medium ${config.classes.text}`}>
+            📋 Logs do Sistema
+          </h2>
+        </div>
+        
+        <p className={`${config.classes.textSecondary} mb-4`}>
+          Visualize os registros de atividade do sistema, incluindo importações, autenticações, erros e outras operações.
+        </p>
+        
+        <button
+          onClick={() => navigate('/system-logs')}
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+        >
+          Ver Logs do Sistema
+        </button>
+      </div>
+    </div>
+  );
+
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case 'general':
+        return renderGeneralSettings();
+      case 'users':
+        return isAdmin() ? <Users /> : renderGeneralSettings();
+      case 'system':
+        return <SystemInfo />;
+      default:
+        return renderGeneralSettings();
+    }
+  };
+
   return (
     <div>
       <h1 className={`text-2xl font-semibold ${config.classes.text} mb-6`}>Configurações</h1>
       
-      <div className="space-y-6">
-        {/* Configurações de Tema */}
-        <div className={`${config.classes.card} shadow rounded-lg p-6 ${config.classes.border}`}>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className={`text-lg font-medium ${config.classes.text}`}>
-              🎨 Tema da Interface
-            </h2>
-          </div>
-          
-          <p className={`${config.classes.textSecondary} mb-4`}>
-            Escolha o tema que melhor se adapta ao seu ambiente de trabalho.
-          </p>
-          
-          <div className="flex flex-col space-y-4">
-            <div className="flex items-center justify-between">
-              <span className={`text-sm ${config.classes.text}`}>Selecionar Tema:</span>
-              <ThemeSelector />
-            </div>
-            <div className={`text-xs ${config.classes.textSecondary}`}>
-              • <strong>Claro:</strong> Interface clara e tradicional<br/>
-              • <strong>Escuro:</strong> Reduz o cansaço visual em ambientes com pouca luz
-            </div>
-          </div>
-        </div>
-
-        <div className={`${config.classes.card} shadow rounded-lg p-6 ${config.classes.border}`}>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className={`text-lg font-medium ${config.classes.text}`}>
-              🔗 Evolution API
-            </h2>
+      {/* Tabs Navigation */}
+      <div className="mb-6">
+        <nav className="flex space-x-8">
+          {tabs.map((tab) => (
             <button
-              onClick={checkEvolutionStatus}
-              disabled={loading}
-              className={`text-sm ${config.classes.link} disabled:opacity-50`}
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-2 py-2 px-1 border-b-2 font-medium text-sm ${
+                activeTab === tab.id
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
             >
-              {loading ? 'Verificando...' : 'Verificar Status'}
+              <span>{tab.icon}</span>
+              {tab.name}
             </button>
-          </div>
-          
-          <p className={`${config.classes.textSecondary} mb-4`}>
-            Configure suas credenciais da Evolution API para envio via WhatsApp.
-          </p>
-          
-          {loading ? (
-            <div className="flex items-center">
-              <div className="spinner w-5 h-5 mr-2"></div>
-              <span className={`text-sm ${config.classes.textSecondary}`}>Verificando conexão...</span>
-            </div>
-          ) : evolutionStatus ? (
-            <div className="space-y-3">
-              <div className="flex items-center">
-                {evolutionStatus.connected ? (
-                  <CheckCircleIcon className="h-5 w-5 text-accent-green mr-2" />
-                ) : (
-                  <XCircleIcon className="h-5 w-5 text-accent-red mr-2" />
-                )}
-                <span className={`text-sm font-medium ${
-                  evolutionStatus.connected ? 'text-accent-green' : 'text-accent-red'
-                }`}>
-                  {evolutionStatus.connected ? 'Conectado' : 'Desconectado'}
-                </span>
-              </div>
-              
-              <div className="bg-gray-50 rounded-lg p-4 space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">Servidor:</span>
-                  <span className="text-gray-900 font-mono">
-                    {evolutionStatus.server_url || 'Não configurado'}
-                  </span>
-                </div>
-                
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">Instância:</span>
-                  <span className="text-gray-900 font-mono">
-                    {evolutionStatus.instance_name || 'Não configurado'}
-                  </span>
-                </div>
-                
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">Estado:</span>
-                  <span className="text-gray-900">
-                    {evolutionStatus.state || 'Desconhecido'}
-                  </span>
-                </div>
-                
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">API Key:</span>
-                  <span className="text-gray-900">
-                    {evolutionStatus.config?.api_key ? '✓ Configurada' : '✗ Não configurada'}
-                  </span>
-                </div>
-              </div>
-              
-              {evolutionStatus.error && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                  <p className="text-sm text-red-700">
-                    <strong>Erro:</strong> {evolutionStatus.error}
-                  </p>
-                </div>
-              )}
-              
-              {!evolutionStatus.connected && (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                  <p className="text-sm text-yellow-800">
-                    <strong>Configure no arquivo backend/.env:</strong>
-                  </p>
-                  <pre className="text-xs text-yellow-700 mt-2 font-mono">
-{`EVOLUTION_SERVER_URL=https://sua-api.evolution.com
-EVOLUTION_API_KEY=sua_chave_de_api
-EVOLUTION_INSTANCE_NAME=nome_da_instancia`}
-                  </pre>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="bg-gray-50 rounded-lg p-4">
-              <p className="text-sm text-gray-600">
-                Erro ao verificar status da Evolution API
-              </p>
-            </div>
-          )}
-        </div>
-        
-        <div className={`${config.classes.card} shadow rounded-lg p-6 ${config.classes.border}`}>
-          <h2 className={`text-lg font-medium ${config.classes.text} mb-4`}>
-            🔐 Segurança
-          </h2>
-          <p className={config.classes.textSecondary}>
-            Configurações de segurança e autenticação do sistema.
-          </p>
-          <div className={`mt-4 ${config.classes.background === 'bg-white' ? 'bg-gray-50' : config.classes.surface} rounded-lg p-4`}>
-            <p className={`text-sm ${config.classes.textSecondary}`}>
-              <strong>Usuário atual:</strong> admin<br />
-              <strong>Permissões:</strong> Administrador<br />
-              <strong>Última sessão:</strong> Ativa
-            </p>
-          </div>
-        </div>
-        
-        <div className={`${config.classes.card} shadow rounded-lg p-6 ${config.classes.border}`}>
-          <h2 className={`text-lg font-medium ${config.classes.text} mb-4`}>
-            📁 Sistema
-          </h2>
-          <p className={config.classes.textSecondary}>
-            Informações do sistema e banco de dados.
-          </p>
-          <div className={`mt-4 ${config.classes.background === 'bg-white' ? 'bg-gray-50' : config.classes.surface} rounded-lg p-4`}>
-            <p className={`text-sm ${config.classes.textSecondary}`}>
-              <strong>Versão:</strong> 2.0.0<br />
-              <strong>Banco de dados:</strong> JSON (simple_db.json)<br />
-              <strong>Backend:</strong> FastAPI + Python<br />
-              <strong>Frontend:</strong> React + Tailwind CSS
-            </p>
-          </div>
-        </div>
+          ))}
+        </nav>
       </div>
+
+      {/* Tab Content */}
+      {renderTabContent()}
     </div>
   );
 };

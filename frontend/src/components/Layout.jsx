@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
+import { usePermissions } from '../hooks/usePermissions';
+import DatabaseStatusIndicator from './DatabaseStatusIndicator';
 import {
   HomeIcon,
   UsersIcon,
@@ -19,6 +21,12 @@ const navigation = [
   { name: 'Dashboard', href: '/', icon: HomeIcon },
   { name: 'Colaboradores', href: '/employees', icon: UsersIcon },
   { 
+    name: 'Importar Dados', 
+    href: '/data-import', 
+    icon: DocumentArrowUpIcon,
+    description: 'Importação em massa (CSV/Excel)'
+  },
+  { 
     name: 'Processar Holerites', 
     href: '/payroll-processor', 
     icon: DocumentArrowUpIcon,
@@ -30,6 +38,12 @@ const navigation = [
     icon: PaperAirplaneIcon,
     description: 'Envio via WhatsApp'
   },
+  { 
+    name: 'Dados de Folha', 
+    href: '/payroll-data', 
+    icon: ChartBarIcon,
+    description: 'Processamento de planilhas'
+  },
   { name: 'Comunicados', href: '/communications', icon: ChatBubbleLeftRightIcon },
   { name: 'Relatórios', href: '/reports', icon: ChartBarIcon },
   { name: 'Configurações', href: '/settings', icon: CogIcon },
@@ -39,6 +53,7 @@ const Layout = ({ children }) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { user, logout } = useAuth();
   const { config } = useTheme();
+  const { canAccessRoute } = usePermissions();
   const location = useLocation();
 
   const SidebarContent = () => (
@@ -49,7 +64,9 @@ const Layout = ({ children }) => {
         </div>
         
         <nav className="mt-5 flex-1 px-2 space-y-1">
-          {navigation.map((item) => {
+          {navigation
+            .filter(item => canAccessRoute(item.href))
+            .map((item) => {
             const isActive = location.pathname === item.href;
             return (
               <Link
@@ -122,6 +139,7 @@ const Layout = ({ children }) => {
             
             <div className="ml-4 flex items-center md:ml-6">
               <div className="flex items-center space-x-4">
+                <DatabaseStatusIndicator />
                 <span className={`text-sm ${config.classes.textSecondary}`}>Olá, {user?.full_name}</span>
                 <button
                   onClick={logout}
