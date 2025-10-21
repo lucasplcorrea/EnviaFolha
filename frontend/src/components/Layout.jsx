@@ -21,6 +21,12 @@ const navigation = [
   { name: 'Dashboard', href: '/', icon: HomeIcon },
   { name: 'Colaboradores', href: '/employees', icon: UsersIcon },
   { 
+    name: 'Importar Dados', 
+    href: '/data-import', 
+    icon: DocumentArrowUpIcon,
+    description: 'Importação em massa (CSV/Excel)'
+  },
+  { 
     name: 'Processar Holerites', 
     href: '/payroll-processor', 
     icon: DocumentArrowUpIcon,

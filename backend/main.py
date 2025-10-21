@@ -96,7 +96,16 @@ def setup_database():
         database_url = os.getenv('DATABASE_URL', 'postgresql://enviafolha_user:secure_password@localhost:5432/enviafolha_db')
         print(f"🔌 Conectando ao PostgreSQL: {database_url}")
         
-        engine = create_engine(database_url, echo=False)
+        # Criar engine com connection pooling otimizado
+        engine = create_engine(
+            database_url, 
+            echo=False,
+            pool_size=5,           # Número de conexões mantidas no pool
+            max_overflow=10,       # Conexões extras permitidas quando pool está cheio
+            pool_timeout=30,       # Timeout para obter conexão do pool
+            pool_recycle=3600,     # Reciclar conexões a cada 1 hora
+            pool_pre_ping=True     # Verificar conexão antes de usar
+        )
         
         # Testar conexão
         with engine.connect() as connection:
@@ -111,8 +120,13 @@ def setup_database():
         Base.metadata.create_all(bind=engine)
         print("✅ Tabelas do banco de dados verificadas/criadas")
         
-        # Criar sessão
-        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        # Criar sessão com configurações otimizadas
+        SessionLocal = sessionmaker(
+            autocommit=False, 
+            autoflush=False, 
+            bind=engine,
+            expire_on_commit=False  # Evita queries extras depois do commit
+        )
         
         return engine, SessionLocal
         
@@ -124,39 +138,89 @@ def setup_database():
 # Inicializar banco de dados
 db_engine, SessionLocal = setup_database()
 
+# Cache para employees (atualizado a cada 3 minutos)
+employees_cache = {
+    'data': None,
+    'last_update': 0,
+    'ttl': 180  # Time to live em segundos (3 minutos)
+}
+
 def load_employees_data():
-    """Carrega dados dos funcionários do PostgreSQL ou JSON como fallback"""
+    """Carrega dados dos funcionários do PostgreSQL ou JSON como fallback com cache"""
+    global employees_cache
+    
+    # Verificar se cache é válido
+    import time
+    current_time = time.time()
+    cache_age = current_time - employees_cache['last_update']
+    
+    if employees_cache['data'] is not None and cache_age < employees_cache['ttl']:
+        # Retornar do cache
+        print(f"💾 Usando cache de employees (idade: {cache_age:.1f}s)")
+        return employees_cache['data']
+    
+    print(f"🔄 Cache expirado ou inválido, carregando do banco...")
+    
     if SessionLocal:
+        db = None
         try:
             # Importar models apenas se PostgreSQL disponível
             sys.path.append(os.path.dirname(__file__))
             from app.models import Employee
             
+            print("🔌 Abrindo sessão do banco...")
             db = SessionLocal()
-            employees = db.query(Employee).filter(Employee.is_active == True).all()
-            db.close()
             
-            # Converter para formato compatível
+            print("📊 Executando query para buscar employees...")
+            employees = db.query(Employee).filter(Employee.is_active == True).all()
+            print(f"✅ Query concluída: {len(employees)} employees encontrados")
+            
+            # Converter para formato compatível incluindo novos campos
             employees_data = []
             for emp in employees:
                 emp_dict = {
                     "id": emp.id,
                     "unique_id": emp.unique_id,
-                    "full_name": emp.name,  # Campo correto na tabela PostgreSQL
+                    "full_name": emp.name,
+                    "cpf": emp.cpf,
                     "phone_number": emp.phone,
                     "email": emp.email or "",
                     "department": emp.department or "",
                     "position": emp.position or "",
+                    "birth_date": emp.birth_date.isoformat() if emp.birth_date else "",
+                    "sex": emp.sex or "",
+                    "marital_status": emp.marital_status or "",
+                    "admission_date": emp.admission_date.isoformat() if emp.admission_date else "",
+                    "contract_type": emp.contract_type or "",
+                    "employment_status": emp.employment_status or "Ativo",
+                    "termination_date": emp.termination_date.isoformat() if emp.termination_date else "",
+                    "leave_start_date": emp.leave_start_date.isoformat() if emp.leave_start_date else "",
+                    "leave_end_date": emp.leave_end_date.isoformat() if emp.leave_end_date else "",
+                    "status_reason": emp.status_reason or "",
                     "is_active": emp.is_active
                 }
                 employees_data.append(emp_dict)
             
             print(f"✅ Carregados {len(employees_data)} funcionários do PostgreSQL")
-            return {"employees": employees_data, "users": []}
+            
+            # Atualizar cache
+            result = {"employees": employees_data, "users": []}
+            employees_cache['data'] = result
+            employees_cache['last_update'] = current_time
+            
+            return result
             
         except Exception as e:
             print(f"❌ Erro ao carregar funcionários do PostgreSQL: {e}")
+            import traceback
+            traceback.print_exc()
             print("⚠️  Tentando carregar do arquivo JSON...")
+            
+        finally:
+            if db:
+                print("🔒 Fechando sessão do banco...")
+                db.close()
+                print("✅ Sessão fechada com sucesso")
     
     # Fallback para JSON
     try:
@@ -173,6 +237,94 @@ def load_employees_data():
     except Exception as e:
         print(f"❌ Erro ao carregar employees.json: {e}")
         return {"employees": [], "users": []}
+
+def invalidate_employees_cache():
+    """Invalida o cache de employees forçando reload no próximo acesso"""
+    global employees_cache
+    employees_cache['data'] = None
+    employees_cache['last_update'] = 0
+    print("🔄 Cache de funcionários invalidado")
+
+def get_employee_by_id(employee_id):
+    """Busca um funcionário específico diretamente do banco (sem carregar todos)"""
+    print(f"🔍 get_employee_by_id chamado para ID: {employee_id}")
+    
+    if SessionLocal:
+        db = None
+        try:
+            from app.models import Employee
+            
+            print("🔌 Abrindo sessão do banco para buscar employee...")
+            db = SessionLocal()
+            
+            # Tentar buscar por ID numérico primeiro
+            try:
+                emp_id = int(employee_id)
+                print(f"🔢 Tentando buscar por ID numérico: {emp_id}")
+                employee = db.query(Employee).filter(Employee.id == emp_id, Employee.is_active == True).first()
+            except ValueError:
+                print(f"⚠️  Não é ID numérico, tentando por unique_id")
+                employee = None
+            
+            # Se não encontrou por ID, buscar por unique_id
+            if not employee:
+                print(f"🔍 Buscando por unique_id: {employee_id}")
+                employee = db.query(Employee).filter(Employee.unique_id == employee_id, Employee.is_active == True).first()
+            
+            if not employee:
+                print(f"❌ Funcionário {employee_id} não encontrado")
+                return None
+            
+            # Converter para dicionário
+            emp_dict = {
+                "id": employee.id,
+                "unique_id": employee.unique_id,
+                "full_name": employee.name,
+                "cpf": employee.cpf,
+                "phone_number": employee.phone,
+                "email": employee.email or "",
+                "department": employee.department or "",
+                "position": employee.position or "",
+                "birth_date": employee.birth_date.isoformat() if employee.birth_date else "",
+                "sex": employee.sex or "",
+                "marital_status": employee.marital_status or "",
+                "admission_date": employee.admission_date.isoformat() if employee.admission_date else "",
+                "contract_type": employee.contract_type or "",
+                "employment_status": employee.employment_status or "Ativo",
+                "termination_date": employee.termination_date.isoformat() if employee.termination_date else "",
+                "leave_start_date": employee.leave_start_date.isoformat() if employee.leave_start_date else "",
+                "leave_end_date": employee.leave_end_date.isoformat() if employee.leave_end_date else "",
+                "status_reason": employee.status_reason or "",
+                "is_active": employee.is_active
+            }
+            
+            print(f"✅ Funcionário {employee.name} (ID: {employee.id}) encontrado diretamente no banco")
+            return emp_dict
+            
+        except Exception as e:
+            print(f"❌ Erro ao buscar funcionário do PostgreSQL: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+            
+        finally:
+            if db:
+                print("🔒 Fechando sessão do banco (get_employee_by_id)...")
+                db.close()
+                print("✅ Sessão fechada")
+    
+    # Fallback: buscar nos dados carregados
+    print("⚠️  PostgreSQL não disponível, usando fallback para dados carregados")
+    current_data = load_employees_data()
+    employees = current_data.get('employees', [])
+    
+    for emp in employees:
+        if str(emp.get('id')) == str(employee_id) or str(emp.get('unique_id')) == str(employee_id):
+            print(f"✅ Funcionário encontrado no fallback: {emp.get('full_name')}")
+            return emp
+    
+    print(f"❌ Funcionário {employee_id} não encontrado no fallback")
+    return None
 
 def save_employee_to_db(employee_data, created_by_user_id=3):
     """Salva funcionário no PostgreSQL ou JSON como fallback"""
@@ -200,15 +352,52 @@ def save_employee_to_db(employee_data, created_by_user_id=3):
             ).first()
             
             if existing:
-                # Atualizar existente
+                # Atualizar existente - campos básicos
                 existing.name = employee_data.get('full_name', existing.name)
                 existing.phone = employee_data.get('phone_number', existing.phone)
                 existing.email = employee_data.get('email', existing.email)
                 existing.department = employee_data.get('department', existing.department)
                 existing.position = employee_data.get('position', existing.position)
                 existing.is_active = employee_data.get('is_active', existing.is_active)
+                
+                # Atualizar novos campos RH
+                from datetime import datetime
+                if employee_data.get('birth_date'):
+                    try:
+                        existing.birth_date = datetime.strptime(employee_data['birth_date'], '%Y-%m-%d').date()
+                    except:
+                        pass
+                if employee_data.get('sex'):
+                    existing.sex = employee_data['sex']
+                if employee_data.get('marital_status'):
+                    existing.marital_status = employee_data['marital_status']
+                if employee_data.get('admission_date'):
+                    try:
+                        existing.admission_date = datetime.strptime(employee_data['admission_date'], '%Y-%m-%d').date()
+                    except:
+                        pass
+                if employee_data.get('contract_type'):
+                    existing.contract_type = employee_data['contract_type']
+                if employee_data.get('status_reason'):
+                    existing.status_reason = employee_data['status_reason']
             else:
-                # Criar novo
+                # Criar novo - preparar campos de data
+                from datetime import datetime
+                birth_date_obj = None
+                admission_date_obj = None
+                
+                if employee_data.get('birth_date'):
+                    try:
+                        birth_date_obj = datetime.strptime(employee_data['birth_date'], '%Y-%m-%d').date()
+                    except:
+                        pass
+                
+                if employee_data.get('admission_date'):
+                    try:
+                        admission_date_obj = datetime.strptime(employee_data['admission_date'], '%Y-%m-%d').date()
+                    except:
+                        pass
+                
                 new_employee = Employee(
                     unique_id=employee_data.get('unique_id'),
                     name=employee_data.get('full_name'),
@@ -217,6 +406,12 @@ def save_employee_to_db(employee_data, created_by_user_id=3):
                     email=employee_data.get('email'),
                     department=employee_data.get('department'),
                     position=employee_data.get('position'),
+                    birth_date=birth_date_obj,
+                    sex=employee_data.get('sex'),
+                    marital_status=employee_data.get('marital_status'),
+                    admission_date=admission_date_obj,
+                    contract_type=employee_data.get('contract_type'),
+                    status_reason=employee_data.get('status_reason'),
                     is_active=employee_data.get('is_active', True),
                     created_by=created_by_user_id
                 )
@@ -225,6 +420,10 @@ def save_employee_to_db(employee_data, created_by_user_id=3):
             db.commit()
             db.close()
             print(f"✅ Funcionário {employee_data.get('full_name')} salvo no PostgreSQL")
+            
+            # Invalidar cache para forçar reload
+            invalidate_employees_cache()
+            
             return True
             
         except Exception as e:
@@ -355,6 +554,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_roles_list()
         elif path == '/api/v1/users/permissions':
             self.handle_available_permissions()
+        
         elif path == '/api/v1/payroll/periods':
             self.handle_payroll_periods_list()
         elif path == '/api/v1/payroll/templates':
@@ -362,6 +562,11 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         elif path.startswith('/api/v1/payroll/periods/'):
             period_id = path.split('/')[-1]
             self.handle_payroll_period_summary(period_id)
+        elif path.startswith('/api/v1/employees/'):
+            # IMPORTANTE: Esta rota deve vir ANTES de '/api/v1/employees'
+            employee_id = path.split('/')[-1]
+            print(f"🔍 Rota de detalhes capturada para employee_id: {employee_id}")
+            self.send_employee_detail(employee_id)
         elif path == '/api/v1/employees':
             self.send_employees_list()
         elif path == '/api/v1/auth/me':
@@ -376,9 +581,6 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_database_health()
         elif path == '/api/v1/payrolls/processed':
             self.handle_payrolls_processed()
-        elif path.startswith('/api/v1/employees/'):
-            employee_id = path.split('/')[-1]
-            self.send_employee_detail(employee_id)
         else:
             self.send_error(404, "Endpoint não encontrado")
     
@@ -391,7 +593,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_login()
         elif path == '/api/v1/employees':
             self.handle_create_employee()
-        elif path == '/api/v1/employees/import':
+        elif path == '/api/v1/employees/import' or path == '/api/v1/import/employees':
             self.handle_import_employees()
         elif path == '/api/v1/users':
             self.handle_create_user()
@@ -601,22 +803,22 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     def send_employee_detail(self, employee_id):
         """Detalhes de um funcionário específico"""
         try:
-            current_data = load_employees_data()
-            employees = current_data.get('employees', [])
+            print(f"🔍 Buscando detalhes do funcionário: {employee_id}")
             
-            # Buscar por ID ou unique_id
-            employee = None
-            for emp in employees:
-                if str(emp.get('id')) == employee_id or str(emp.get('unique_id')) == employee_id:
-                    employee = emp
-                    break
+            # Buscar funcionário diretamente do banco (otimizado)
+            employee = get_employee_by_id(employee_id)
             
             if employee:
+                print(f"✅ Funcionário encontrado: {employee.get('full_name')}")
                 self.send_json_response(employee)
             else:
+                print(f"❌ Funcionário {employee_id} não encontrado")
                 self.send_json_response({"error": "Funcionário não encontrado"}, 404)
                 
         except Exception as e:
+            print(f"❌ Erro ao buscar funcionário: {e}")
+            import traceback
+            traceback.print_exc()
             self.send_json_response({"error": f"Erro ao buscar funcionário: {str(e)}"}, 500)
     
     def handle_auth_me(self):
@@ -708,7 +910,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     self.send_json_response({"error": f"ID único {data.get('unique_id')} já existe"}, 400)
                     return
             
-            # Preparar dados do funcionário
+            # Preparar dados do funcionário (campos básicos + novos campos RH)
             employee_data = {
                 "unique_id": data.get('unique_id'),
                 "full_name": data.get('full_name'),
@@ -716,6 +918,12 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 "email": data.get('email', ''),
                 "department": data.get('department', ''),
                 "position": data.get('position', ''),
+                "birth_date": data.get('birth_date', ''),
+                "sex": data.get('sex', ''),
+                "marital_status": data.get('marital_status', ''),
+                "admission_date": data.get('admission_date', ''),
+                "contract_type": data.get('contract_type', ''),
+                "status_reason": data.get('status_reason', ''),
                 "is_active": True
             }
             
@@ -774,11 +982,13 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                         self.send_json_response({"error": f"ID único {data.get('unique_id')} já existe"}, 400)
                         return
                 
-                # Atualizar campos
+                # Atualizar campos básicos
                 if 'unique_id' in data:
                     employee.unique_id = data['unique_id']
                 if 'full_name' in data:
                     employee.name = data['full_name']
+                if 'cpf' in data:
+                    employee.cpf = data['cpf']
                 if 'phone_number' in data:
                     employee.phone = data['phone_number']
                 if 'email' in data:
@@ -790,25 +1000,102 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 if 'is_active' in data:
                     employee.is_active = data['is_active']
                 
+                # Atualizar novos campos de métricas RH
+                if 'birth_date' in data:
+                    from datetime import datetime
+                    if data['birth_date']:
+                        try:
+                            employee.birth_date = datetime.strptime(data['birth_date'], '%Y-%m-%d').date()
+                        except:
+                            employee.birth_date = None
+                    else:
+                        employee.birth_date = None
+                
+                if 'sex' in data:
+                    employee.sex = data['sex'] or None
+                
+                if 'marital_status' in data:
+                    employee.marital_status = data['marital_status'] or None
+                
+                if 'admission_date' in data:
+                    from datetime import datetime
+                    if data['admission_date']:
+                        try:
+                            employee.admission_date = datetime.strptime(data['admission_date'], '%Y-%m-%d').date()
+                        except:
+                            employee.admission_date = None
+                    else:
+                        employee.admission_date = None
+                
+                if 'contract_type' in data:
+                    employee.contract_type = data['contract_type'] or None
+                
+                if 'status_reason' in data:
+                    employee.status_reason = data['status_reason'] or None
+                
+                # Atualizar campos de status
+                if 'employment_status' in data:
+                    employee.employment_status = data['employment_status'] or 'Ativo'
+                
+                if 'termination_date' in data:
+                    from datetime import datetime
+                    if data['termination_date']:
+                        try:
+                            employee.termination_date = datetime.strptime(data['termination_date'], '%Y-%m-%d').date()
+                        except:
+                            employee.termination_date = None
+                    else:
+                        employee.termination_date = None
+                
+                if 'leave_start_date' in data:
+                    from datetime import datetime
+                    if data['leave_start_date']:
+                        try:
+                            employee.leave_start_date = datetime.strptime(data['leave_start_date'], '%Y-%m-%d').date()
+                        except:
+                            employee.leave_start_date = None
+                    else:
+                        employee.leave_start_date = None
+                
+                if 'leave_end_date' in data:
+                    from datetime import datetime
+                    if data['leave_end_date']:
+                        try:
+                            employee.leave_end_date = datetime.strptime(data['leave_end_date'], '%Y-%m-%d').date()
+                        except:
+                            employee.leave_end_date = None
+                    else:
+                        employee.leave_end_date = None
+                
                 db.commit()
                 
-                # Preparar resposta
+                # Preparar resposta com todos os campos
                 updated_employee = {
                     "id": employee.id,
                     "unique_id": employee.unique_id,
                     "full_name": employee.name,
+                    "cpf": employee.cpf,
                     "phone_number": employee.phone,
                     "email": employee.email or "",
                     "department": employee.department or "",
                     "position": employee.position or "",
-                    "is_active": employee.is_active
+                    "is_active": employee.is_active,
+                    "birth_date": employee.birth_date.isoformat() if employee.birth_date else None,
+                    "sex": employee.sex or "",
+                    "marital_status": employee.marital_status or "",
+                    "admission_date": employee.admission_date.isoformat() if employee.admission_date else None,
+                    "contract_type": employee.contract_type or "",
+                    "employment_status": employee.employment_status or "Ativo",
+                    "termination_date": employee.termination_date.isoformat() if employee.termination_date else None,
+                    "leave_start_date": employee.leave_start_date.isoformat() if employee.leave_start_date else None,
+                    "leave_end_date": employee.leave_end_date.isoformat() if employee.leave_end_date else None,
+                    "status_reason": employee.status_reason or ""
                 }
                 
                 db.close()
                 
-                # Recarregar dados globais
-                global employees_data
-                employees_data = load_employees_data()
+                # Invalidar cache para forçar reload
+                invalidate_employees_cache()
                 
                 self.send_json_response(updated_employee, 200)
                 print(f"✅ Funcionário {updated_employee.get('full_name')} atualizado com sucesso!")
@@ -847,9 +1134,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 employee_name = employee.name
                 db.close()
                 
-                # Recarregar dados globais
-                global employees_data
-                employees_data = load_employees_data()
+                # Invalidar cache para forçar reload
+                invalidate_employees_cache()
                 
                 self.send_json_response({"message": f"Funcionário {employee_name} removido com sucesso"}, 200)
                 print(f"✅ Funcionário {employee_name} marcado como inativo!")
@@ -861,10 +1147,14 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
 
     def handle_import_employees(self):
-        """Handle Excel file import for employees"""
+        """Handle CSV/XLSX file import for employees using DataImportService"""
         try:
+            print("🔥 handle_import_employees chamado")
+            
             # Parse multipart form data
             content_type = self.headers.get('Content-Type', '')
+            print(f"Content-Type recebido: {content_type}")
+            
             if not content_type.startswith('multipart/form-data'):
                 self.send_json_response({"error": "Content-Type deve ser multipart/form-data"}, 400)
                 return
@@ -884,30 +1174,79 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length)
             
+            print(f"Body recebido: {len(body)} bytes")
+            
             # Parse multipart data
-            file_data = self.parse_multipart_data(body, boundary)
+            file_data, filename = self.parse_multipart_data(body, boundary)
             
             if not file_data:
                 self.send_json_response({"error": "Arquivo não encontrado no upload"}, 400)
                 return
             
-            # Process Excel file
-            import_result = self.process_excel_import(file_data)
+            print(f"Arquivo recebido: {filename}, {len(file_data)} bytes")
             
-            self.send_json_response(import_result, 200)
+            # Import using DataImportService
+            from app.services.data_import import DataImportService
+            
+            db = SessionLocal()
+            try:
+                import_service = DataImportService(db)
+                
+                # Determine file type and parse
+                if filename.endswith('.csv'):
+                    rows = import_service.parse_csv(file_data)
+                elif filename.endswith(('.xlsx', '.xls')):
+                    rows = import_service.parse_xlsx(file_data)
+                else:
+                    self.send_json_response({
+                        "error": "Formato de arquivo não suportado. Use CSV ou XLSX."
+                    }, 400)
+                    return
+                
+                print(f"Linhas parseadas: {len(rows)}")
+                
+                # Import employees
+                result = import_service.import_employees(rows)
+                
+                print(f"Resultado da importação: {result}")
+                
+                self.send_json_response({
+                    "success": True,
+                    "imported_count": result['created'],
+                    "updated_count": result['updated'],
+                    "errors": result['errors']
+                }, 200)
+                
+            finally:
+                db.close()
             
         except Exception as e:
             print(f"❌ Erro ao importar funcionários: {e}")
-            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({
+                "success": False,
+                "error": f"Erro interno: {str(e)}"
+            }, 500)
     
     def parse_multipart_data(self, body, boundary):
-        """Parse multipart form data to extract file"""
+        """Parse multipart form data to extract file and filename"""
         try:
             boundary_bytes = boundary.encode('utf-8')
             parts = body.split(b'--' + boundary_bytes)
             
             for part in parts:
                 if b'Content-Disposition' in part and b'filename=' in part:
+                    # Extract filename
+                    disposition_line = part.split(b'\r\n')[0]
+                    filename_start = disposition_line.find(b'filename="')
+                    if filename_start != -1:
+                        filename_start += 10  # len('filename="')
+                        filename_end = disposition_line.find(b'"', filename_start)
+                        filename = disposition_line[filename_start:filename_end].decode('utf-8')
+                    else:
+                        filename = 'unknown.xlsx'
+                    
                     # Find the start of file data (after headers)
                     header_end = part.find(b'\r\n\r\n')
                     if header_end != -1:
@@ -915,12 +1254,12 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                         # Remove trailing boundary markers
                         if file_data.endswith(b'\r\n'):
                             file_data = file_data[:-2]
-                        return file_data
+                        return file_data, filename
             
-            return None
+            return None, None
         except Exception as e:
             print(f"❌ Erro ao parsear multipart data: {e}")
-            return None
+            return None, None
     
     def process_excel_import(self, file_data):
         """Process Excel file and import employees"""
@@ -1247,13 +1586,45 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     "permissions": permissions,
                     "modules": list(permissions.keys())
                 })
-                
             else:
                 self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
                 
         except Exception as e:
             print(f"❌ Erro ao listar permissões: {e}")
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_import_employees(self):
+        """Import employees from uploaded CSV/XLSX (admin only)"""
+        try:
+            # minimal auth check: ensure user is admin
+            # TODO: integrate with full auth
+            # parse multipart/form-data (simple fallback to raw body assuming file bytes)
+            file_bytes = self.rfile.read(int(self.headers.get('Content-Length', 0)))
+            if not file_bytes:
+                self.send_json_response({"error": "No file uploaded"}, 400)
+                return
+
+            from app.services.data_import import DataImportService
+            if SessionLocal:
+                db = SessionLocal()
+                importer = DataImportService(db)
+                # try parse as CSV first
+                try:
+                    rows = importer.parse_csv(file_bytes)
+                except Exception:
+                    # try xlsx
+                    rows = importer.parse_xlsx(file_bytes)
+
+                result = importer.import_employees(rows)
+                db.close()
+                self.send_json_response(result, 200)
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+
+        except Exception as e:
+            print(f"❌ Erro ao importar funcionários: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+                
     
     def handle_create_user(self):
         """Criar novo usuário"""

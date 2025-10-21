@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { PlusIcon, DocumentArrowUpIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import api from '../services/api';
 import { useTheme } from '../contexts/ThemeContext';
 
 const Employees = () => {
+  const navigate = useNavigate();
   const { config } = useTheme();
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -27,7 +29,13 @@ const Employees = () => {
     phone_number: '',
     email: '',
     department: '',
-    position: ''
+    position: '',
+    birth_date: '',
+    sex: '',
+    marital_status: '',
+    admission_date: '',
+    contract_type: '',
+    status_reason: ''
   });
 
   useEffect(() => {
@@ -74,7 +82,13 @@ const Employees = () => {
         phone_number: '',
         email: '',
         department: '',
-        position: ''
+        position: '',
+        birth_date: '',
+        sex: '',
+        marital_status: '',
+        admission_date: '',
+        contract_type: '',
+        status_reason: ''
       });
       setShowForm(false);
       setEditingEmployee(null);
@@ -93,7 +107,13 @@ const Employees = () => {
       phone_number: employee.phone_number,
       email: employee.email || '',
       department: employee.department || '',
-      position: employee.position || ''
+      position: employee.position || '',
+      birth_date: employee.birth_date || '',
+      sex: employee.sex || '',
+      marital_status: employee.marital_status || '',
+      admission_date: employee.admission_date || '',
+      contract_type: employee.contract_type || '',
+      status_reason: employee.status_reason || ''
     });
     setShowForm(true);
   };
@@ -107,7 +127,13 @@ const Employees = () => {
       phone_number: '',
       email: '',
       department: '',
-      position: ''
+      position: '',
+      birth_date: '',
+      sex: '',
+      marital_status: '',
+      admission_date: '',
+      contract_type: '',
+      status_reason: ''
     });
   };
 
@@ -289,7 +315,13 @@ const Employees = () => {
                 phone_number: '',
                 email: '',
                 department: '',
-                position: ''
+                position: '',
+                birth_date: '',
+                sex: '',
+                marital_status: '',
+                admission_date: '',
+                contract_type: '',
+                status_reason: ''
               });
               setShowForm(true);
             }}
@@ -454,7 +486,7 @@ const Employees = () => {
           </h2>
           <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label className="block text-sm font-medium text-gray-700">ID Único</label>
+              <label className="block text-sm font-medium text-gray-700">ID Único *</label>
               <input
                 type="text"
                 required
@@ -466,7 +498,7 @@ const Employees = () => {
             </div>
             
             <div>
-              <label className="block text-sm font-medium text-gray-700">Nome Completo</label>
+              <label className="block text-sm font-medium text-gray-700">Nome Completo *</label>
               <input
                 type="text"
                 required
@@ -477,7 +509,7 @@ const Employees = () => {
             </div>
             
             <div>
-              <label className="block text-sm font-medium text-gray-700">Telefone</label>
+              <label className="block text-sm font-medium text-gray-700">Telefone *</label>
               <input
                 type="tel"
                 required
@@ -515,6 +547,83 @@ const Employees = () => {
                 value={formData.position}
                 onChange={(e) => setFormData({...formData, position: e.target.value})}
                 className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Data de Nascimento</label>
+              <input
+                type="date"
+                value={formData.birth_date}
+                onChange={(e) => setFormData({...formData, birth_date: e.target.value})}
+                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Sexo</label>
+              <select
+                value={formData.sex}
+                onChange={(e) => setFormData({...formData, sex: e.target.value})}
+                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+              >
+                <option value="">Selecione...</option>
+                <option value="M">Masculino</option>
+                <option value="F">Feminino</option>
+                <option value="Outro">Outro</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Estado Civil</label>
+              <select
+                value={formData.marital_status}
+                onChange={(e) => setFormData({...formData, marital_status: e.target.value})}
+                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+              >
+                <option value="">Selecione...</option>
+                <option value="Solteiro">Solteiro(a)</option>
+                <option value="Casado">Casado(a)</option>
+                <option value="Divorciado">Divorciado(a)</option>
+                <option value="Viúvo">Viúvo(a)</option>
+                <option value="União Estável">União Estável</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Data de Admissão</label>
+              <input
+                type="date"
+                value={formData.admission_date}
+                onChange={(e) => setFormData({...formData, admission_date: e.target.value})}
+                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Tipo de Contrato</label>
+              <select
+                value={formData.contract_type}
+                onChange={(e) => setFormData({...formData, contract_type: e.target.value})}
+                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+              >
+                <option value="">Selecione...</option>
+                <option value="CLT">CLT</option>
+                <option value="PJ">PJ</option>
+                <option value="Estágio">Estágio</option>
+                <option value="Temporário">Temporário</option>
+                <option value="Terceirizado">Terceirizado</option>
+              </select>
+            </div>
+
+            <div className="sm:col-span-2">
+              <label className="block text-sm font-medium text-gray-700">Observações / Motivo Status</label>
+              <textarea
+                value={formData.status_reason}
+                onChange={(e) => setFormData({...formData, status_reason: e.target.value})}
+                rows="3"
+                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+                placeholder="Motivo de desligamento, transferência, etc."
               />
             </div>
             
@@ -604,6 +713,12 @@ const Employees = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       <div className="flex space-x-2">
+                        <button 
+                          onClick={() => navigate(`/employees/${employee.id}`)}
+                          className="text-green-600 hover:text-green-900"
+                        >
+                          Detalhes
+                        </button>
                         <button 
                           onClick={() => handleEdit(employee)}
                           className="text-blue-600 hover:text-blue-900"

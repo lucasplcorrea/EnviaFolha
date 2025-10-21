@@ -1,3 +1,24 @@
+from sqlalchemy import Column, Integer, String, Date, DateTime, Float, ForeignKey
+from sqlalchemy.orm import relationship
+from app.models.base import Base
+
+
+class PayrollRecord(Base):
+    __tablename__ = 'payroll_records'
+
+    id = Column(Integer, primary_key=True)
+    employee_id = Column(Integer, ForeignKey('employees.id'), index=True, nullable=False)
+    unified_code = Column(String, index=True, nullable=True)
+    competence = Column(String, index=True, nullable=False)  # YYYY-MM
+    salary_base = Column(Float, nullable=True)
+    additions = Column(Float, nullable=True)
+    deductions = Column(Float, nullable=True)
+    hours_extra = Column(Float, nullable=True)
+    hours_absence = Column(Float, nullable=True)
+    net_salary = Column(Float, nullable=True)
+    created_at = Column(DateTime, nullable=True)
+
+    employee = relationship('Employee', back_populates='payrolls')
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, DECIMAL, Boolean, Text
 from sqlalchemy.orm import relationship
 from .base import Base, TimestampMixin

@@ -44,7 +44,13 @@ export const usePermissions = () => {
   };
 
   const getPageFromRoute = (route) => {
-    return ROUTE_TO_PAGE[route] || route.replace('/', '');
+    // Tratar rotas dinâmicas (ex: /employees/123 -> employees)
+    const pathParts = route.split('/').filter(Boolean);
+    const basePath = pathParts[0] ? `/${pathParts[0]}` : '/';
+    
+    console.log('🔍 Extraindo página da rota:', route, '-> basePath:', basePath);
+    
+    return ROUTE_TO_PAGE[basePath] || ROUTE_TO_PAGE[route] || basePath.replace('/', '');
   };
 
   const canAccessPage = (pageOrRoute) => {

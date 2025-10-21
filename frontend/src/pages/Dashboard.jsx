@@ -51,19 +51,39 @@ const Dashboard = () => {
   const [processingStatus, setProcessingStatus] = useState(null);
 
   useEffect(() => {
-    loadDashboardData();
-    loadEvolutionStatus();
-    loadProcessingStatus();
+    // Criar AbortController para cancelar requisições pendentes
+    const abortController = new AbortController();
+    
+    // Carregar dados iniciais com signal para permitir cancelamento
+    const loadInitialData = async () => {
+      try {
+        await loadDashboardData(abortController.signal);
+        await loadEvolutionStatus(abortController.signal);
+        await loadProcessingStatus(abortController.signal);
+      } catch (error) {
+        // Ignorar erros de abort (ocorrem quando componente desmonta)
+        if (error.name !== 'AbortError' && error.name !== 'CanceledError') {
+          console.error('Erro ao carregar dados:', error);
+        }
+      }
+    };
+    
+    loadInitialData();
+    
+    // Cleanup: cancelar requisições pendentes ao desmontar
+    return () => {
+      abortController.abort();
+    };
   }, []);
 
-  const loadDashboardData = async () => {
+  const loadDashboardData = async (signal) => {
     try {
       // Buscar estatísticas do dashboard
-      const dashboardResponse = await api.get('/dashboard/stats');
+      const dashboardResponse = await api.get('/dashboard/stats', { signal });
       const dashboardData = dashboardResponse.data;
       
       // Buscar dados de holerites processados
-      const payrollsResponse = await api.get('/payrolls/processed');
+      const payrollsResponse = await api.get('/payrolls/processed', { signal });
       const payrollsData = payrollsResponse.data;
       
       // Por enquanto, vamos usar dados simulados para envios
@@ -104,21 +124,27 @@ const Dashboard = () => {
         }
       ]);
     } catch (error) {
-      console.error('Erro ao carregar dados do dashboard:', error);
-      toast.error('Erro ao carregar estatísticas');
+      // Ignorar erros de abort (ocorrem quando componente desmonta)
+      if (error.name !== 'AbortError' && error.name !== 'CanceledError') {
+        console.error('Erro ao carregar dados do dashboard:', error);
+        toast.error('Erro ao carregar dados do dashboard');
+      }
     }
   };
 
-  const loadEvolutionStatus = async () => {
+  const loadEvolutionStatus = async (signal) => {
     try {
-      const response = await api.get('/evolution/status');
+      const response = await api.get('/evolution/status', { signal });
       setEvolutionStatus(response.data);
     } catch (error) {
-      console.error('Erro ao carregar status da Evolution API:', error);
+      // Ignorar erros de abort
+      if (error.name !== 'AbortError' && error.name !== 'CanceledError') {
+        console.error('Erro ao carregar status Evolution API:', error);
+      }
     }
   };
 
-  const loadProcessingStatus = async () => {
+  const loadProcessingStatus = async (signal) => {
     // Por enquanto simulado - em implementação real seria um endpoint específico
     setProcessingStatus({
       hasActiveProcesses: false,
