@@ -72,18 +72,39 @@ def check_database_health():
     """Verifica se o banco de dados está online e acessível"""
     try:
         if not db_engine:
-            return {"status": "error", "message": "Engine do banco não inicializada"}
+            return {
+                "status": "error", 
+                "message": "Engine do banco não inicializada",
+                "connected": False,
+                "type": "None",
+                "version": "N/A"
+            }
         
         # Importar SQLAlchemy text
         from sqlalchemy import text
         
-        # Testar conexão simples
+        # Testar conexão e obter versão
         with db_engine.connect() as connection:
             connection.execute(text("SELECT 1"))
-            return {"status": "online", "message": "Banco de dados PostgreSQL está online"}
+            result = connection.execute(text("SELECT version()"))
+            version = result.fetchone()[0]
+            
+            return {
+                "status": "online", 
+                "message": "Banco de dados PostgreSQL está online",
+                "connected": True,
+                "type": "PostgreSQL",
+                "version": version.split(',')[0] if ',' in version else version
+            }
             
     except Exception as e:
-        return {"status": "offline", "message": f"Banco de dados offline: {str(e)}"}
+        return {
+            "status": "offline", 
+            "message": f"Banco de dados offline: {str(e)}",
+            "connected": False,
+            "type": "PostgreSQL",
+            "version": "N/A"
+        }
 
 def setup_database():
     """Configura conexão com PostgreSQL e cria tabelas se necessário"""

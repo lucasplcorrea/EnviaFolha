@@ -1,36 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import { CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../contexts/ThemeContext';
 import { usePermissions } from '../hooks/usePermissions';
 import ThemeSelector from '../components/ThemeSelector';
 import Users from './Users';
 import SystemInfo from './SystemInfo';
-import toast from 'react-hot-toast';
-import api from '../services/api';
 
 const Settings = () => {
-  const [evolutionStatus, setEvolutionStatus] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('general');
   const { config } = useTheme();
   const { isAdmin } = usePermissions();
   const navigate = useNavigate();
-
-  useEffect(() => {
-    checkEvolutionStatus();
-  }, []);
-
-  const checkEvolutionStatus = async () => {
-    try {
-      const response = await api.get('/evolution/status');
-      setEvolutionStatus(response.data);
-    } catch (error) {
-      toast.error('Erro ao verificar status da Evolution API');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const tabs = [
     { id: 'general', name: 'Geral', icon: '⚙️' },
@@ -61,55 +41,6 @@ const Settings = () => {
             O tema selecionado será aplicado imediatamente a toda a interface.
           </div>
         </div>
-      </div>
-
-      {/* Status da Evolution API */}
-      <div className={`${config.classes.card} shadow rounded-lg p-6 ${config.classes.border}`}>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className={`text-lg font-medium ${config.classes.text}`}>
-            📱 WhatsApp Integration (Evolution API)
-          </h2>
-          {!loading && (
-            <button
-              onClick={checkEvolutionStatus}
-              className="text-blue-600 hover:text-blue-800 text-sm font-medium"
-            >
-              🔄 Verificar novamente
-            </button>
-          )}
-        </div>
-        
-        {loading ? (
-          <div className="flex items-center space-x-2">
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-            <span className={config.classes.textSecondary}>Verificando status...</span>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <div className="flex items-center space-x-2">
-              {evolutionStatus?.connected ? (
-                <CheckCircleIcon className="h-5 w-5 text-green-500" />
-              ) : (
-                <XCircleIcon className="h-5 w-5 text-red-500" />
-              )}
-              <span className={`font-medium ${evolutionStatus?.connected ? 'text-green-700' : 'text-red-700'}`}>
-                {evolutionStatus?.connected ? 'Conectado' : 'Desconectado'}
-              </span>
-            </div>
-            
-            {evolutionStatus?.instance && (
-              <div className={`text-sm ${config.classes.textSecondary}`}>
-                <strong>Instância:</strong> {evolutionStatus.instance}
-              </div>
-            )}
-            
-            {evolutionStatus?.message && (
-              <div className={`text-sm ${config.classes.textSecondary}`}>
-                {evolutionStatus.message}
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
       {/* Informações da Sessão */}

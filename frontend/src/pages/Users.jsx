@@ -171,7 +171,7 @@ const Users = () => {
           </button>
         </div>
         <p className="text-gray-600 mt-2">
-          Controle de acesso baseado em páginas - sistema simplificado
+          Controle de acesso baseado em páginas e funções. Crie, edite e gerencie usuários do sistema.
         </p>
       </div>
 
