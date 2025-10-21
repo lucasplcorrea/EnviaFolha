@@ -45,19 +45,54 @@ class DataImportService:
         """
         Parse arquivo Excel (.xlsx ou .xls) para lista de dicionários.
         Usa openpyxl para .xlsx e xlrd para .xls
+        
+        IMPORTANTE: Força campos críticos como string para preservar zeros à esquerda
         """
         if not PANDAS_AVAILABLE:
             raise RuntimeError('pandas is required to parse xlsx files')
         
+        # Definir dtype para forçar campos como string e preservar zeros à esquerda
+        dtype_mapping = {
+            'unique_id': str,
+            'codigo_unificado': str,
+            'registration_number': str,
+            'cpf': str,
+            'phone': str,
+            'phone_number': str,
+            'telefone': str
+        }
+        
         try:
             # Tentar com openpyxl primeiro (para .xlsx)
-            df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=sheet_name, engine='openpyxl')
+            df = pd.read_excel(
+                io.BytesIO(file_bytes), 
+                sheet_name=sheet_name, 
+                engine='openpyxl',
+                dtype=dtype_mapping,  # Força tipos específicos
+                keep_default_na=False  # Não converte strings vazias em NaN
+            )
+            # Converter todas as colunas para string para garantir
+            for col in df.columns:
+                if col.lower() in ['unique_id', 'codigo_unificado', 'registration_number', 'cpf', 'phone', 'phone_number', 'telefone']:
+                    df[col] = df[col].astype(str)
+            
             return df.fillna('').to_dict(orient='records')
         except Exception as e:
             print(f"⚠️ Erro com openpyxl: {e}")
             try:
                 # Fallback para xlrd (para .xls antigo)
-                df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=sheet_name, engine='xlrd')
+                df = pd.read_excel(
+                    io.BytesIO(file_bytes), 
+                    sheet_name=sheet_name, 
+                    engine='xlrd',
+                    dtype=dtype_mapping,
+                    keep_default_na=False
+                )
+                # Converter colunas para string
+                for col in df.columns:
+                    if col.lower() in ['unique_id', 'codigo_unificado', 'registration_number', 'cpf', 'phone', 'phone_number', 'telefone']:
+                        df[col] = df[col].astype(str)
+                
                 return df.fillna('').to_dict(orient='records')
             except Exception as e2:
                 print(f"❌ Erro com xlrd: {e2}")
@@ -90,6 +125,17 @@ class DataImportService:
             try:
                 # Validar campos obrigatórios
                 unique_id = row.get('unique_id') or row.get('codigo_unificado') or row.get('registration_number')
+                
+                # Limpar e converter unique_id para string, preservando zeros à esquerda
+                if unique_id:
+                    unique_id = str(unique_id).strip()
+                    # Remover ".0" que pandas pode adicionar
+                    if unique_id.endswith('.0'):
+                        unique_id = unique_id[:-2]
+                    # Se estiver vazio ou for "nan", considerar como None
+                    if unique_id.lower() in ('', 'nan', 'none'):
+                        unique_id = None
+                
                 if not unique_id:
                     error_msg = 'Campo obrigatório "unique_id" ausente'
                     errors.append({'row': i, 'error': error_msg, 'data': row})
@@ -102,12 +148,28 @@ class DataImportService:
                     continue
 
                 cpf = row.get('cpf')
+                # Limpar e converter CPF para string
+                if cpf:
+                    cpf = str(cpf).strip()
+                    if cpf.endswith('.0'):
+                        cpf = cpf[:-2]
+                    if cpf.lower() in ('', 'nan', 'none'):
+                        cpf = None
+                
                 if not cpf:
                     error_msg = 'Campo obrigatório "cpf" ausente'
                     errors.append({'row': i, 'error': error_msg, 'data': row})
                     continue
 
                 phone = row.get('phone_number') or row.get('phone') or row.get('telefone')
+                # Limpar e converter phone para string
+                if phone:
+                    phone = str(phone).strip()
+                    if phone.endswith('.0'):
+                        phone = phone[:-2]
+                    if phone.lower() in ('', 'nan', 'none'):
+                        phone = None
+                
                 if not phone:
                     error_msg = 'Campo obrigatório "phone_number" ausente'
                     errors.append({'row': i, 'error': error_msg, 'data': row})

@@ -224,6 +224,11 @@ def load_employees_data():
             
             print(f"✅ Carregados {len(employees_data)} funcionários do PostgreSQL")
             
+            # Log dos unique_ids para debug
+            if employees_data:
+                unique_ids_sample = [emp['unique_id'] for emp in employees_data[:5]]
+                print(f"📋 Primeiros unique_ids: {unique_ids_sample}")
+            
             # Atualizar cache
             result = {"employees": employees_data, "users": []}
             employees_cache['data'] = result
@@ -590,6 +595,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_employee_detail(employee_id)
         elif path == '/api/v1/employees':
             self.send_employees_list()
+        elif path == '/api/v1/employees/cache/status':
+            self.handle_cache_status()
         elif path == '/api/v1/auth/me':
             self.handle_auth_me()
         elif path == '/api/v1/dashboard/stats':
@@ -618,6 +625,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_create_employee()
         elif path == '/api/v1/employees/import' or path == '/api/v1/import/employees':
             self.handle_import_employees()
+        elif path == '/api/v1/employees/cache/invalidate':
+            self.handle_cache_invalidate()
         elif path == '/api/v1/users':
             self.handle_create_user()
         elif path == '/api/v1/users/permissions':
@@ -626,8 +635,10 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_create_payroll_period()
         elif path == '/api/v1/payroll/templates':
             self.handle_create_payroll_template()
-        elif path == '/api/v1/payroll/process':
+        elif path == '/api/v1/payroll/process' or path == '/api/v1/payrolls/process':
             self.handle_process_payroll_file()
+        elif path == '/api/v1/files/upload':
+            self.handle_file_upload()
         else:
             self.send_json_response({"error": "Endpoint não encontrado"}, 404)
     
@@ -1214,156 +1225,66 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             print(f"❌ Erro ao deletar funcionário: {e}")
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
 
-    def handle_import_employees(self):
-        """Handle CSV/XLSX file import for employees using DataImportService"""
-        try:
-            print("🔥 handle_import_employees chamado")
-            
-            # Parse multipart form data
-            content_type = self.headers.get('Content-Type', '')
-            print(f"Content-Type recebido: {content_type}")
-            
-            if not content_type.startswith('multipart/form-data'):
-                self.send_json_response({"error": "Content-Type deve ser multipart/form-data"}, 400)
-                return
-            
-            # Get boundary from content type
-            boundary = None
-            for part in content_type.split(';'):
-                if 'boundary=' in part:
-                    boundary = part.split('boundary=')[1].strip()
-                    break
-            
-            if not boundary:
-                self.send_json_response({"error": "Boundary não encontrado no Content-Type"}, 400)
-                return
-            
-            # Read the body
-            content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length)
-            
-            print(f"Body recebido: {len(body)} bytes")
-            
-            # Parse multipart data
-            file_data, filename = self.parse_multipart_data(body, boundary)
-            
-            if not file_data:
-                self.send_json_response({"error": "Arquivo não encontrado no upload"}, 400)
-                return
-            
-            print(f"Arquivo recebido: {filename}, {len(file_data)} bytes")
-            
-            # Import using DataImportService
-            from app.services.data_import import DataImportService
-            
-            db = SessionLocal()
-            try:
-                # Obter usuário autenticado usando a mesma sessão do banco
-                authenticated_user = self.get_authenticated_user(db)
-                if not authenticated_user:
-                    self.send_json_response({"error": "Usuário não autenticado"}, 401)
-                    return
-                
-                print(f"👤 Usuário autenticado: {authenticated_user.username} (ID: {authenticated_user.id})")
-                
-                # Extrair dados da requisição HTTP
-                ip_address = self.headers.get('X-Forwarded-For', self.client_address[0] if self.client_address else None)
-                user_agent = self.headers.get('User-Agent')
-                request_method = self.command
-                request_path = self.path
-                
-                print("📦 Criando DataImportService...")
-                import_service = DataImportService(
-                    db, 
-                    user_id=authenticated_user.id, 
-                    username=authenticated_user.username,
-                    ip_address=ip_address,
-                    user_agent=user_agent,
-                    request_method=request_method,
-                    request_path=request_path
-                )
-                
-                print(f"📂 Tipo de arquivo: {filename}")
-                
-                # Determine file type and parse
-                if filename.endswith('.csv'):
-                    print("📄 Parseando CSV...")
-                    rows = import_service.parse_csv(file_data)
-                elif filename.endswith(('.xlsx', '.xls')):
-                    print("📊 Parseando XLSX...")
-                    rows = import_service.parse_xlsx(file_data)
-                    print(f"✅ Parse XLSX concluído: {len(rows)} linhas")
-                else:
-                    self.send_json_response({
-                        "error": "Formato de arquivo não suportado. Use CSV ou XLSX."
-                    }, 400)
-                    return
-                
-                print(f"📋 Linhas parseadas: {len(rows)}")
-                print(f"📋 Primeiras 2 linhas: {rows[:2] if len(rows) > 0 else 'nenhuma'}")
-                
-                # Import employees
-                print("🚀 Iniciando importação de employees...")
-                result = import_service.import_employees(rows)
-                
-                print(f"✅ Resultado da importação: {result}")
-                
-                # Invalidar cache após importação bem-sucedida
-                if result['created'] > 0 or result['updated'] > 0:
-                    print("🔄 Invalidando cache de employees...")
-                    invalidate_employees_cache()
-                
-                self.send_json_response({
-                    "success": True,
-                    "imported_count": result['created'],
-                    "updated_count": result['updated'],
-                    "created_list": result.get('created_list', []),
-                    "updated_list": result.get('updated_list', []),
-                    "errors": result['errors']
-                }, 200)
-                
-            finally:
-                db.close()
-            
-        except Exception as e:
-            print(f"❌ Erro ao importar funcionários: {e}")
-            import traceback
-            traceback.print_exc()
-            self.send_json_response({
-                "success": False,
-                "error": f"Erro interno: {str(e)}"
-            }, 500)
-    
     def parse_multipart_data(self, body, boundary):
         """Parse multipart form data to extract file and filename"""
         try:
             boundary_bytes = boundary.encode('utf-8')
             parts = body.split(b'--' + boundary_bytes)
             
-            for part in parts:
-                if b'Content-Disposition' in part and b'filename=' in part:
-                    # Extract filename
-                    disposition_line = part.split(b'\r\n')[0]
-                    filename_start = disposition_line.find(b'filename="')
-                    if filename_start != -1:
-                        filename_start += 10  # len('filename="')
-                        filename_end = disposition_line.find(b'"', filename_start)
-                        filename = disposition_line[filename_start:filename_end].decode('utf-8')
-                    else:
-                        filename = 'unknown.xlsx'
-                    
-                    # Find the start of file data (after headers)
-                    header_end = part.find(b'\r\n\r\n')
-                    if header_end != -1:
-                        file_data = part[header_end + 4:]
-                        # Remove trailing boundary markers
-                        if file_data.endswith(b'\r\n'):
-                            file_data = file_data[:-2]
-                        return file_data, filename
+            print(f"🔍 Parse multipart: {len(parts)} partes encontradas")
             
+            for idx, part in enumerate(parts):
+                if b'Content-Disposition' in part:
+                    print(f"📦 Parte {idx} tem Content-Disposition")
+                    
+                    # Extrair todas as linhas do header
+                    lines = part.split(b'\r\n')
+                    print(f"   Primeira linha: {lines[0][:200]}")  # Primeiros 200 bytes
+                    
+                    filename = None
+                    
+                    # Procurar filename em qualquer linha do header
+                    for line in lines[:5]:  # Verificar primeiras 5 linhas
+                        if b'filename=' in line:
+                            # Tentar extrair filename com aspas
+                            if b'filename="' in line:
+                                filename_start = line.find(b'filename="') + 10
+                                filename_end = line.find(b'"', filename_start)
+                                if filename_end != -1:
+                                    filename = line[filename_start:filename_end].decode('utf-8')
+                                    break
+                            # Tentar sem aspas
+                            elif b'filename=' in line:
+                                filename_start = line.find(b'filename=') + 9
+                                # Procurar próximo espaço ou ponto e vírgula
+                                filename_end = line.find(b';', filename_start)
+                                if filename_end == -1:
+                                    filename_end = line.find(b'\r', filename_start)
+                                if filename_end == -1:
+                                    filename_end = len(line)
+                                filename = line[filename_start:filename_end].strip().decode('utf-8')
+                                break
+                    
+                    if filename:
+                        print(f"   ✅ Filename encontrado: {filename}")
+                        
+                        # Find the start of file data (after headers)
+                        header_end = part.find(b'\r\n\r\n')
+                        if header_end != -1:
+                            file_data = part[header_end + 4:]
+                            # Remove trailing boundary markers
+                            if file_data.endswith(b'\r\n'):
+                                file_data = file_data[:-2]
+                            return file_data, filename
+                    else:
+                        print(f"   ⚠️ Filename não encontrado nesta parte")
+            
+            print("❌ Nenhum arquivo encontrado no multipart")
             return None, None
         except Exception as e:
             print(f"❌ Erro ao parsear multipart data: {e}")
+            import traceback
+            traceback.print_exc()
             return None, None
     
     def process_excel_import(self, file_data):
@@ -1699,36 +1620,125 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
 
     def handle_import_employees(self):
-        """Import employees from uploaded CSV/XLSX (admin only)"""
+        """Handle CSV/XLSX file import for employees using DataImportService"""
         try:
-            # minimal auth check: ensure user is admin
-            # TODO: integrate with full auth
-            # parse multipart/form-data (simple fallback to raw body assuming file bytes)
-            file_bytes = self.rfile.read(int(self.headers.get('Content-Length', 0)))
-            if not file_bytes:
-                self.send_json_response({"error": "No file uploaded"}, 400)
+            print("🔥 handle_import_employees chamado")
+            
+            # Parse multipart form data
+            content_type = self.headers.get('Content-Type', '')
+            print(f"Content-Type recebido: {content_type}")
+            
+            if not content_type.startswith('multipart/form-data'):
+                self.send_json_response({"error": "Content-Type deve ser multipart/form-data"}, 400)
                 return
-
+            
+            # Get boundary from content type
+            boundary = None
+            for part in content_type.split(';'):
+                if 'boundary=' in part:
+                    boundary = part.split('boundary=')[1].strip()
+                    break
+            
+            if not boundary:
+                self.send_json_response({"error": "Boundary não encontrado no Content-Type"}, 400)
+                return
+            
+            # Read the body
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            
+            print(f"Body recebido: {len(body)} bytes")
+            
+            # Parse multipart data
+            file_data, filename = self.parse_multipart_data(body, boundary)
+            
+            if not file_data:
+                self.send_json_response({"error": "Arquivo não encontrado no upload"}, 400)
+                return
+            
+            print(f"Arquivo recebido: {filename}, {len(file_data)} bytes")
+            
+            # Import using DataImportService
             from app.services.data_import import DataImportService
-            if SessionLocal:
-                db = SessionLocal()
-                importer = DataImportService(db)
-                # try parse as CSV first
-                try:
-                    rows = importer.parse_csv(file_bytes)
-                except Exception:
-                    # try xlsx
-                    rows = importer.parse_xlsx(file_bytes)
-
-                result = importer.import_employees(rows)
+            
+            db = SessionLocal()
+            try:
+                # Obter usuário autenticado usando a mesma sessão do banco
+                authenticated_user = self.get_authenticated_user(db)
+                if not authenticated_user:
+                    self.send_json_response({"error": "Usuário não autenticado"}, 401)
+                    return
+                
+                print(f"👤 Usuário autenticado: {authenticated_user.username} (ID: {authenticated_user.id})")
+                
+                # Extrair dados da requisição HTTP
+                ip_address = self.headers.get('X-Forwarded-For', self.client_address[0] if self.client_address else None)
+                user_agent = self.headers.get('User-Agent')
+                request_method = self.command
+                request_path = self.path
+                
+                print("📦 Criando DataImportService...")
+                import_service = DataImportService(
+                    db, 
+                    user_id=authenticated_user.id, 
+                    username=authenticated_user.username,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    request_method=request_method,
+                    request_path=request_path
+                )
+                
+                print(f"📂 Tipo de arquivo: {filename}")
+                
+                # Determine file type and parse
+                if filename.endswith('.csv'):
+                    print("📄 Parseando CSV...")
+                    rows = import_service.parse_csv(file_data)
+                elif filename.endswith(('.xlsx', '.xls')):
+                    print("📊 Parseando XLSX...")
+                    rows = import_service.parse_xlsx(file_data)
+                    print(f"✅ Parse XLSX concluído: {len(rows)} linhas")
+                else:
+                    self.send_json_response({
+                        "error": "Formato de arquivo não suportado. Use CSV ou XLSX."
+                    }, 400)
+                    return
+                
+                print(f"📋 Linhas parseadas: {len(rows)}")
+                print(f"📋 Primeiras 2 linhas: {rows[:2] if len(rows) > 0 else 'nenhuma'}")
+                
+                # Import employees
+                print("🚀 Iniciando importação de employees...")
+                result = import_service.import_employees(rows)
+                
+                print(f"✅ Resultado da importação: {result}")
+                
+                # SEMPRE invalidar cache após importação (mesmo com erros)
+                # Garante que o frontend vai buscar dados atualizados
+                print("🔄 Invalidando cache de employees (FORÇADO)...")
+                invalidate_employees_cache()
+                print("✅ Cache invalidado com sucesso!")
+                
+                self.send_json_response({
+                    "success": True,
+                    "imported_count": result['created'],
+                    "updated_count": result['updated'],
+                    "created_list": result.get('created_list', []),
+                    "updated_list": result.get('updated_list', []),
+                    "errors": result['errors']
+                }, 200)
+                
+            finally:
                 db.close()
-                self.send_json_response(result, 200)
-            else:
-                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
-
+            
         except Exception as e:
             print(f"❌ Erro ao importar funcionários: {e}")
-            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({
+                "success": False,
+                "error": f"Erro interno: {str(e)}"
+            }, 500)
                 
     
     def handle_create_user(self):
@@ -2046,18 +2056,126 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             print(f"❌ Erro ao criar template: {e}")
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
     
+    def handle_file_upload(self):
+        """Upload de arquivo PDF de holerites"""
+        try:
+            print("📤 Iniciando upload de arquivo...")
+            
+            # Parse multipart form data
+            content_type = self.headers.get('Content-Type', '')
+            print(f"Content-Type: {content_type}")
+            
+            if not content_type.startswith('multipart/form-data'):
+                print(f"❌ Content-Type inválido: {content_type}")
+                self.send_json_response({"error": "Content-Type deve ser multipart/form-data"}, 400)
+                return
+            
+            # Get boundary
+            boundary = None
+            for part in content_type.split(';'):
+                if 'boundary=' in part:
+                    boundary = part.split('boundary=')[1].strip()
+                    break
+            
+            print(f"Boundary: {boundary}")
+            
+            if not boundary:
+                print("❌ Boundary não encontrado")
+                self.send_json_response({"error": "Boundary não encontrado"}, 400)
+                return
+            
+            # Read body
+            content_length = int(self.headers.get('Content-Length', 0))
+            print(f"Content-Length: {content_length}")
+            body = self.rfile.read(content_length)
+            print(f"Body recebido: {len(body)} bytes")
+            
+            # Parse multipart data
+            file_data, filename = self.parse_multipart_data(body, boundary)
+            print(f"Parse result - file_data: {len(file_data) if file_data else 0} bytes, filename: {filename}")
+            
+            if not file_data:
+                print("❌ Arquivo não encontrado no parse")
+                self.send_json_response({"error": "Arquivo não encontrado no upload"}, 400)
+                return
+            
+            # Validar que é PDF
+            if not filename.lower().endswith('.pdf'):
+                print(f"❌ Arquivo não é PDF: {filename}")
+                self.send_json_response({"error": "Apenas arquivos PDF são aceitos"}, 400)
+                return
+            
+            # Salvar arquivo temporariamente
+            import os
+            import time
+            upload_dir = 'uploads'
+            os.makedirs(upload_dir, exist_ok=True)
+            
+            timestamp = int(time.time())
+            safe_filename = f"{timestamp}_{filename}"
+            filepath = os.path.join(upload_dir, safe_filename)
+            
+            with open(filepath, 'wb') as f:
+                f.write(file_data)
+            
+            print(f"✅ Arquivo salvo: {filepath} ({len(file_data)} bytes)")
+            
+            self.send_json_response({
+                "success": True,
+                "filename": safe_filename,
+                "original_filename": filename,
+                "filepath": filepath,
+                "size": len(file_data)
+            })
+            
+        except Exception as e:
+            print(f"❌ Erro no upload: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro ao fazer upload: {str(e)}"}, 500)
+
     def handle_process_payroll_file(self):
         """Processar arquivo de folha de pagamento"""
         try:
-            # Este endpoint será implementado quando tivermos upload de arquivos
-            # Por enquanto, retornar não implementado
+            print("📄 Iniciando processamento de holerites...")
+            
+            # Obter dados da requisição
+            data = self.get_request_data()
+            uploaded_file = data.get('uploadedFile', {})
+            
+            if not uploaded_file:
+                self.send_json_response({"error": "Nenhum arquivo foi enviado"}, 400)
+                return
+            
+            filepath = uploaded_file.get('filepath')
+            filename = uploaded_file.get('filename')
+            
+            if not filepath or not filename:
+                self.send_json_response({"error": "Dados do arquivo incompletos"}, 400)
+                return
+            
+            print(f"📂 Processando arquivo: {filepath}")
+            
+            # Verificar se arquivo existe
+            import os
+            if not os.path.exists(filepath):
+                self.send_json_response({"error": f"Arquivo não encontrado: {filepath}"}, 404)
+                return
+            
+            # Aqui você implementaria a lógica de processamento do PDF
+            # Por enquanto, retornar sucesso simulado
+            
             self.send_json_response({
-                "error": "Funcionalidade de upload não implementada ainda",
-                "message": "Use a interface de upload de arquivos"
-            }, 501)
+                "success": True,
+                "message": "PDF de holerites carregado com sucesso",
+                "processed_count": 0,
+                "note": "Processamento ainda não implementado - use a funcionalidade de envio de holerites existente"
+            }, 200)
                 
         except Exception as e:
             print(f"❌ Erro ao processar arquivo: {e}")
+            import traceback
+            traceback.print_exc()
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
 
     def handle_system_status(self):
@@ -2230,6 +2348,48 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 "error": str(e),
                 "status": "error"
             })
+    
+    def handle_cache_status(self):
+        """Endpoint para verificar status do cache de employees"""
+        try:
+            import time
+            global employees_cache
+            
+            current_time = time.time()
+            cache_age = current_time - employees_cache['last_update']
+            is_valid = employees_cache['data'] is not None and cache_age < employees_cache['ttl']
+            
+            self.send_json_response({
+                "cache_valid": is_valid,
+                "cache_age_seconds": round(cache_age, 2),
+                "cache_ttl_seconds": employees_cache['ttl'],
+                "has_data": employees_cache['data'] is not None,
+                "employee_count": len(employees_cache['data']['employees']) if employees_cache['data'] else 0,
+                "last_update": employees_cache['last_update']
+            })
+        except Exception as e:
+            print(f"❌ Erro ao verificar cache: {e}")
+            self.send_json_response({"error": str(e)}, 500)
+    
+    def handle_cache_invalidate(self):
+        """Endpoint para invalidar cache manualmente"""
+        try:
+            authenticated_user = self.get_authenticated_user()
+            if not authenticated_user:
+                self.send_json_response({"error": "Usuário não autenticado"}, 401)
+                return
+            
+            print(f"🔄 Cache invalidado manualmente por: {authenticated_user.username}")
+            invalidate_employees_cache()
+            
+            self.send_json_response({
+                "success": True,
+                "message": "Cache invalidado com sucesso",
+                "invalidated_by": authenticated_user.username
+            })
+        except Exception as e:
+            print(f"❌ Erro ao invalidar cache: {e}")
+            self.send_json_response({"error": str(e)}, 500)
 
 if __name__ == "__main__":
     import time

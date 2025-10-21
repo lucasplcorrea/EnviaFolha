@@ -205,9 +205,21 @@ const Employees = () => {
       
       // FORÇAR RELOAD após importação bem-sucedida
       if (imported_count > 0 || updated_count > 0) {
+        // Invalidar cache no backend primeiro
+        try {
+          console.log('🔄 Invalidando cache no backend...');
+          await api.post('/employees/cache/invalidate');
+          console.log('✅ Cache invalidado com sucesso!');
+        } catch (cacheError) {
+          console.warn('⚠️ Erro ao invalidar cache:', cacheError);
+        }
+        
+        // Aumentar delay para 1 segundo para garantir que cache foi invalidado
+        console.log('🔄 Aguardando 1s antes de recarregar lista de colaboradores...');
         setTimeout(() => {
+          console.log('📊 Recarregando lista de colaboradores...');
           loadEmployees();
-        }, 500);
+        }, 1000);
       }
       
     } catch (error) {
