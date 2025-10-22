@@ -3020,27 +3020,25 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             
             db = SessionLocal()
             try:
-                from app.models.system_log import SystemLog
+                from app.models.system_log import SystemLog, LogCategory
                 from sqlalchemy import func, desc
                 from datetime import datetime, timedelta
                 
-                # Estatísticas de comunicados
-                comm_sent = db.query(SystemLog).filter(
-                    SystemLog.event_type == 'communication_sent'
-                ).count()
+                # Estatísticas de comunicados (buscar por category=COMMUNICATION e message contendo sucesso/falha)
+                comm_logs = db.query(SystemLog).filter(
+                    SystemLog.category == LogCategory.COMMUNICATION
+                ).all()
                 
-                comm_failed = db.query(SystemLog).filter(
-                    SystemLog.event_type == 'communication_failed'
-                ).count()
+                comm_sent = sum(1 for log in comm_logs if 'enviado' in log.message.lower() or 'sucesso' in log.message.lower())
+                comm_failed = sum(1 for log in comm_logs if 'falha' in log.message.lower() or 'erro' in log.message.lower())
                 
-                # Estatísticas de processamento de folha
-                payroll_processed = db.query(SystemLog).filter(
-                    SystemLog.event_type == 'payroll_processing'
-                ).count()
+                # Estatísticas de holerites (buscar por category=PAYROLL)
+                payroll_logs = db.query(SystemLog).filter(
+                    SystemLog.category == LogCategory.PAYROLL
+                ).all()
                 
-                payroll_failed = db.query(SystemLog).filter(
-                    SystemLog.event_type == 'payroll_processing_error'
-                ).count()
+                payroll_processed = sum(1 for log in payroll_logs if 'enviado' in log.message.lower() or 'sucesso' in log.message.lower())
+                payroll_failed = sum(1 for log in payroll_logs if 'falha' in log.message.lower() or 'erro' in log.message.lower())
                 
                 # Total geral
                 total_sent = comm_sent + payroll_processed
@@ -3051,25 +3049,28 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 if (total_success + total_failed) > 0:
                     success_rate = round((total_success / (total_success + total_failed)) * 100, 2)
                 
-                # Atividades recentes (últimos 50 registros)
+                # Atividades recentes (últimos 50 registros de comunicações e holerites)
                 recent_logs = db.query(SystemLog).filter(
-                    SystemLog.event_type.in_([
-                        'communication_sent',
-                        'communication_failed',
-                        'payroll_processing',
-                        'payroll_processing_error'
+                    SystemLog.category.in_([
+                        LogCategory.COMMUNICATION,
+                        LogCategory.PAYROLL,
+                        LogCategory.WHATSAPP
                     ])
-                ).order_by(desc(SystemLog.timestamp)).limit(50).all()
+                ).order_by(desc(SystemLog.created_at)).limit(50).all()
                 
                 recent_activity = []
                 for log in recent_logs:
+                    # Determinar tipo e status da atividade
+                    activity_type = 'communication' if log.category == LogCategory.COMMUNICATION else 'payroll'
+                    status = 'success' if ('enviado' in log.message.lower() or 'sucesso' in log.message.lower()) else 'error'
+                    
                     activity = {
                         "id": log.id,
-                        "type": log.event_type,
-                        "description": log.description,
-                        "timestamp": log.timestamp.isoformat() if log.timestamp else None,
-                        "severity": log.severity,
-                        "details": log.details
+                        "type": activity_type,
+                        "description": log.message,
+                        "timestamp": log.created_at.strftime('%d/%m/%Y %H:%M:%S') if log.created_at else 'N/A',
+                        "status": status,
+                        "details": log.details or ''
                     }
                     recent_activity.append(activity)
                 

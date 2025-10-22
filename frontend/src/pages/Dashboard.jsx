@@ -86,9 +86,14 @@ const Dashboard = () => {
       const payrollsResponse = await api.get('/payrolls/processed', { signal });
       const payrollsData = payrollsResponse.data;
       
-      // Por enquanto, vamos usar dados simulados para envios
-      const totalComunicados = 0; // TODO: Implementar endpoint /stats/communications
-      const successRate = '100%'; // TODO: Calcular baseado em logs de envio
+      // Buscar estatísticas de envios REAIS do banco de dados
+      const reportsResponse = await api.get('/reports/statistics', { signal });
+      const reportsData = reportsResponse.data;
+      
+      // Extrair dados de comunicados e holerites enviados
+      const totalComunicados = reportsData.by_type?.communications?.success || 0;
+      const holeritesSent = reportsData.by_type?.payrolls?.success || 0;
+      const successRate = reportsData.summary?.success_rate || 100;
       
       setStats([
         {
@@ -106,21 +111,28 @@ const Dashboard = () => {
         },
         {
           name: 'Holerites Enviados',
-          value: '0', // TODO: Implementar contador de enviados
+          value: holeritesSent.toString(),
           icon: CheckCircleIcon,
-          color: 'bg-green-500'
+          color: 'bg-green-500',
+          subtitle: reportsData.by_type?.payrolls?.failed > 0 
+            ? `${reportsData.by_type.payrolls.failed} com falha` 
+            : 'Todos com sucesso'
         },
         {
           name: 'Comunicados Enviados',
           value: totalComunicados.toString(),
           icon: ChatBubbleLeftRightIcon,
-          color: 'bg-purple-500'
+          color: 'bg-purple-500',
+          subtitle: reportsData.by_type?.communications?.failed > 0 
+            ? `${reportsData.by_type.communications.failed} com falha` 
+            : reportsData.by_type?.communications?.success > 0 ? 'Todos com sucesso' : ''
         },
         {
           name: 'Taxa de Sucesso',
-          value: successRate,
+          value: `${successRate.toFixed(1)}%`,
           icon: ChartBarIcon,
-          color: 'bg-yellow-500'
+          color: 'bg-yellow-500',
+          subtitle: `${reportsData.summary?.total_success || 0} de ${reportsData.summary?.total_sent || 0} enviados`
         }
       ]);
     } catch (error) {
