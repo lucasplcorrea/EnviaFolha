@@ -9,6 +9,7 @@ import {
   ArrowDownTrayIcon
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
+import api from '../services/api';
 import { useTheme } from '../contexts/ThemeContext';
 
 const Reports = () => {
@@ -39,23 +40,19 @@ const Reports = () => {
     try {
       setLoading(true);
       
-      // Por enquanto, vamos simular dados de relatório
-      // Em uma implementação real, você teria um endpoint específico para relatórios
+      // Buscar estatísticas reais do backend
+      const response = await api.get('/reports/statistics');
+      const data = response.data;
       
-      // Simular dados baseados no que sabemos do sistema
-      const mockReports = {
+      setReports({
         summary: {
-          totalSent: 0,
-          totalSuccess: 0,
-          totalFailed: 0,
-          successRate: 100
+          totalSent: data.summary.total_sent || 0,
+          totalSuccess: data.summary.total_success || 0,
+          totalFailed: data.summary.total_failed || 0,
+          successRate: data.summary.success_rate || 0
         },
-        recentActivity: [
-          // Será populado com dados reais quando implementarmos logging de envios
-        ]
-      };
-      
-      setReports(mockReports);
+        recentActivity: data.recent_activity || []
+      });
       
     } catch (error) {
       console.error('Erro ao carregar relatórios:', error);

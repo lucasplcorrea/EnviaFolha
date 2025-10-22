@@ -98,3 +98,4 @@ backend/testa_Evolution/testaevolution.py
 backend/employees.json
 exemplo_importacao.csv
 csv-analytics/
+tests/

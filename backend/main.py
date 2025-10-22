@@ -159,6 +159,82 @@ def setup_database():
 # Inicializar banco de dados
 db_engine, SessionLocal = setup_database()
 
+# Função helper para logging simplificado
+def log_system_event(event_type: str, description: str, details: dict = None, 
+                     severity: str = 'info', user_id: int = None):
+    """
+    Helper para registrar eventos no banco de dados (system_logs)
+    
+    Args:
+        event_type: Tipo do evento (ex: 'payroll_processing', 'communication_sent')
+        description: Descrição do evento
+        details: Dicionário com detalhes adicionais
+        severity: Nível de severidade ('info', 'warning', 'error', 'debug', 'critical')
+        user_id: ID do usuário que executou a ação
+    """
+    if not SessionLocal:
+        # Sem banco de dados, apenas printar
+        print(f"[LOG {severity.upper()}] {event_type}: {description}")
+        return
+    
+    try:
+        db = SessionLocal()
+        try:
+            from app.models.system_log import SystemLog, LogLevel, LogCategory
+            import json
+            
+            # Mapear severity string para LogLevel enum
+            level_map = {
+                'debug': LogLevel.DEBUG,
+                'info': LogLevel.INFO,
+                'warning': LogLevel.WARNING,
+                'error': LogLevel.ERROR,
+                'critical': LogLevel.CRITICAL
+            }
+            level = level_map.get(severity.lower(), LogLevel.INFO)
+            
+            # Tentar mapear event_type para categoria
+            category = LogCategory.SYSTEM  # Default
+            if 'auth' in event_type.lower() or 'login' in event_type.lower():
+                category = LogCategory.AUTH
+            elif 'employee' in event_type.lower():
+                category = LogCategory.EMPLOYEE
+            elif 'import' in event_type.lower():
+                category = LogCategory.IMPORT
+            elif 'payroll' in event_type.lower() or 'holerite' in event_type.lower():
+                category = LogCategory.PAYROLL
+            elif 'communication' in event_type.lower() or 'comunicado' in event_type.lower():
+                category = LogCategory.COMMUNICATION
+            elif 'whatsapp' in event_type.lower() or 'evolution' in event_type.lower():
+                category = LogCategory.WHATSAPP
+            
+            # Converter details para JSON string se necessário
+            details_json = None
+            if details:
+                try:
+                    details_json = json.dumps(details, ensure_ascii=False, default=str)
+                except:
+                    details_json = str(details)
+            
+            log_entry = SystemLog(
+                level=level,
+                category=category,
+                message=f"[{event_type}] {description}",
+                details=details_json,
+                user_id=user_id,
+                created_at=datetime.now()
+            )
+            
+            db.add(log_entry)
+            db.commit()
+            
+        finally:
+            db.close()
+            
+    except Exception as e:
+        print(f"⚠️ Erro ao registrar log no banco: {e}")
+        # Não lançar exceção para não quebrar o fluxo principal
+
 # Cache para employees (atualizado a cada 3 minutos)
 employees_cache = {
     'data': None,
@@ -611,6 +687,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_payrolls_processed()
         elif path == '/api/v1/system/logs':
             self.handle_system_logs()
+        elif path == '/api/v1/reports/statistics':
+            self.handle_reports_statistics()
         else:
             self.send_error(404, "Endpoint não encontrado")
     
@@ -637,8 +715,14 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_create_payroll_template()
         elif path == '/api/v1/payroll/process' or path == '/api/v1/payrolls/process':
             self.handle_process_payroll_file()
+        elif path == '/api/v1/payrolls/bulk-send':
+            self.handle_bulk_send_payrolls()
         elif path == '/api/v1/files/upload':
             self.handle_file_upload()
+        elif path == '/api/v1/communications/send':
+            self.handle_send_communication()
+        elif path == '/api/v1/evolution/test-message':
+            self.handle_test_evolution_message()
         else:
             self.send_json_response({"error": "Endpoint não encontrado"}, 404)
     
@@ -954,17 +1038,104 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     def handle_payrolls_processed(self):
         """Lista de holerites processados"""
         try:
-            # TODO: Implementar listagem real de holerites processados
-            # Por enquanto, retornar lista vazia
-            payrolls = {
-                "payrolls": [],
+            import os
+            import glob
+            
+            # Diretório onde os holerites processados são salvos
+            output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'holerites_formatados_final')
+            
+            if not os.path.exists(output_dir):
+                self.send_json_response({
+                    "files": [],
+                    "statistics": {
+                        "total": 0,
+                        "ready": 0,
+                        "orphan": 0,
+                        "associated": 0
+                    }
+                })
+                return
+            
+            # Buscar todos os PDFs no diretório
+            pdf_files = glob.glob(os.path.join(output_dir, '*.pdf'))
+            
+            # Carregar dados dos colaboradores
+            employees_data = load_employees_data()
+            employees = employees_data.get('employees', [])
+            
+            # Criar dicionário de colaboradores por unique_id para busca rápida
+            employees_by_id = {emp.get('unique_id'): emp for emp in employees}
+            
+            files_list = []
+            stats = {
                 "total": 0,
-                "message": "Nenhum holerite processado encontrado"
+                "ready": 0,  # Com telefone e associado
+                "orphan": 0,  # Sem colaborador cadastrado
+                "associated": 0  # Associado a um colaborador
             }
             
-            self.send_json_response(payrolls)
+            for pdf_path in pdf_files:
+                filename = os.path.basename(pdf_path)
+                
+                # Extrair unique_id do nome do arquivo (formato: XXXXXXXXX_holerite_mes_ano.pdf)
+                parts = filename.split('_')
+                unique_id = parts[0] if parts else 'unknown'
+                
+                # Extrair mês/ano
+                month_year = 'desconhecido'
+                if len(parts) >= 4:  # XXXXXXXXX_holerite_mes_ano.pdf
+                    month_name = parts[2]
+                    year = parts[3].replace('.pdf', '')
+                    month_year = f"{month_name}_{year}"
+                
+                # Buscar colaborador associado
+                employee = employees_by_id.get(unique_id)
+                
+                file_info = {
+                    "filename": filename,
+                    "unique_id": unique_id,
+                    "month_year": month_year,
+                    "size": os.path.getsize(pdf_path),
+                    "created_at": datetime.fromtimestamp(os.path.getctime(pdf_path)).isoformat(),
+                    "is_orphan": employee is None,
+                    "can_send": False,
+                    "associated_employee": None
+                }
+                
+                if employee:
+                    stats["associated"] += 1
+                    phone = employee.get('phone_number', '').strip()
+                    
+                    file_info["associated_employee"] = {
+                        "unique_id": employee.get('unique_id'),
+                        "full_name": employee.get('full_name'),
+                        "phone_number": phone
+                    }
+                    
+                    # Pode enviar se tem telefone
+                    if phone and len(phone) >= 10:
+                        file_info["can_send"] = True
+                        stats["ready"] += 1
+                else:
+                    stats["orphan"] += 1
+                
+                files_list.append(file_info)
+                stats["total"] += 1
+            
+            # Ordenar por data de criação (mais recentes primeiro)
+            files_list.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+            
+            print(f"📊 Holerites processados: {stats['total']} total, {stats['ready']} prontos, {stats['orphan']} órfãos")
+            
+            self.send_json_response({
+                "files": files_list,
+                "statistics": stats
+            })
             
         except Exception as e:
+            print(f"❌ Erro ao listar holerites: {e}")
+            import traceback
+            traceback.print_exc()
             self.send_json_response({"error": f"Erro ao carregar holerites: {str(e)}"}, 500)
     
     def handle_create_employee(self):
@@ -2135,7 +2306,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json_response({"error": f"Erro ao fazer upload: {str(e)}"}, 500)
 
     def handle_process_payroll_file(self):
-        """Processar arquivo de folha de pagamento"""
+        """Processar arquivo de folha de pagamento - segmenta PDF e protege com senha"""
         try:
             print("📄 Iniciando processamento de holerites...")
             
@@ -2162,18 +2333,776 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json_response({"error": f"Arquivo não encontrado: {filepath}"}, 404)
                 return
             
-            # Aqui você implementaria a lógica de processamento do PDF
-            # Por enquanto, retornar sucesso simulado
+            # Criar diretório de saída se não existir
+            output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'holerites_formatados_final')
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+                print(f"✅ Diretório criado: {output_dir}")
             
-            self.send_json_response({
-                "success": True,
-                "message": "PDF de holerites carregado com sucesso",
-                "processed_count": 0,
-                "note": "Processamento ainda não implementado - use a funcionalidade de envio de holerites existente"
-            }, 200)
+            # Processar PDF
+            result = self.split_pdf_by_employee(filepath, output_dir)
+            
+            if result['success']:
+                # Registrar processamento no banco de dados
+                try:
+                    # Extrair mês/ano do primeiro arquivo processado
+                    month_year = 'desconhecido'
+                    if result['files'] and len(result['files']) > 0:
+                        month_year = result['files'][0].get('month_year', 'desconhecido')
+                    
+                    # Log de processamento bem-sucedido
+                    log_system_event(
+                        event_type='payroll_processing',
+                        description=f"PDF processado: {filename}",
+                        details={
+                            'original_file': filename,
+                            'processed_count': result['processed_count'],
+                            'month_year': month_year,
+                            'files_generated': [f['filename'] for f in result['files'][:10]],  # Primeiros 10
+                            'warnings': result.get('warnings', [])
+                        },
+                        severity='info',
+                        user_id=None  # TODO: Pegar do token JWT
+                    )
+                    
+                except Exception as log_error:
+                    print(f"⚠️ Erro ao registrar log: {log_error}")
+                
+                print(f"✅ Processamento concluído: {result['processed_count']} holerites gerados")
+                self.send_json_response({
+                    "success": True,
+                    "message": f"PDF processado com sucesso",
+                    "processed_count": result['processed_count'],
+                    "files": result['files'],
+                    "warnings": result.get('warnings', []),
+                    "month_year": month_year if 'month_year' in locals() else 'desconhecido'
+                }, 200)
+            else:
+                print(f"❌ Erro no processamento: {result['error']}")
+                
+                # Registrar erro no log
+                try:
+                    log_system_event(
+                        event_type='payroll_processing_error',
+                        description=f"Erro ao processar PDF: {filename}",
+                        details={
+                            'original_file': filename,
+                            'error': result['error']
+                        },
+                        severity='error',
+                        user_id=None
+                    )
+                except Exception as log_error:
+                    print(f"⚠️ Erro ao registrar log de erro: {log_error}")
+                
+                self.send_json_response({
+                    "error": result['error']
+                }, 500)
                 
         except Exception as e:
             print(f"❌ Erro ao processar arquivo: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def split_pdf_by_employee(self, input_pdf_path, output_dir):
+        """Segmenta PDF em holerites individuais e protege com senha"""
+        import re
+        
+        if not PDF_PROCESSING_AVAILABLE:
+            return {
+                'success': False,
+                'error': 'PyPDF2 não está disponível. Instale com: pip install PyPDF2'
+            }
+        
+        try:
+            files_created = []
+            unprotected_pdfs = []
+            
+            with open(input_pdf_path, 'rb') as infile:
+                reader = PyPDF2.PdfReader(infile)
+                num_pages = len(reader.pages)
+                
+                print(f"📖 PDF contém {num_pages} páginas")
+                
+                for i in range(num_pages):
+                    page = reader.pages[i]
+                    text = page.extract_text()
+                    
+                    file_identifier = f'holerite_pagina_{i+1}'
+                    employee_cpf = ''
+                    
+                    # Regex para encontrar o número de cadastro
+                    cadastro_match = re.search(r'Cadastro\s*Nome\s*do\s*Funcionário\s*CBO\s*Empresa\s*Local\s*Departamento\s*FL\s*\n\s*(\d+)', text)
+                    cadastro_num = cadastro_match.group(1) if cadastro_match else 'UNKNOWN_CAD'
+                    
+                    # Regex para encontrar o número da empresa
+                    empresa_field_match = re.search(r'(\d+)\s+[A-ZÀ-Ú\s]+\s+(\d+)\s+(\d+)\s+\d+\s+\d+\s+\d+', text)
+                    empresa_num = empresa_field_match.group(3) if empresa_field_match else 'UNKNOWN_EMP'
+                    
+                    # Formatação do identificador único: XXXXYYYYY
+                    if empresa_num != 'UNKNOWN_EMP' and cadastro_num != 'UNKNOWN_CAD':
+                        empresa_formatted = str(empresa_num).zfill(4)
+                        cadastro_formatted = str(cadastro_num).zfill(5)
+                        file_identifier = f'{empresa_formatted}{cadastro_formatted}'
+                    else:
+                        file_identifier = f'UNKNOWN_{i+1}'
+                    
+                    # Regex para encontrar o CPF
+                    cpf_match = re.search(r'CPF:\s*(\d{3}\.\d{3}\.\d{3}-\d{2})', text)
+                    if cpf_match:
+                        employee_cpf_full = cpf_match.group(1).replace('.', '').replace('-', '')
+                        employee_cpf = employee_cpf_full[:4]
+                    
+                    # Regex para encontrar o mês e ano de referência
+                    month_year_match = re.search(r"(\d{2}/\d{4})\s*Mensal", text)
+                    month_year = month_year_match.group(1) if month_year_match else "UNKNOWN_DATE"
+                    
+                    # Mapeamento de números de mês para nomes
+                    month_names = {
+                        "01": "janeiro", "02": "fevereiro", "03": "março", "04": "abril",
+                        "05": "maio", "06": "junho", "07": "julho", "08": "agosto",
+                        "09": "setembro", "10": "outubro", "11": "novembro", "12": "dezembro"
+                    }
+                    
+                    formatted_month_year = ""
+                    if month_year != "UNKNOWN_DATE":
+                        month_num = month_year.split("/")[0]
+                        year = month_year.split("/")[1]
+                        formatted_month_year = f"{month_names.get(month_num, 'UNKNOWN')}_{year}"
+                    else:
+                        formatted_month_year = "UNKNOWN_DATE"
+                    
+                    output_pdf_path = os.path.join(output_dir, f'{file_identifier}_holerite_{formatted_month_year}.pdf')
+                    
+                    writer = PyPDF2.PdfWriter()
+                    writer.add_page(page)
+                    
+                    # Proteger com senha (4 primeiros dígitos do CPF)
+                    if employee_cpf:
+                        try:
+                            writer.encrypt(user_password=employee_cpf, owner_password=None)
+                            print(f"🔒 Página {i+1}: {file_identifier} protegida com senha")
+                        except Exception as e:
+                            print(f"⚠️ Erro ao proteger {file_identifier}: {e}")
+                            unprotected_pdfs.append({
+                                'identifier': file_identifier,
+                                'reason': f'Erro ao criptografar: {e}'
+                            })
+                    else:
+                        print(f"⚠️ Página {i+1}: {file_identifier} - CPF não encontrado, PDF NÃO protegido")
+                        unprotected_pdfs.append({
+                            'identifier': file_identifier,
+                            'reason': 'CPF não encontrado'
+                        })
+                    
+                    # Salvar arquivo
+                    with open(output_pdf_path, 'wb') as outfile:
+                        writer.write(outfile)
+                    
+                    files_created.append({
+                        'identifier': file_identifier,
+                        'filename': os.path.basename(output_pdf_path),
+                        'path': output_pdf_path,
+                        'protected': bool(employee_cpf),
+                        'month_year': formatted_month_year
+                    })
+                    
+                    print(f"✅ Holerite {file_identifier} salvo em {output_pdf_path} (senha: {'SIM' if employee_cpf else 'NÃO'})")
+            
+            # Preparar warnings se houver PDFs não protegidos
+            warnings = []
+            if unprotected_pdfs:
+                warnings.append(f"{len(unprotected_pdfs)} PDF(s) não foram protegidos com senha")
+                for pdf in unprotected_pdfs:
+                    warnings.append(f"  - {pdf['identifier']}: {pdf['reason']}")
+            
+            return {
+                'success': True,
+                'processed_count': len(files_created),
+                'files': files_created,
+                'warnings': warnings
+            }
+            
+        except Exception as e:
+            print(f"❌ Erro ao segmentar PDF: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'error': f'Erro ao processar PDF: {str(e)}'
+            }
+
+    def handle_send_communication(self):
+        """Enviar comunicado para colaboradores via WhatsApp"""
+        try:
+            print("📨 Iniciando envio de comunicado...")
+            
+            # Obter dados da requisição
+            data = self.get_request_data()
+            selected_employees = data.get('selectedEmployees', [])
+            message = data.get('message', '').strip()
+            uploaded_file = data.get('uploadedFile')
+            
+            if not selected_employees:
+                self.send_json_response({"error": "Nenhum colaborador selecionado"}, 400)
+                return
+            
+            if not message and not uploaded_file:
+                self.send_json_response({"error": "É necessário enviar uma mensagem ou um arquivo"}, 400)
+                return
+            
+            print(f"📋 Enviando para {len(selected_employees)} colaborador(es)")
+            
+            # Carregar dados dos colaboradores
+            employees_data = load_employees_data()
+            employees = employees_data.get('employees', [])
+            
+            # Criar dicionário para busca rápida por ID
+            employees_by_id = {emp.get('id'): emp for emp in employees}
+            
+            # Listas de controle
+            success_count = 0
+            failed_employees = []
+            
+            # Simular envio (substituir por integração real com Evolution API)
+            for emp_id in selected_employees:
+                employee = employees_by_id.get(emp_id)
+                
+                if not employee:
+                    failed_employees.append({
+                        'id': emp_id,
+                        'reason': 'Colaborador não encontrado'
+                    })
+                    continue
+                
+                phone = employee.get('phone_number', '').strip()
+                if not phone or len(phone) < 10:
+                    failed_employees.append({
+                        'id': emp_id,
+                        'name': employee.get('full_name'),
+                        'reason': 'Telefone inválido'
+                    })
+                    continue
+                
+                # ENVIO REAL via Evolution API
+                print(f"📤 Enviando comunicado para {employee.get('full_name')} ({phone})...")
+                
+                try:
+                    import asyncio
+                    import sys
+                    sys.path.append(os.path.dirname(__file__))
+                    from app.services.evolution_api import EvolutionAPIService
+                    
+                    evolution_service = EvolutionAPIService()
+                    
+                    # Criar event loop se necessário
+                    try:
+                        loop = asyncio.get_event_loop()
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                    
+                    # Enviar comunicado (texto + arquivo se houver)
+                    file_path = None
+                    if uploaded_file:
+                        file_path = uploaded_file.get('filepath')
+                    
+                    result = loop.run_until_complete(
+                        evolution_service.send_communication_message(
+                            phone=phone,
+                            message_text=message,
+                            file_path=file_path
+                        )
+                    )
+                    
+                    if result['success']:
+                        print(f"✅ Comunicado enviado para {employee.get('full_name')}")
+                        success_count += 1
+                        
+                        # Registrar no log
+                        try:
+                            log_system_event(
+                                event_type='communication_sent',
+                                description=f"Comunicado enviado para {employee.get('full_name')}",
+                                details={
+                                    'employee_id': emp_id,
+                                    'employee_name': employee.get('full_name'),
+                                    'phone_number': phone,
+                                    'message_preview': message[:100] if message else '[Arquivo enviado]',
+                                    'has_file': uploaded_file is not None,
+                                    'evolution_result': result['message']
+                                },
+                                severity='info',
+                                user_id=None
+                            )
+                        except Exception as log_error:
+                            print(f"⚠️ Erro ao registrar log: {log_error}")
+                    else:
+                        print(f"❌ Falha ao enviar para {employee.get('full_name')}: {result['message']}")
+                        failed_employees.append({
+                            'id': emp_id,
+                            'name': employee.get('full_name'),
+                            'reason': result['message']
+                        })
+                        
+                except Exception as send_error:
+                    print(f"❌ Erro no envio para {employee.get('full_name')}: {send_error}")
+                    failed_employees.append({
+                        'id': emp_id,
+                        'name': employee.get('full_name'),
+                        'reason': f'Erro na API: {str(send_error)}'
+                    })
+            
+            # Registrar erros no log
+            if failed_employees:
+                try:
+                    log_system_event(
+                        event_type='communication_failed',
+                        description=f"{len(failed_employees)} envio(s) de comunicado falharam",
+                        details={
+                            'failed_count': len(failed_employees),
+                            'failed_employees': failed_employees
+                        },
+                        severity='warning',
+                        user_id=None
+                    )
+                except Exception as log_error:
+                    print(f"⚠️ Erro ao registrar log de falhas: {log_error}")
+            
+            result_message = f"{success_count} comunicado(s) enviado(s) com sucesso"
+            if failed_employees:
+                result_message += f", {len(failed_employees)} falharam"
+            
+            print(f"📊 Resultado: {result_message}")
+            
+            self.send_json_response({
+                "success": True,
+                "message": result_message,
+                "success_count": success_count,
+                "failed_count": len(failed_employees),
+                "failed_employees": failed_employees
+            }, 200)
+            
+        except Exception as e:
+            print(f"❌ Erro ao enviar comunicado: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Registrar erro crítico no log
+            try:
+                log_system_event(
+                    event_type='communication_error',
+                    description=f"Erro crítico ao enviar comunicado",
+                    details={'error': str(e)},
+                    severity='error',
+                    user_id=None
+                )
+            except Exception as log_error:
+                print(f"⚠️ Erro ao registrar log de erro: {log_error}")
+            
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_bulk_send_payrolls(self):
+        """Enviar holerites em lote via Evolution API"""
+        try:
+            print("📨 Iniciando envio em lote de holerites...")
+            
+            # Obter dados da requisição
+            data = self.get_request_data()
+            selected_files = data.get('selected_files', [])
+            message_template = data.get('message_template', '').strip()
+            
+            if not selected_files:
+                self.send_json_response({"error": "Nenhum arquivo selecionado"}, 400)
+                return
+            
+            print(f"📋 Enviando {len(selected_files)} holerite(s)...")
+            
+            # Importar dependências
+            import asyncio
+            import sys
+            import os
+            sys.path.append(os.path.dirname(__file__))
+            from app.services.evolution_api import EvolutionAPIService
+            
+            evolution_service = EvolutionAPIService()
+            
+            # Verificar se Evolution API está configurada
+            if not evolution_service.server_url or not evolution_service.api_key:
+                self.send_json_response({
+                    "error": "Evolution API não está configurada. Verifique o arquivo .env"
+                }, 500)
+                return
+            
+            # Criar event loop
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Listas de controle
+            success_count = 0
+            failed_count = 0
+            sent_files = []
+            failed_files = []
+            
+            # Processar cada arquivo
+            for idx, file_info in enumerate(selected_files):
+                filename = file_info.get('filename')
+                employee = file_info.get('employee', {})
+                month_year = file_info.get('month_year', 'desconhecido')
+                
+                employee_name = employee.get('full_name', 'Colaborador')
+                phone_number = employee.get('phone_number', '')
+                
+                print(f"\n📄 [{idx + 1}/{len(selected_files)}] Enviando {filename} para {employee_name}...")
+                
+                # Validar telefone
+                if not phone_number or len(phone_number) < 10:
+                    print(f"⚠️ Telefone inválido para {employee_name}")
+                    failed_count += 1
+                    failed_files.append({
+                        'filename': filename,
+                        'employee': employee_name,
+                        'reason': 'Telefone inválido'
+                    })
+                    continue
+                
+                # Construir caminho do arquivo
+                import os
+                file_path = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)),
+                    'holerites_formatados_final',
+                    filename
+                )
+                
+                if not os.path.exists(file_path):
+                    print(f"⚠️ Arquivo não encontrado: {file_path}")
+                    failed_count += 1
+                    failed_files.append({
+                        'filename': filename,
+                        'employee': employee_name,
+                        'reason': 'Arquivo não encontrado'
+                    })
+                    continue
+                
+                # Enviar via Evolution API
+                try:
+                    result = loop.run_until_complete(
+                        evolution_service.send_payroll_message(
+                            phone=phone_number,
+                            employee_name=employee_name,
+                            file_path=file_path,
+                            month_year=month_year
+                        )
+                    )
+                    
+                    if result['success']:
+                        print(f"✅ Holerite enviado para {employee_name}")
+                        success_count += 1
+                        sent_files.append({
+                            'filename': filename,
+                            'employee': employee_name,
+                            'phone': phone_number
+                        })
+                        
+                        # Mover arquivo para pasta 'enviados'
+                        try:
+                            enviados_dir = os.path.join(
+                                os.path.dirname(os.path.abspath(__file__)),
+                                '..',
+                                'enviados'
+                            )
+                            if not os.path.exists(enviados_dir):
+                                os.makedirs(enviados_dir)
+                            
+                            dest_path = os.path.join(enviados_dir, filename)
+                            import shutil
+                            shutil.move(file_path, dest_path)
+                            print(f"📦 Arquivo movido para enviados/")
+                        except Exception as move_error:
+                            print(f"⚠️ Erro ao mover arquivo: {move_error}")
+                        
+                        # Registrar no log
+                        try:
+                            log_system_event(
+                                event_type='payroll_sent',
+                                description=f"Holerite enviado para {employee_name}",
+                                details={
+                                    'filename': filename,
+                                    'employee_name': employee_name,
+                                    'phone_number': phone_number,
+                                    'month_year': month_year,
+                                    'evolution_result': result['message']
+                                },
+                                severity='info',
+                                user_id=None
+                            )
+                        except Exception as log_error:
+                            print(f"⚠️ Erro ao registrar log: {log_error}")
+                    else:
+                        print(f"❌ Falha ao enviar para {employee_name}: {result['message']}")
+                        failed_count += 1
+                        failed_files.append({
+                            'filename': filename,
+                            'employee': employee_name,
+                            'reason': result['message']
+                        })
+                        
+                except Exception as send_error:
+                    print(f"❌ Erro no envio para {employee_name}: {send_error}")
+                    failed_count += 1
+                    failed_files.append({
+                        'filename': filename,
+                        'employee': employee_name,
+                        'reason': f'Erro na API: {str(send_error)}'
+                    })
+                
+                # Delay entre envios (exceto no último)
+                if idx < len(selected_files) - 1:
+                    import random
+                    import time
+                    delay = random.uniform(15, 30)  # 15-30 segundos entre envios
+                    print(f"⏳ Aguardando {delay:.1f}s antes do próximo envio...")
+                    time.sleep(delay)
+            
+            # Resultado final
+            result_message = f"{success_count}/{len(selected_files)} holerites enviados com sucesso"
+            
+            print(f"\n📊 Resultado final: {result_message}")
+            
+            self.send_json_response({
+                "success": True,
+                "message": result_message,
+                "total_count": len(selected_files),
+                "success_count": success_count,
+                "failed_count": failed_count,
+                "sent_files": sent_files,
+                "failed_files": failed_files
+            }, 200)
+            
+        except Exception as e:
+            print(f"❌ Erro no envio em lote: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_test_evolution_message(self):
+        """Testar envio de mensagem via Evolution API"""
+        try:
+            print("🧪 Testando Evolution API...")
+            
+            # Obter dados da requisição
+            data = self.get_request_data()
+            phone_number = data.get('phone_number', '').strip()
+            test_message = data.get('message', 'Teste de mensagem da Evolution API - Sistema EnviaFolha funcionando! 🚀')
+            
+            if not phone_number:
+                self.send_json_response({"error": "Número de telefone obrigatório"}, 400)
+                return
+            
+            print(f"📞 Enviando mensagem de teste para: {phone_number}")
+            
+            # Importar e usar o serviço de Evolution API
+            try:
+                import sys
+                sys.path.append(os.path.dirname(__file__))
+                from app.services.evolution_api import EvolutionAPIService
+                
+                evolution_service = EvolutionAPIService()
+                
+                # Verificar se Evolution API está configurada
+                if not evolution_service.server_url or not evolution_service.api_key:
+                    self.send_json_response({
+                        "success": False,
+                        "error": "Evolution API não está configurada no .env"
+                    }, 400)
+                    return
+                
+                print(f"🔧 Configuração Evolution API:")
+                print(f"   Server: {evolution_service.server_url}")
+                print(f"   Instance: {evolution_service.instance_name}")
+                print(f"   API Key: {'*' * (len(evolution_service.api_key) - 4)}{evolution_service.api_key[-4:]}")
+                
+                # Verificar status da instância
+                print("🔍 Verificando status da instância...")
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                is_connected = loop.run_until_complete(evolution_service.check_instance_status())
+                
+                if not is_connected:
+                    print("⚠️ Instância não está conectada!")
+                    self.send_json_response({
+                        "success": False,
+                        "warning": "Instância Evolution API não está conectada",
+                        "message": "Tentando enviar mesmo assim..."
+                    }, 200)
+                else:
+                    print("✅ Instância está conectada!")
+                
+                # Enviar mensagem de teste
+                print(f"📤 Enviando: {test_message}")
+                result = loop.run_until_complete(
+                    evolution_service._send_text_message(phone_number, test_message)
+                )
+                loop.close()
+                
+                if result['success']:
+                    print(f"✅ Mensagem enviada com sucesso!")
+                    
+                    # Registrar no log
+                    try:
+                        log_system_event(
+                            event_type='evolution_test_message',
+                            description=f"Mensagem de teste enviada para {phone_number}",
+                            details={
+                                'phone_number': phone_number,
+                                'message': test_message,
+                                'result': result
+                            },
+                            severity='info',
+                            user_id=None
+                        )
+                    except Exception as log_error:
+                        print(f"⚠️ Erro ao registrar log: {log_error}")
+                    
+                    self.send_json_response({
+                        "success": True,
+                        "message": "Mensagem de teste enviada com sucesso!",
+                        "details": result
+                    }, 200)
+                else:
+                    print(f"❌ Erro ao enviar mensagem: {result['message']}")
+                    self.send_json_response({
+                        "success": False,
+                        "error": result['message']
+                    }, 500)
+                
+            except ImportError as e:
+                print(f"❌ Erro ao importar EvolutionAPIService: {e}")
+                self.send_json_response({
+                    "error": "Serviço Evolution API não está disponível"
+                }, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro no teste da Evolution API: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_reports_statistics(self):
+        """Estatísticas para relatórios de envios"""
+        try:
+            print("📊 Carregando estatísticas de relatórios...")
+            
+            # Buscar logs do banco de dados
+            if not SessionLocal:
+                # Sem banco de dados, retornar dados vazios
+                self.send_json_response({
+                    "summary": {
+                        "total_sent": 0,
+                        "total_success": 0,
+                        "total_failed": 0,
+                        "success_rate": 100
+                    },
+                    "by_type": {
+                        "communications": {"sent": 0, "success": 0, "failed": 0},
+                        "payrolls": {"sent": 0, "success": 0, "failed": 0}
+                    },
+                    "recent_activity": [],
+                    "message": "Banco de dados não disponível"
+                })
+                return
+            
+            db = SessionLocal()
+            try:
+                from app.models.system_log import SystemLog
+                from sqlalchemy import func, desc
+                from datetime import datetime, timedelta
+                
+                # Estatísticas de comunicados
+                comm_sent = db.query(SystemLog).filter(
+                    SystemLog.event_type == 'communication_sent'
+                ).count()
+                
+                comm_failed = db.query(SystemLog).filter(
+                    SystemLog.event_type == 'communication_failed'
+                ).count()
+                
+                # Estatísticas de processamento de folha
+                payroll_processed = db.query(SystemLog).filter(
+                    SystemLog.event_type == 'payroll_processing'
+                ).count()
+                
+                payroll_failed = db.query(SystemLog).filter(
+                    SystemLog.event_type == 'payroll_processing_error'
+                ).count()
+                
+                # Total geral
+                total_sent = comm_sent + payroll_processed
+                total_success = comm_sent + payroll_processed
+                total_failed = comm_failed + payroll_failed
+                
+                success_rate = 100
+                if (total_success + total_failed) > 0:
+                    success_rate = round((total_success / (total_success + total_failed)) * 100, 2)
+                
+                # Atividades recentes (últimos 50 registros)
+                recent_logs = db.query(SystemLog).filter(
+                    SystemLog.event_type.in_([
+                        'communication_sent',
+                        'communication_failed',
+                        'payroll_processing',
+                        'payroll_processing_error'
+                    ])
+                ).order_by(desc(SystemLog.timestamp)).limit(50).all()
+                
+                recent_activity = []
+                for log in recent_logs:
+                    activity = {
+                        "id": log.id,
+                        "type": log.event_type,
+                        "description": log.description,
+                        "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+                        "severity": log.severity,
+                        "details": log.details
+                    }
+                    recent_activity.append(activity)
+                
+                result = {
+                    "summary": {
+                        "total_sent": total_sent,
+                        "total_success": total_success,
+                        "total_failed": total_failed,
+                        "success_rate": success_rate
+                    },
+                    "by_type": {
+                        "communications": {
+                            "sent": comm_sent,
+                            "success": comm_sent,
+                            "failed": comm_failed
+                        },
+                        "payrolls": {
+                            "sent": payroll_processed,
+                            "success": payroll_processed,
+                            "failed": payroll_failed
+                        }
+                    },
+                    "recent_activity": recent_activity
+                }
+                
+                print(f"✅ Estatísticas carregadas: {total_sent} envios, {success_rate}% sucesso")
+                self.send_json_response(result)
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao carregar estatísticas: {e}")
             import traceback
             traceback.print_exc()
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
