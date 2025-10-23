@@ -673,8 +673,13 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_employees_list()
         elif path == '/api/v1/employees/cache/status':
             self.handle_cache_status()
+        
+        # ===== ROTAS MIGRADAS PARA ESTRUTURA MODULAR =====
         elif path == '/api/v1/auth/me':
-            self.handle_auth_me()
+            from app.routes import AuthRouter
+            AuthRouter(self).handle_auth_me()
+        # ==================================================
+        
         elif path == '/api/v1/dashboard/stats':
             self.handle_dashboard_stats()
         elif path == '/api/v1/evolution/status':
@@ -697,9 +702,14 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         print(f"🔥 POST recebido: {path}")
         
+        # ===== ROTAS MIGRADAS PARA ESTRUTURA MODULAR =====
         if path == '/api/v1/auth/login':
-            self.handle_login()
-        elif path == '/api/v1/employees':
+            from app.routes import AuthRouter
+            AuthRouter(self).handle_login()
+            return
+        # ==================================================
+        
+        if path == '/api/v1/employees':
             self.handle_create_employee()
         elif path == '/api/v1/employees/import' or path == '/api/v1/import/employees':
             self.handle_import_employees()
@@ -2566,7 +2576,22 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             failed_employees = []
             
             # Simular envio (substituir por integração real com Evolution API)
-            for emp_id in selected_employees:
+            for idx, emp_id in enumerate(selected_employees):
+                # ===== DELAY ANTI-STRIKE DO WHATSAPP =====
+                # Aplicar delay ANTES de cada envio (exceto o primeiro)
+                if idx > 0:
+                    import random
+                    import time
+                    from datetime import datetime
+                    # Delay entre 7 e 41 segundos (números primos) com 2 casas decimais
+                    delay = round(random.uniform(7.00, 41.00), 2)
+                    print(f"\n⏳⏳⏳ AGUARDANDO {delay:.2f} SEGUNDOS antes do envio #{idx+1}...")
+                    print(f"⏰ Início do delay: {datetime.now().strftime('%H:%M:%S')}")
+                    time.sleep(delay)
+                    print(f"✅ Delay concluído: {datetime.now().strftime('%H:%M:%S')}\n")
+                else:
+                    print(f"⚡ Primeiro envio - SEM DELAY (instantâneo)")
+                
                 employee = employees_by_id.get(emp_id)
                 
                 if not employee:
@@ -2750,6 +2775,21 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             
             # Processar cada arquivo
             for idx, file_info in enumerate(selected_files):
+                # ===== DELAY ANTI-STRIKE DO WHATSAPP =====
+                # Aplicar delay ANTES de cada envio (exceto o primeiro)
+                if idx > 0:
+                    import random
+                    import time
+                    from datetime import datetime
+                    # Delay entre 7 e 41 segundos (números primos) com 2 casas decimais
+                    delay = round(random.uniform(7.00, 41.00), 2)
+                    print(f"\n⏳⏳⏳ AGUARDANDO {delay:.2f} SEGUNDOS antes do envio #{idx+1}...")
+                    print(f"⏰ Início do delay: {datetime.now().strftime('%H:%M:%S')}")
+                    time.sleep(delay)
+                    print(f"✅ Delay concluído: {datetime.now().strftime('%H:%M:%S')}\n")
+                else:
+                    print(f"⚡ Primeiro holerite - SEM DELAY (instantâneo)")
+                
                 filename = file_info.get('filename')
                 employee = file_info.get('employee', {})
                 month_year = file_info.get('month_year', 'desconhecido')
@@ -2859,14 +2899,6 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                         'employee': employee_name,
                         'reason': f'Erro na API: {str(send_error)}'
                     })
-                
-                # Delay entre envios (exceto no último)
-                if idx < len(selected_files) - 1:
-                    import random
-                    import time
-                    delay = random.uniform(15, 30)  # 15-30 segundos entre envios
-                    print(f"⏳ Aguardando {delay:.1f}s antes do próximo envio...")
-                    time.sleep(delay)
             
             # Resultado final
             result_message = f"{success_count}/{len(selected_files)} holerites enviados com sucesso"
