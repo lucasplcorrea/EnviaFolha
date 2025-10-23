@@ -678,20 +678,25 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         elif path == '/api/v1/auth/me':
             from app.routes import AuthRouter
             AuthRouter(self).handle_auth_me()
+        elif path == '/api/v1/dashboard/stats':
+            from app.routes import DashboardRouter
+            DashboardRouter(self).handle_dashboard_stats()
+        elif path == '/api/v1/evolution/status':
+            from app.routes import SystemRouter
+            SystemRouter(self).handle_evolution_status()
+        elif path == '/api/v1/system/status':
+            from app.routes import SystemRouter
+            SystemRouter(self).handle_system_status()
+        elif path == '/api/v1/database/health':
+            from app.routes import SystemRouter
+            SystemRouter(self).handle_database_health()
+        elif path == '/api/v1/system/logs':
+            from app.routes import SystemRouter
+            SystemRouter(self).handle_system_logs()
         # ==================================================
         
-        elif path == '/api/v1/dashboard/stats':
-            self.handle_dashboard_stats()
-        elif path == '/api/v1/evolution/status':
-            self.handle_evolution_status()
-        elif path == '/api/v1/system/status':
-            self.handle_system_status()
-        elif path == '/api/v1/database/health':
-            self.handle_database_health()
         elif path == '/api/v1/payrolls/processed':
             self.handle_payrolls_processed()
-        elif path == '/api/v1/system/logs':
-            self.handle_system_logs()
         elif path == '/api/v1/reports/statistics':
             self.handle_reports_statistics()
         else:

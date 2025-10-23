@@ -29,9 +29,9 @@ const SystemInfo = () => {
           version: dbData.version || 'N/A'
         },
         evolution: {
-          status: evolutionData.connected ? 'online' : 'offline',
-          connected: evolutionData.connected,
-          instance: evolutionData.instance || 'N/A'
+          status: evolutionData.status === 'connected' ? 'online' : 'offline',
+          connected: evolutionData.status === 'connected',
+          instance: evolutionData.instance_name || 'N/A'
         },
         server: {
           uptime: serverData.uptime || 'N/A',

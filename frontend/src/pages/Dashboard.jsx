@@ -213,7 +213,7 @@ const Dashboard = () => {
           <div className="p-6">
             <div className="flex items-center justify-between">
               <h3 className={`text-lg font-medium ${config.classes.text}`}>Status Evolution API</h3>
-              {evolutionStatus?.connected ? (
+              {evolutionStatus?.status === 'connected' ? (
                 <CheckCircleIcon className="h-5 w-5 text-green-500" />
               ) : (
                 <ExclamationTriangleIcon className="h-5 w-5 text-red-500" />
@@ -222,11 +222,11 @@ const Dashboard = () => {
             <div className="mt-4">
               <div className="flex items-center">
                 <span className={`inline-flex px-2 text-xs font-semibold rounded-full ${
-                  evolutionStatus?.connected 
+                  evolutionStatus?.status === 'connected' 
                     ? 'bg-green-100 text-green-800' 
                     : 'bg-red-100 text-red-800'
                 }`}>
-                  {evolutionStatus?.connected ? 'Conectado' : 'Desconectado'}
+                  {evolutionStatus?.status === 'connected' ? 'Conectado' : 'Desconectado'}
                 </span>
                 {evolutionStatus?.instance_name && (
                   <span className={`ml-2 text-sm ${config.classes.textSecondary}`}>
@@ -234,8 +234,8 @@ const Dashboard = () => {
                   </span>
                 )}
               </div>
-              {evolutionStatus?.error && (
-                <p className="mt-2 text-sm text-red-600">{evolutionStatus.error}</p>
+              {evolutionStatus?.message && evolutionStatus?.status !== 'connected' && (
+                <p className="mt-2 text-sm text-red-600">{evolutionStatus.message}</p>
               )}
             </div>
           </div>

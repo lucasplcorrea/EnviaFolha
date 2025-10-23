@@ -44,20 +44,31 @@ class EvolutionAPIService:
     async def check_instance_status(self) -> bool:
         """Verifica se a instância está conectada"""
         if not self.headers:
+            logger.warning("Headers da Evolution API não configurados")
             return False
             
         try:
             url = f"{self.server_url}/instance/connectionState/{self.instance_name}"
+            logger.info(f"Verificando status da instância: {url}")
+            
             response = requests.get(url, headers=self.headers, timeout=10)
             response.raise_for_status()
             
             result = response.json()
-            status = result.get('instance', {}).get('state', 'unknown')
+            logger.info(f"Resposta da API: {result}")
             
-            return status in ['open', 'connected']
+            status = result.get('instance', {}).get('state', 'unknown')
+            logger.info(f"Status da instância: {status}")
+            
+            is_connected = status in ['open', 'connected']
+            logger.info(f"Instância conectada: {is_connected}")
+            
+            return is_connected
             
         except Exception as e:
             logger.error(f"Erro ao verificar status da instância: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     async def send_payroll_message(self, phone: str, employee_name: str, 
