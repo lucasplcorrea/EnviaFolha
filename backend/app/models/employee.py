@@ -42,6 +42,8 @@ class Employee(Base, TimestampMixin):
     benefits = relationship("BenefitRecord", back_populates="employee")
     movements = relationship("MovementRecord", back_populates="employee")
     leaves = relationship("LeaveRecord", back_populates="employee")
+    payroll_sends = relationship("PayrollSend", back_populates="employee", overlaps="payrolls")
+    communication_recipients = relationship("CommunicationRecipient", back_populates="employee")
     # Backwards-compatible relationship name used by legacy code
     # Some existing modules expect Employee.payroll_data (PayrollData model).
     # Keep it here as an alias to the legacy PayrollData relationship so both

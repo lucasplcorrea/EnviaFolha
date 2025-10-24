@@ -40,18 +40,23 @@ const Reports = () => {
     try {
       setLoading(true);
       
-      // Buscar estatísticas reais do backend
-      const response = await api.get('/reports/statistics');
-      const data = response.data;
+      // Buscar estatísticas e atividades recentes em paralelo
+      const [statsResponse, activityResponse] = await Promise.all([
+        api.get('/reports/statistics'),
+        api.get('/reports/recent', { params: { limit: 20 } })
+      ]);
+      
+      const statsData = statsResponse.data;
+      const activityData = activityResponse.data;
       
       setReports({
         summary: {
-          totalSent: data.summary.total_sent || 0,
-          totalSuccess: data.summary.total_success || 0,
-          totalFailed: data.summary.total_failed || 0,
-          successRate: data.summary.success_rate || 0
+          totalSent: statsData.summary.total_sent || 0,
+          totalSuccess: statsData.summary.total_success || 0,
+          totalFailed: statsData.summary.total_failed || 0,
+          successRate: statsData.summary.success_rate || 0
         },
-        recentActivity: data.recent_activity || []
+        recentActivity: activityData || []
       });
       
     } catch (error) {
@@ -236,41 +241,61 @@ const Reports = () => {
         </div>
         <div className="divide-y divide-gray-200">
           {reports.recentActivity.length > 0 ? (
-            reports.recentActivity.map((activity, index) => (
-              <div key={index} className="px-6 py-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center">
-                    <div className="flex-shrink-0">
-                      {activity.type === 'communication' ? (
-                        <ChatBubbleLeftRightIcon className="h-5 w-5 text-purple-500" />
-                      ) : (
-                        <DocumentTextIcon className="h-5 w-5 text-green-500" />
-                      )}
+            reports.recentActivity.map((activity, index) => {
+              const isSuccess = activity.status === 'sent' || activity.status === 'success';
+              const activityDate = new Date(activity.sent_at);
+              const formattedDate = activityDate.toLocaleDateString('pt-BR', { 
+                day: '2-digit', 
+                month: 'short', 
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              });
+              
+              return (
+                <div key={activity.id || index} className="px-6 py-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      <div className="flex-shrink-0">
+                        {activity.type === 'communication' ? (
+                          <ChatBubbleLeftRightIcon className="h-5 w-5 text-purple-500" />
+                        ) : (
+                          <DocumentTextIcon className="h-5 w-5 text-green-500" />
+                        )}
+                      </div>
+                      <div className="ml-4">
+                        <p className="text-sm font-medium text-gray-900">
+                          {activity.type === 'payroll' ? 'Holerite enviado' : 'Comunicado enviado'}
+                          {activity.title && ` - ${activity.title}`}
+                        </p>
+                        <p className="text-sm text-gray-500">
+                          Para: {activity.employee_name}
+                          {activity.sent_by_user && ` • Por: ${activity.sent_by_user}`}
+                          {activity.month && ` • Mês: ${activity.month}`}
+                        </p>
+                        {activity.error_message && (
+                          <p className="text-xs text-red-600 mt-1">
+                            Erro: {activity.error_message}
+                          </p>
+                        )}
+                      </div>
                     </div>
-                    <div className="ml-4">
-                      <p className="text-sm font-medium text-gray-900">
-                        {activity.description}
-                      </p>
-                      <p className="text-sm text-gray-500">
-                        {activity.details}
-                      </p>
+                    <div className="flex items-center gap-3">
+                      <span className={`inline-flex px-2 text-xs font-semibold rounded-full ${
+                        isSuccess
+                          ? 'bg-green-100 text-green-800' 
+                          : 'bg-red-100 text-red-800'
+                      }`}>
+                        {isSuccess ? 'Sucesso' : 'Falha'}
+                      </span>
+                      <span className="ml-2 text-sm text-gray-500 whitespace-nowrap">
+                        {formattedDate}
+                      </span>
                     </div>
-                  </div>
-                  <div className="flex items-center">
-                    <span className={`inline-flex px-2 text-xs font-semibold rounded-full ${
-                      activity.status === 'success' 
-                        ? 'bg-green-100 text-green-800' 
-                        : 'bg-red-100 text-red-800'
-                    }`}>
-                      {activity.status === 'success' ? 'Sucesso' : 'Falha'}
-                    </span>
-                    <span className="ml-2 text-sm text-gray-500">
-                      {activity.timestamp}
-                    </span>
                   </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           ) : (
             <div className="px-6 py-12 text-center">
               <ClockIcon className="mx-auto h-12 w-12 text-gray-400" />

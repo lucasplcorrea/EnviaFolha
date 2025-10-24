@@ -154,38 +154,30 @@ class EvolutionAPIService:
                                        file_path: str = None) -> Dict[str, Any]:
         """
         Envia comunicado (texto e/ou arquivo)
+        Se houver arquivo + texto, envia TUDO EM UMA ÚNICA MENSAGEM (arquivo com legenda)
         
         Returns:
             Dict com success (bool) e message (str)
         """
         try:
-            results = []
+            # Caso 1: Arquivo + Texto → enviar arquivo com legenda
+            if file_path and os.path.exists(file_path) and message_text and message_text.strip():
+                logger.info(f"📎 Enviando arquivo com legenda (texto + anexo em 1 mensagem)")
+                return await self._send_media_message(phone, file_path, caption=message_text.strip())
             
-            # Enviar mensagem de texto se fornecida
-            if message_text and message_text.strip():
-                text_result = await self._send_text_message(phone, message_text.strip())
-                results.append(text_result)
-                
-                # Delay entre mensagem e arquivo
-                if file_path and os.path.exists(file_path):
-                    time.sleep(10)
+            # Caso 2: Apenas arquivo → enviar arquivo sem legenda
+            elif file_path and os.path.exists(file_path):
+                logger.info(f"📎 Enviando apenas arquivo")
+                return await self._send_media_message(phone, file_path, caption=None)
             
-            # Enviar arquivo se fornecido
-            if file_path and os.path.exists(file_path):
-                file_result = await self._send_media_message(phone, file_path, message_text)
-                results.append(file_result)
+            # Caso 3: Apenas texto → enviar mensagem simples
+            elif message_text and message_text.strip():
+                logger.info(f"💬 Enviando apenas mensagem de texto")
+                return await self._send_text_message(phone, message_text.strip())
             
-            # Verificar se pelo menos um envio foi bem-sucedido
-            if not results:
+            # Caso 4: Nada fornecido
+            else:
                 return {"success": False, "message": "Nenhum conteúdo para enviar"}
-            
-            successful = any(r["success"] for r in results)
-            messages = [r["message"] for r in results]
-            
-            return {
-                "success": successful,
-                "message": "; ".join(messages)
-            }
             
         except Exception as e:
             logger.error(f"Erro ao enviar comunicado: {e}")

@@ -8,6 +8,9 @@ from .benefit import BenefitRecord
 from .movement import MovementRecord
 from .leave import LeaveRecord
 from .system_log import SystemLog, LogLevel, LogCategory
+from .payroll_send import PayrollSend
+from .communication_send import CommunicationSend
+from .communication_recipient import CommunicationRecipient
 
 # keep older payroll-related imports if they exist elsewhere; import safe names
 try:
@@ -19,9 +22,6 @@ except Exception:
     PayrollTemplate = None
     PayrollProcessingLog = None
 # from .audit_log import AuditLog
-# from .payroll_send import PayrollSend
-# from .communication_send import CommunicationSend
-# from .communication_recipient import CommunicationRecipient
 # from .system_setting import SystemSetting
 
 # This allows importing all models with: from app.models import *
@@ -41,10 +41,10 @@ __all__ = [
     "PayrollPeriod",
     "PayrollData",
     "PayrollTemplate",
-    "PayrollProcessingLog"
+    "PayrollProcessingLog",
+    "PayrollSend",
+    "CommunicationSend",
+    "CommunicationRecipient"
     # "AuditLog",
-    # "PayrollSend",
-    # "CommunicationSend",
-    # "CommunicationRecipient",
     # "SystemSetting"
 ]

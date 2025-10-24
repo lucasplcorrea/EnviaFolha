@@ -697,8 +697,16 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         
         elif path == '/api/v1/payrolls/processed':
             self.handle_payrolls_processed()
+        
+        # ===== ROTAS DE REPORTS (MODULAR) =====
+        elif path == '/api/v1/reports/recent':
+            from app.routes.reports import ReportsRouter
+            ReportsRouter(self).handle_recent_activity()
         elif path == '/api/v1/reports/statistics':
-            self.handle_reports_statistics()
+            from app.routes.reports import ReportsRouter
+            ReportsRouter(self).handle_statistics()
+        # ======================================
+        
         else:
             self.send_error(404, "Endpoint não encontrado")
     
@@ -805,8 +813,18 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     user.last_login = datetime.now(brazil_tz)
                     db.commit()
                     
-                    # Gerar JWT token real
-                    access_token = create_access_token(data={"sub": user.username})
+                    print(f"🔑 Preparando token para usuário: {user.username} (ID: {user.id})")
+                    
+                    # Gerar JWT token real com user_id
+                    token_data = {
+                        "sub": user.username,
+                        "user_id": user.id,  # ✅ Adicionar user_id ao payload
+                        "email": user.email,
+                        "is_admin": user.is_admin
+                    }
+                    print(f"🔐 Dados do token JWT: {token_data}")
+                    access_token = create_access_token(data=token_data)
+                    print(f"✅ Token gerado com sucesso!")
                     
                     print("✅ Login bem-sucedido com PostgreSQL!")
                     self.send_json_response({
@@ -2576,19 +2594,75 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             # Criar dicionário para busca rápida por ID
             employees_by_id = {emp.get('id'): emp for emp in employees}
             
+            # Pegar user_id do token JWT (se disponível)
+            user_id = None
+            try:
+                auth_header = self.headers.get('Authorization', '')
+                print(f"🔑 Authorization header: {auth_header[:50] if auth_header else 'VAZIO'}...")
+                if auth_header.startswith('Bearer '):
+                    token = auth_header.replace('Bearer ', '')
+                    from app.core.auth import decode_token
+                    payload = decode_token(token)
+                    print(f"📦 Payload completo do JWT: {payload}")
+                    user_id = payload.get('user_id')
+                    print(f"👤 user_id extraído: {user_id} (tipo: {type(user_id)})")
+                else:
+                    print(f"⚠️ Token não encontrado no header Authorization")
+            except Exception as auth_error:
+                print(f"⚠️ Erro ao obter user_id do token: {auth_error}")
+                import traceback
+                traceback.print_exc()
+            
+            # Criar registro único de CommunicationSend ANTES dos envios
+            comm_send_id = None
+            try:
+                from app.models.base import get_db
+                from app.models.communication_send import CommunicationSend
+                from datetime import datetime
+                
+                db = next(get_db())
+                try:
+                    # Gerar título descritivo
+                    if message and uploaded_file:
+                        title = f"Mensagem + Arquivo ({len(selected_employees)} destinatários)"
+                    elif message:
+                        title = f"{message[:50]}..." if len(message) > 50 else message
+                    else:
+                        title = f"Arquivo ({len(selected_employees)} destinatários)"
+                    
+                    comm_send = CommunicationSend(
+                        title=title,
+                        message=message if message else None,
+                        file_path=uploaded_file.get('filepath') if uploaded_file else None,
+                        total_recipients=len(selected_employees),
+                        successful_sends=0,
+                        failed_sends=0,
+                        status='sending',
+                        started_at=datetime.now(),
+                        user_id=user_id
+                    )
+                    db.add(comm_send)
+                    db.commit()
+                    comm_send_id = comm_send.id
+                    print(f"💾 Lote criado no banco (communication_send_id={comm_send_id})")
+                finally:
+                    db.close()
+            except Exception as db_error:
+                print(f"⚠️ Erro ao criar lote no banco: {db_error}")
+                import traceback
+                traceback.print_exc()
+            
             # Listas de controle
             success_count = 0
             failed_employees = []
             
-            # Simular envio (substituir por integração real com Evolution API)
+            # Processar cada colaborador
             for idx, emp_id in enumerate(selected_employees):
                 # ===== DELAY ANTI-STRIKE DO WHATSAPP =====
-                # Aplicar delay ANTES de cada envio (exceto o primeiro)
                 if idx > 0:
                     import random
                     import time
                     from datetime import datetime
-                    # Delay entre 7 e 41 segundos (números primos) com 2 casas decimais
                     delay = round(random.uniform(7.00, 41.00), 2)
                     print(f"\n⏳⏳⏳ AGUARDANDO {delay:.2f} SEGUNDOS antes do envio #{idx+1}...")
                     print(f"⏰ Início do delay: {datetime.now().strftime('%H:%M:%S')}")
@@ -2650,6 +2724,28 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                         print(f"✅ Comunicado enviado para {employee.get('full_name')}")
                         success_count += 1
                         
+                        # Registrar recipient no banco (se temos comm_send_id)
+                        if comm_send_id:
+                            try:
+                                from app.models.base import get_db
+                                from app.models.communication_recipient import CommunicationRecipient
+                                from datetime import datetime
+                                
+                                db = next(get_db())
+                                try:
+                                    recipient = CommunicationRecipient(
+                                        communication_send_id=comm_send_id,
+                                        employee_id=emp_id,
+                                        status='sent',
+                                        sent_at=datetime.now()
+                                    )
+                                    db.add(recipient)
+                                    db.commit()
+                                finally:
+                                    db.close()
+                            except Exception as db_error:
+                                print(f"⚠️ Erro ao salvar recipient no banco: {db_error}")
+                        
                         # Registrar no log
                         try:
                             log_system_event(
@@ -2664,7 +2760,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                                     'evolution_result': result['message']
                                 },
                                 severity='info',
-                                user_id=None
+                                user_id=user_id
                             )
                         except Exception as log_error:
                             print(f"⚠️ Erro ao registrar log: {log_error}")
@@ -2675,6 +2771,29 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                             'name': employee.get('full_name'),
                             'reason': result['message']
                         })
+                        
+                        # Registrar falha no banco (se temos comm_send_id)
+                        if comm_send_id:
+                            try:
+                                from app.models.base import get_db
+                                from app.models.communication_recipient import CommunicationRecipient
+                                from datetime import datetime
+                                
+                                db = next(get_db())
+                                try:
+                                    recipient = CommunicationRecipient(
+                                        communication_send_id=comm_send_id,
+                                        employee_id=emp_id,
+                                        status='failed',
+                                        error_message=result['message'],
+                                        sent_at=datetime.now()
+                                    )
+                                    db.add(recipient)
+                                    db.commit()
+                                finally:
+                                    db.close()
+                            except Exception as db_error:
+                                print(f"⚠️ Erro ao salvar falha no banco: {db_error}")
                         
                 except Exception as send_error:
                     print(f"❌ Erro no envio para {employee.get('full_name')}: {send_error}")
@@ -2695,10 +2814,35 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                             'failed_employees': failed_employees
                         },
                         severity='warning',
-                        user_id=None
+                        user_id=user_id
                     )
                 except Exception as log_error:
                     print(f"⚠️ Erro ao registrar log de falhas: {log_error}")
+            
+            # Atualizar status final do CommunicationSend
+            if comm_send_id:
+                try:
+                    from app.models.base import get_db
+                    from app.models.communication_send import CommunicationSend
+                    from datetime import datetime
+                    
+                    db = next(get_db())
+                    try:
+                        comm_send = db.query(CommunicationSend).filter(
+                            CommunicationSend.id == comm_send_id
+                        ).first()
+                        
+                        if comm_send:
+                            comm_send.successful_sends = success_count
+                            comm_send.failed_sends = len(failed_employees)
+                            comm_send.status = 'completed' if success_count > 0 else 'failed'
+                            comm_send.completed_at = datetime.now()
+                            db.commit()
+                            print(f"💾 Status atualizado: {comm_send.status} ({success_count} sucessos, {len(failed_employees)} falhas)")
+                    finally:
+                        db.close()
+                except Exception as db_error:
+                    print(f"⚠️ Erro ao atualizar status final: {db_error}")
             
             result_message = f"{success_count} comunicado(s) enviado(s) com sucesso"
             if failed_employees:
@@ -2719,6 +2863,27 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             import traceback
             traceback.print_exc()
             
+            # Atualizar status como failed em caso de erro
+            if 'comm_send_id' in locals() and comm_send_id:
+                try:
+                    from app.models.base import get_db
+                    from app.models.communication_send import CommunicationSend
+                    from datetime import datetime
+                    
+                    db = next(get_db())
+                    try:
+                        comm_send = db.query(CommunicationSend).filter(
+                            CommunicationSend.id == comm_send_id
+                        ).first()
+                        if comm_send:
+                            comm_send.status = 'failed'
+                            comm_send.completed_at = datetime.now()
+                            db.commit()
+                    finally:
+                        db.close()
+                except:
+                    pass
+            
             # Registrar erro crítico no log
             try:
                 log_system_event(
@@ -2726,7 +2891,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     description=f"Erro crítico ao enviar comunicado",
                     details={'error': str(e)},
                     severity='error',
-                    user_id=None
+                    user_id=user_id if 'user_id' in locals() else None
                 )
             except Exception as log_error:
                 print(f"⚠️ Erro ao registrar log de erro: {log_error}")
@@ -2853,6 +3018,30 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                             'phone': phone_number
                         })
                         
+                        # Registrar no banco de dados
+                        try:
+                            from app.models.base import get_db
+                            from app.models.payroll_send import PayrollSend
+                            from datetime import datetime
+                            
+                            db = next(get_db())
+                            try:
+                                payroll_send = PayrollSend(
+                                    employee_id=employee.get('id'),
+                                    month=month_year,
+                                    file_path=filename,
+                                    status='sent',
+                                    sent_at=datetime.now(),
+                                    user_id=None  # TODO: pegar user_id da sessão
+                                )
+                                db.add(payroll_send)
+                                db.commit()
+                                print(f"💾 Envio de holerite registrado no banco (payroll_send_id={payroll_send.id})")
+                            finally:
+                                db.close()
+                        except Exception as db_error:
+                            print(f"⚠️ Erro ao salvar holerite no banco: {db_error}")
+                        
                         # Mover arquivo para pasta 'enviados'
                         try:
                             enviados_dir = os.path.join(
@@ -2895,6 +3084,30 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                             'employee': employee_name,
                             'reason': result['message']
                         })
+                        
+                        # Registrar falha no banco
+                        try:
+                            from app.models.base import get_db
+                            from app.models.payroll_send import PayrollSend
+                            from datetime import datetime
+                            
+                            db = next(get_db())
+                            try:
+                                payroll_send = PayrollSend(
+                                    employee_id=employee.get('id'),
+                                    month=month_year,
+                                    file_path=filename,
+                                    status='failed',
+                                    error_message=result['message'],
+                                    sent_at=datetime.now(),
+                                    user_id=None
+                                )
+                                db.add(payroll_send)
+                                db.commit()
+                            finally:
+                                db.close()
+                        except Exception as db_error:
+                            print(f"⚠️ Erro ao salvar falha no banco: {db_error}")
                         
                 except Exception as send_error:
                     print(f"❌ Erro no envio para {employee_name}: {send_error}")

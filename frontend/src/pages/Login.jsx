@@ -44,8 +44,8 @@ const Login = () => {
               Recursos Humanos
             </h2>
             <p className="text-xl text-blue-100">
-              Automatize o envio de holerites e comunicações<br />
-              via WhatsApp com segurança e praticidade.
+              Transforme dados em decisões estratégicas<br />
+              com métricas e indicadores em tempo real.
             </p>
           </div>
         </div>
@@ -58,8 +58,8 @@ const Login = () => {
               </svg>
             </div>
             <div>
-              <h3 className="text-white font-semibold">Envio Automatizado</h3>
-              <p className="text-blue-200 text-sm">Dispare holerites e comunicados em massa com anti-strike inteligente</p>
+              <h3 className="text-white font-semibold">Automação Inteligente</h3>
+              <p className="text-blue-200 text-sm">Envie holerites e comunicados automaticamente com eficiência e confiabilidade</p>
             </div>
           </div>
           
@@ -82,8 +82,8 @@ const Login = () => {
               </svg>
             </div>
             <div>
-              <h3 className="text-white font-semibold">Relatórios Completos</h3>
-              <p className="text-blue-200 text-sm">Acompanhe entregas e visualize estatísticas em tempo real</p>
+              <h3 className="text-white font-semibold">Análise de Dados e KPIs</h3>
+              <p className="text-blue-200 text-sm">Monitore indicadores, gere relatórios e tome decisões baseadas em dados</p>
             </div>
           </div>
         </div>
