@@ -2914,6 +2914,25 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             
             print(f"📋 Enviando {len(selected_files)} holerite(s)...")
             
+            # Pegar user_id do token JWT (se disponível)
+            user_id = None
+            try:
+                auth_header = self.headers.get('Authorization', '')
+                print(f"🔑 Authorization header: {auth_header[:50] if auth_header else 'VAZIO'}...")
+                if auth_header.startswith('Bearer '):
+                    token = auth_header.replace('Bearer ', '')
+                    from app.core.auth import decode_token
+                    payload = decode_token(token)
+                    print(f"📦 Payload completo do JWT (payrolls): {payload}")
+                    user_id = payload.get('user_id')
+                    print(f"👤 user_id extraído (payrolls): {user_id} (tipo: {type(user_id)})")
+                else:
+                    print(f"⚠️ Token não encontrado no header Authorization (payrolls)")
+            except Exception as auth_error:
+                print(f"⚠️ Erro ao obter user_id do token (payrolls): {auth_error}")
+                import traceback
+                traceback.print_exc()
+            
             # Importar dependências
             import asyncio
             import sys
@@ -3032,11 +3051,11 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                                     file_path=filename,
                                     status='sent',
                                     sent_at=datetime.now(),
-                                    user_id=None  # TODO: pegar user_id da sessão
+                                    user_id=user_id  # ✅ user_id extraído do JWT
                                 )
                                 db.add(payroll_send)
                                 db.commit()
-                                print(f"💾 Envio de holerite registrado no banco (payroll_send_id={payroll_send.id})")
+                                print(f"💾 Envio de holerite registrado no banco (payroll_send_id={payroll_send.id}, user_id={user_id})")
                             finally:
                                 db.close()
                         except Exception as db_error:
@@ -3100,10 +3119,11 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                                     status='failed',
                                     error_message=result['message'],
                                     sent_at=datetime.now(),
-                                    user_id=None
+                                    user_id=user_id  # ✅ user_id extraído do JWT
                                 )
                                 db.add(payroll_send)
                                 db.commit()
+                                print(f"💾 Falha de holerite registrada no banco (payroll_send_id={payroll_send.id}, user_id={user_id})")
                             finally:
                                 db.close()
                         except Exception as db_error:

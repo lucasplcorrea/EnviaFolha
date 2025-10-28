@@ -50,8 +50,15 @@ class AuthHandler:
                     user.last_login = datetime.now(brazil_tz)
                     self.db.commit()
                     
-                    # Gerar JWT token
-                    access_token = create_access_token(data={"sub": user.username})
+                    # Gerar JWT token com user_id
+                    token_data = {
+                        "sub": user.username,
+                        "user_id": user.id,
+                        "email": user.email,
+                        "is_admin": user.is_admin
+                    }
+                    print(f"🔐 Dados do token JWT (AuthHandler): {token_data}")
+                    access_token = create_access_token(data=token_data)
                     
                     print("✅ Login bem-sucedido com PostgreSQL!")
                     return {

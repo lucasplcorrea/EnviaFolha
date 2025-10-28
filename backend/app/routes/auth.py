@@ -48,8 +48,15 @@ class AuthRouter(BaseRouter):
                         user.last_login = datetime.now(brazil_tz)
                         db.commit()
                         
-                        # Gerar JWT token
-                        access_token = create_access_token(data={"sub": user.username})
+                        # Gerar JWT token com user_id
+                        token_data = {
+                            "sub": user.username,
+                            "user_id": user.id,
+                            "email": user.email,
+                            "is_admin": user.is_admin
+                        }
+                        print(f"🔐 Dados do token JWT (routes.auth): {token_data}")
+                        access_token = create_access_token(data=token_data)
                         
                         print("✅ Login bem-sucedido com PostgreSQL!")
                         self.send_json_response({
