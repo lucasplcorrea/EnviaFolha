@@ -740,6 +740,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_process_payroll_file()
         elif path == '/api/v1/payrolls/bulk-send':
             self.handle_bulk_send_payrolls()
+        elif path == '/api/v1/payrolls/delete-file':
+            self.handle_delete_payroll_file()
         elif path == '/api/v1/files/upload':
             self.handle_file_upload()
         elif path == '/api/v1/communications/send':
@@ -1114,12 +1116,20 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 parts = filename.split('_')
                 unique_id = parts[0] if parts else 'unknown'
                 
-                # Extrair mês/ano
+                # Extrair mês/ano no formato YYYY-MM (banco aceita apenas 7 caracteres)
                 month_year = 'desconhecido'
                 if len(parts) >= 4:  # XXXXXXXXX_holerite_mes_ano.pdf
-                    month_name = parts[2]
+                    month_name = parts[2].lower()
                     year = parts[3].replace('.pdf', '')
-                    month_year = f"{month_name}_{year}"
+                    
+                    # Converter nome do mês para número
+                    month_map = {
+                        'janeiro': '01', 'fevereiro': '02', 'marco': '03', 'abril': '04',
+                        'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',
+                        'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
+                    }
+                    month_num = month_map.get(month_name, '00')
+                    month_year = f"{year}-{month_num}"  # Formato YYYY-MM (7 caracteres)
                 
                 # Buscar colaborador associado
                 employee = employees_by_id.get(unique_id)
@@ -2898,6 +2908,109 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
 
+    def handle_delete_payroll_file(self):
+        """Excluir arquivo de holerite processado"""
+        try:
+            print("🗑️ Iniciando exclusão de arquivo de holerite...")
+            
+            # Obter dados da requisição
+            data = self.get_request_data()
+            filename = data.get('filename')
+            
+            if not filename:
+                self.send_json_response({"error": "Nome do arquivo não fornecido"}, 400)
+                return
+            
+            print(f"🗑️ Arquivo solicitado para exclusão: {filename}")
+            
+            # Caminho do arquivo na pasta holerites_formatados_final
+            # Usar caminho absoluto a partir do diretório do script (funciona em Windows e Linux)
+            import os
+            
+            # Obter diretório backend (onde está o main_legacy.py)
+            backend_dir = os.path.dirname(os.path.abspath(__file__))
+            # O diretório holerites_formatados_final fica dentro do backend/
+            processed_dir = os.path.join(backend_dir, 'holerites_formatados_final')
+            
+            # Normalizar o caminho (resolve .., /, \, etc)
+            processed_dir = os.path.normpath(processed_dir)
+            file_path = os.path.join(processed_dir, filename)
+            file_path = os.path.normpath(file_path)
+            
+            print(f"🔍 Procurando em: {processed_dir}")
+            print(f"🔍 Caminho completo: {file_path}")
+            
+            # Verificar se o diretório existe
+            if not os.path.exists(processed_dir):
+                print(f"❌ Diretório não encontrado: {processed_dir}")
+                self.send_json_response({"error": f"Diretório de holerites não encontrado"}, 500)
+                return
+            
+            # Listar arquivos no diretório para debug
+            print(f"📂 Arquivos no diretório:")
+            try:
+                files_in_dir = os.listdir(processed_dir)
+                # Procurar arquivo com nome similar (pode ter _ duplo ou simples)
+                matching_files = [f for f in files_in_dir if filename in f or f in filename]
+                if matching_files:
+                    print(f"   Arquivos similares encontrados: {matching_files}")
+                else:
+                    print(f"   Nenhum arquivo similar a '{filename}' encontrado")
+                    print(f"   Total de arquivos no diretório: {len(files_in_dir)}")
+            except Exception as list_error:
+                print(f"⚠️ Erro ao listar diretório: {list_error}")
+            
+            # Verificar se arquivo existe
+            if not os.path.exists(file_path):
+                print(f"⚠️ Arquivo não encontrado: {file_path}")
+                
+                # Tentar encontrar com underscore duplo (bug comum)
+                alt_filename = filename.replace('_holerite_', '_holerite__')
+                alt_file_path = os.path.join(processed_dir, alt_filename)
+                
+                if os.path.exists(alt_file_path):
+                    print(f"✅ Arquivo encontrado com underscore duplo: {alt_filename}")
+                    file_path = alt_file_path
+                    filename = alt_filename
+                else:
+                    self.send_json_response({"error": "Arquivo não encontrado"}, 404)
+                    return
+            
+            # Excluir o arquivo
+            try:
+                os.remove(file_path)
+                print(f"✅ Arquivo removido: {filename}")
+                
+                # Registrar no log do sistema
+                try:
+                    log_system_event(
+                        event_type='payroll_file_deleted',
+                        description=f"Arquivo de holerite excluído: {filename}",
+                        details={'filename': filename},
+                        severity='info',
+                        user_id=None  # TODO: pegar user_id da sessão
+                    )
+                except Exception as log_error:
+                    print(f"⚠️ Erro ao registrar log: {log_error}")
+                
+                self.send_json_response({
+                    "success": True,
+                    "message": f"Arquivo {filename} removido com sucesso"
+                }, 200)
+                
+            except PermissionError:
+                print(f"❌ Sem permissão para excluir: {filename}")
+                self.send_json_response({"error": "Sem permissão para excluir o arquivo"}, 403)
+            except Exception as delete_error:
+                print(f"❌ Erro ao excluir arquivo: {delete_error}")
+                self.send_json_response({"error": f"Erro ao excluir arquivo: {str(delete_error)}"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro no handler de exclusão: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
     def handle_bulk_send_payrolls(self):
         """Enviar holerites em lote via Evolution API"""
         try:
@@ -2985,6 +3098,12 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
                 employee_name = employee.get('full_name', 'Colaborador')
                 phone_number = employee.get('phone_number', '')
+                employee_id = employee.get('id')
+                
+                # DEBUG: Verificar employee_id
+                if not employee_id:
+                    print(f"⚠️ employee_id é None! employee={employee}")
+                    print(f"⚠️ file_info keys: {file_info.keys()}")
                 
                 print(f"\n📄 [{idx + 1}/{len(selected_files)}] Enviando {filename} para {employee_name}...")
                 
@@ -3043,11 +3162,24 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                             from app.models.payroll_send import PayrollSend
                             from datetime import datetime
                             
+                            # Converter month_year para formato YYYY-MM (banco aceita apenas 7 caracteres)
+                            month_for_db = month_year
+                            if '_' in month_year:  # Formato: outubro_2025
+                                month_name, year = month_year.split('_')
+                                month_map = {
+                                    'janeiro': '01', 'fevereiro': '02', 'março': '03', 'marco': '03',
+                                    'abril': '04', 'maio': '05', 'junho': '06', 'julho': '07',
+                                    'agosto': '08', 'setembro': '09', 'outubro': '10',
+                                    'novembro': '11', 'dezembro': '12'
+                                }
+                                month_num = month_map.get(month_name.lower(), '00')
+                                month_for_db = f"{year}-{month_num}"  # 2025-10
+                            
                             db = next(get_db())
                             try:
                                 payroll_send = PayrollSend(
-                                    employee_id=employee.get('id'),
-                                    month=month_year,
+                                    employee_id=employee_id,  # ✅ Usar employee_id extraído
+                                    month=month_for_db,  # Formato YYYY-MM
                                     file_path=filename,
                                     status='sent',
                                     sent_at=datetime.now(),
@@ -3055,7 +3187,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                                 )
                                 db.add(payroll_send)
                                 db.commit()
-                                print(f"💾 Envio de holerite registrado no banco (payroll_send_id={payroll_send.id}, user_id={user_id})")
+                                print(f"💾 Envio de holerite registrado no banco (payroll_send_id={payroll_send.id}, user_id={user_id}, employee_id={employee_id}, month={month_for_db})")
                             finally:
                                 db.close()
                         except Exception as db_error:
@@ -3110,11 +3242,24 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                             from app.models.payroll_send import PayrollSend
                             from datetime import datetime
                             
+                            # Converter month_year para formato YYYY-MM (banco aceita apenas 7 caracteres)
+                            month_for_db = month_year
+                            if '_' in month_year:  # Formato: outubro_2025
+                                month_name, year = month_year.split('_')
+                                month_map = {
+                                    'janeiro': '01', 'fevereiro': '02', 'março': '03', 'marco': '03',
+                                    'abril': '04', 'maio': '05', 'junho': '06', 'julho': '07',
+                                    'agosto': '08', 'setembro': '09', 'outubro': '10',
+                                    'novembro': '11', 'dezembro': '12'
+                                }
+                                month_num = month_map.get(month_name.lower(), '00')
+                                month_for_db = f"{year}-{month_num}"  # 2025-10
+                            
                             db = next(get_db())
                             try:
                                 payroll_send = PayrollSend(
-                                    employee_id=employee.get('id'),
-                                    month=month_year,
+                                    employee_id=employee_id,  # ✅ Usar employee_id extraído
+                                    month=month_for_db,  # Formato YYYY-MM
                                     file_path=filename,
                                     status='failed',
                                     error_message=result['message'],
