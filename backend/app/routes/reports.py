@@ -31,35 +31,58 @@ class ReportsRouter(BaseRouter):
         GET /api/v1/reports/recent
         Retorna as últimas atividades de envio (holerites e comunicados)
         Query params:
-        - limit: número máximo de resultados (padrão: 10)
+        - page: número da página (padrão: 1)
+        - limit: número de resultados por página (padrão: 20, máximo: 100)
+        - date_from: data inicial para filtro (formato: YYYY-MM-DD)
+        - date_to: data final para filtro (formato: YYYY-MM-DD)
+        - send_type: tipo de envio (all, payrolls, communications)
+        - status: status do envio (all, success, failed)
         """
         try:
             # Extrair parâmetros
             query_params = self.parse_query_params()
-            limit = int(query_params.get('limit', ['10'])[0])
-            limit = min(limit, 50)  # Máximo 50 registros
+            page = max(int(query_params.get('page', ['1'])[0]), 1)
+            limit = int(query_params.get('limit', ['20'])[0])
+            limit = min(limit, 100)  # Máximo 100 registros por página
+            
+            date_from = query_params.get('date_from', [None])[0]
+            date_to = query_params.get('date_to', [None])[0]
+            send_type = query_params.get('send_type', ['all'])[0]
+            status_filter = query_params.get('status', ['all'])[0]
             
             db = next(get_db())
             
             try:
-                # Buscar últimos envios de holerites
-                payroll_sends = db.query(PayrollSend).options(
-                    joinedload(PayrollSend.employee),
-                    joinedload(PayrollSend.user)
-                ).order_by(desc(PayrollSend.sent_at)).limit(limit).all()
-                
-                # Buscar últimos envios de comunicados (via recipients)
-                communication_recipients = db.query(CommunicationRecipient).options(
-                    joinedload(CommunicationRecipient.employee),
-                    joinedload(CommunicationRecipient.communication_send).joinedload(CommunicationSend.user)
-                ).order_by(desc(CommunicationRecipient.sent_at)).limit(limit).all()
-                
-                # Combinar e formatar resultados
                 activities = []
                 
-                # Adicionar holerites
-                for send in payroll_sends:
-                    if send.sent_at:  # Apenas enviados
+                # Filtrar holerites se solicitado
+                if send_type in ['all', 'payrolls']:
+                    # Construir query para holerites
+                    payroll_query = db.query(PayrollSend).options(
+                        joinedload(PayrollSend.employee),
+                        joinedload(PayrollSend.user)
+                    ).filter(PayrollSend.sent_at.isnot(None))
+                    
+                    # Aplicar filtros de data
+                    if date_from:
+                        payroll_query = payroll_query.filter(
+                            func.date(PayrollSend.sent_at) >= date_from
+                        )
+                    if date_to:
+                        payroll_query = payroll_query.filter(
+                            func.date(PayrollSend.sent_at) <= date_to
+                        )
+                    
+                    # Aplicar filtro de status
+                    if status_filter == 'success':
+                        payroll_query = payroll_query.filter(PayrollSend.status == 'sent')
+                    elif status_filter == 'failed':
+                        payroll_query = payroll_query.filter(PayrollSend.status == 'failed')
+                    
+                    payroll_sends = payroll_query.order_by(desc(PayrollSend.sent_at)).all()
+                    
+                    # Adicionar holerites à lista
+                    for send in payroll_sends:
                         activities.append({
                             'id': f'payroll_{send.id}',
                             'type': 'payroll',
@@ -72,9 +95,34 @@ class ReportsRouter(BaseRouter):
                             'error_message': send.error_message
                         })
                 
-                # Adicionar comunicados
-                for recipient in communication_recipients:
-                    if recipient.sent_at:  # Apenas enviados
+                # Filtrar comunicados se solicitado
+                if send_type in ['all', 'communications']:
+                    # Construir query para comunicados
+                    comm_query = db.query(CommunicationRecipient).options(
+                        joinedload(CommunicationRecipient.employee),
+                        joinedload(CommunicationRecipient.communication_send).joinedload(CommunicationSend.user)
+                    ).filter(CommunicationRecipient.sent_at.isnot(None))
+                    
+                    # Aplicar filtros de data
+                    if date_from:
+                        comm_query = comm_query.filter(
+                            func.date(CommunicationRecipient.sent_at) >= date_from
+                        )
+                    if date_to:
+                        comm_query = comm_query.filter(
+                            func.date(CommunicationRecipient.sent_at) <= date_to
+                        )
+                    
+                    # Aplicar filtro de status
+                    if status_filter == 'success':
+                        comm_query = comm_query.filter(CommunicationRecipient.status == 'sent')
+                    elif status_filter == 'failed':
+                        comm_query = comm_query.filter(CommunicationRecipient.status == 'failed')
+                    
+                    communication_recipients = comm_query.order_by(desc(CommunicationRecipient.sent_at)).all()
+                    
+                    # Adicionar comunicados à lista
+                    for recipient in communication_recipients:
                         activities.append({
                             'id': f'communication_{recipient.id}',
                             'type': 'communication',
@@ -90,10 +138,28 @@ class ReportsRouter(BaseRouter):
                 # Ordenar por data de envio (mais recente primeiro)
                 activities.sort(key=lambda x: x['sent_at'] or '', reverse=True)
                 
-                # Limitar ao número solicitado
-                activities = activities[:limit]
+                # Calcular paginação
+                total = len(activities)
+                total_pages = (total + limit - 1) // limit  # Arredondar para cima
+                offset = (page - 1) * limit
                 
-                self.send_json_response(activities)
+                # Aplicar paginação
+                paginated_activities = activities[offset:offset + limit]
+                
+                # Retornar resposta com metadados de paginação
+                response = {
+                    'data': paginated_activities,
+                    'pagination': {
+                        'page': page,
+                        'limit': limit,
+                        'total': total,
+                        'total_pages': total_pages,
+                        'has_prev': page > 1,
+                        'has_next': page < total_pages
+                    }
+                }
+                
+                self.send_json_response(response)
                 
             finally:
                 db.close()
