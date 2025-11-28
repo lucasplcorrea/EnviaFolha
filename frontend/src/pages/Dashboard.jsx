@@ -190,7 +190,8 @@ const Dashboard = () => {
         signal,
         params: { limit: 10 } 
       });
-      setRecentActivity(response.data);
+      // Agora a API retorna { data: [...], pagination: {...} }
+      setRecentActivity(response.data.data || response.data || []);
     } catch (error) {
       if (error.name !== 'AbortError' && error.name !== 'CanceledError') {
         console.error('Erro ao carregar atividades recentes:', error);
