@@ -72,7 +72,8 @@ class EvolutionAPIService:
             return False
     
     async def send_payroll_message(self, phone: str, employee_name: str, 
-                                 file_path: str, month_year: str) -> Dict[str, Any]:
+                                 file_path: str, month_year: str, 
+                                 message_template: str = None) -> Dict[str, Any]:
         """
         Envia holerite em uma única mensagem (otimizado)
         
@@ -88,10 +89,17 @@ class EvolutionAPIService:
             if not base64_content:
                 return {"success": False, "message": "Erro ao processar arquivo"}
             
-            # Mensagem combinada (saudação + instruções)
-            caption = (f"Olá {employee_name}, segue seu holerite referente a {month_year.replace('_', ' ')}. "
-                      f"A senha para abrir o arquivo são os 4 primeiros dígitos do seu CPF. "
-                      f"Esta é uma mensagem automática, em caso de dúvidas contate o RH.")
+            # Mensagem: usar template customizada ou padrão
+            if message_template:
+                # Substituir placeholders na mensagem customizada
+                first_name = employee_name.split()[0] if employee_name else "Colaborador"
+                caption = message_template.replace('{nome}', employee_name).replace('{primeiro_nome}', first_name)
+            else:
+                # Mensagem padrão simples (caso nenhum template seja fornecido)
+                caption = (f"Olá {employee_name}, segue seu holerite referente a {month_year.replace('_', ' ')}. "
+                          f"A senha para abrir o arquivo são os 4 primeiros dígitos do seu CPF. "
+                          f"Esta é uma mensagem automática, em caso de dúvidas contate o RH.")
+                          f"Esta é uma mensagem automática, em caso de dúvidas contate o RH.")
             
             url = f"{self.server_url}/message/sendMedia/{self.instance_name}"
             

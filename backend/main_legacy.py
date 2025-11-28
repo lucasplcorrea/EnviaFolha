@@ -113,8 +113,17 @@ def setup_database():
         from sqlalchemy import create_engine, text
         from sqlalchemy.orm import sessionmaker
         
-        # Usar DATABASE_URL do .env ou padrão
-        database_url = os.getenv('DATABASE_URL', 'postgresql://enviafolha_user:secure_password@localhost:5432/enviafolha_db')
+        # Construir DATABASE_URL a partir de variáveis individuais ou usar padrão
+        database_url = os.getenv('DATABASE_URL')
+        if not database_url:
+            # Montar URL a partir de variáveis individuais
+            db_user = os.getenv('DB_USER', 'enviafolha_user')
+            db_password = os.getenv('DB_PASSWORD', 'secure_password')
+            db_host = os.getenv('DB_HOST', 'localhost')
+            db_port = os.getenv('DB_PORT', '5432')
+            db_name = os.getenv('DB_NAME', 'enviafolha_db')
+            database_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+        
         print(f"🔌 Conectando ao PostgreSQL: {database_url}")
         
         # Criar engine com connection pooling otimizado
@@ -1150,6 +1159,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     phone = employee.get('phone_number', '').strip()
                     
                     file_info["associated_employee"] = {
+                        "id": employee.get('id'),  # PRIMARY KEY para o banco
                         "unique_id": employee.get('unique_id'),
                         "full_name": employee.get('full_name'),
                         "phone_number": phone
@@ -2497,9 +2507,17 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                         employee_cpf_full = cpf_match.group(1).replace('.', '').replace('-', '')
                         employee_cpf = employee_cpf_full[:4]
                     
-                    # Regex para encontrar o mês e ano de referência
-                    month_year_match = re.search(r"(\d{2}/\d{4})\s*Mensal", text)
-                    month_year = month_year_match.group(1) if month_year_match else "UNKNOWN_DATE"
+                    # Regex para encontrar o mês e ano de referência (aceita Mensal ou 13º Salário)
+                    # Aceita espaços múltiplos entre dígitos e também entre palavras
+                    month_year_match = re.search(r"(\d{2})\s*/\s*(\d{4})\s*(?:Mensal|13o?\s+Sal[aá]rio)", text, re.IGNORECASE)
+                    
+                    if month_year_match:
+                        # Reconstruir data sem espaços: MM/YYYY
+                        month_year = f"{month_year_match.group(1)}/{month_year_match.group(2)}"
+                    else:
+                        month_year = "UNKNOWN_DATE"
+                        # Debug: printar o texto extraído para ver o que está sendo buscado
+                        print(f"⚠️ Não foi possível extrair mês/ano. Texto extraído (primeiros 500 chars): {text[:500]}")
                     
                     # Mapeamento de números de mês para nomes
                     month_names = {
@@ -3019,7 +3037,14 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             # Obter dados da requisição
             data = self.get_request_data()
             selected_files = data.get('selected_files', [])
-            message_template = data.get('message_template', '').strip()
+            
+            # Aceitar array de templates ou template único (retrocompatibilidade)
+            message_templates = data.get('message_templates', [])
+            if not message_templates:
+                # Fallback para o campo antigo
+                single_template = data.get('message_template', '').strip()
+                if single_template:
+                    message_templates = [single_template]
             
             if not selected_files:
                 self.send_json_response({"error": "Nenhum arquivo selecionado"}, 400)
@@ -3083,9 +3108,12 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     import random
                     import time
                     from datetime import datetime
-                    # Delay entre 7 e 41 segundos (números primos) com 2 casas decimais
-                    delay = round(random.uniform(7.00, 41.00), 2)
-                    print(f"\n⏳⏳⏳ AGUARDANDO {delay:.2f} SEGUNDOS antes do envio #{idx+1}...")
+                    # Delay entre 47 e 73 segundos (47s a 1m13s) para evitar softban
+                    delay = round(random.uniform(47.00, 73.00), 2)
+                    minutes = int(delay // 60)
+                    seconds = int(delay % 60)
+                    time_str = f"{minutes}m{seconds}s" if minutes > 0 else f"{seconds}s"
+                    print(f"\n⏳⏳⏳ AGUARDANDO {delay:.2f} SEGUNDOS ({time_str}) antes do envio #{idx+1}...")
                     print(f"⏰ Início do delay: {datetime.now().strftime('%H:%M:%S')}")
                     time.sleep(delay)
                     print(f"✅ Delay concluído: {datetime.now().strftime('%H:%M:%S')}\n")
@@ -3105,7 +3133,14 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     print(f"⚠️ employee_id é None! employee={employee}")
                     print(f"⚠️ file_info keys: {file_info.keys()}")
                 
+                # Sortear template de mensagem para este envio
+                import random
+                selected_template = random.choice(message_templates) if message_templates else None
+                template_num = message_templates.index(selected_template) + 1 if selected_template in message_templates else 0
+                
                 print(f"\n📄 [{idx + 1}/{len(selected_files)}] Enviando {filename} para {employee_name}...")
+                if selected_template:
+                    print(f"📝 Usando Template {template_num} para este envio")
                 
                 # Validar telefone
                 if not phone_number or len(phone_number) < 10:
@@ -3143,7 +3178,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                             phone=phone_number,
                             employee_name=employee_name,
                             file_path=file_path,
-                            month_year=month_year
+                            month_year=month_year,
+                            message_template=selected_template
                         )
                     )
                     
@@ -3197,11 +3233,10 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                         try:
                             enviados_dir = os.path.join(
                                 os.path.dirname(os.path.abspath(__file__)),
-                                '..',
                                 'enviados'
                             )
                             if not os.path.exists(enviados_dir):
-                                os.makedirs(enviados_dir)
+                                os.makedirs(enviados_dir, exist_ok=True)
                             
                             dest_path = os.path.join(enviados_dir, filename)
                             import shutil

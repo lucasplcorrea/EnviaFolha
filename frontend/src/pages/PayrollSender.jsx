@@ -20,8 +20,19 @@ const PayrollSender = () => {
   const [loading, setLoading] = useState(true);
   const [sendingBulk, setSendingBulk] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState([]);
-  const [messageTemplate, setMessageTemplate] = useState(
-    'Olá {nome}, este é seu holerite de {mes_anterior}. A senha são os 4 primeiros dígitos do seu CPF. A {empresa} agradece sua dedicação e esforço!'
+  
+  // Múltiplos templates de mensagem para randomização
+  const [messageTemplate1, setMessageTemplate1] = useState(
+    'Olá {nome}, segue seu holerite de {mes_anterior}. A senha para abrir o arquivo são os 4 primeiros dígitos do seu CPF. Esta é uma mensagem automática, em caso de dúvidas contate o RH.'
+  );
+  const [messageTemplate2, setMessageTemplate2] = useState(
+    'Prezado(a) {nome}, está disponível seu holerite de {mes_anterior}. Para abrir o documento, utilize os 4 primeiros dígitos do seu CPF como senha. Qualquer dúvida, entre em contato com o Recursos Humanos.'
+  );
+  const [messageTemplate3, setMessageTemplate3] = useState(
+    'Oi {nome}! Seu holerite referente ao período de {mes_anterior} já está disponível. A senha de acesso é composta pelos 4 primeiros números do seu CPF. Em caso de dúvidas, procure o setor de RH.'
+  );
+  const [messageTemplate4, setMessageTemplate4] = useState(
+    'Olá {nome}, encaminhamos o holerite do mês {mes_anterior}. Utilize os 4 primeiros dígitos do CPF para acessar o arquivo. Caso tenha alguma dúvida, favor contatar o departamento de RH.'
   );
   
   // Estados para envio individual
@@ -137,8 +148,12 @@ const PayrollSender = () => {
       return;
     }
 
-    if (!messageTemplate.trim()) {
-      toast.error('Digite uma mensagem para acompanhar os holerites');
+    // Validar que pelo menos um template foi preenchido
+    const templates = [messageTemplate1, messageTemplate2, messageTemplate3, messageTemplate4]
+      .filter(t => t && t.trim());
+    
+    if (templates.length === 0) {
+      toast.error('Preencha pelo menos um template de mensagem');
       return;
     }
 
@@ -167,7 +182,7 @@ const PayrollSender = () => {
 
       const response = await api.post('/payrolls/bulk-send', {
         selected_files: filesToSend,
-        message_template: messageTemplate
+        message_templates: templates // Enviar array de templates
       });
 
       const { success_count, total_count, failed_count } = response.data;
@@ -363,21 +378,73 @@ const PayrollSender = () => {
               </span>
             </div>
 
-            <div className="mb-4">
-              <label htmlFor="messageTemplate" className="block text-sm font-medium text-gray-700 mb-2">
-                Mensagem para acompanhar os holerites
-              </label>
-              <textarea
-                id="messageTemplate"
-                value={messageTemplate}
-                onChange={(e) => setMessageTemplate(e.target.value)}
-                rows={3}
-                className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Digite a mensagem que acompanhará todos os holerites..."
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                Variáveis disponíveis: {'{nome}'}, {'{primeiro_nome}'}, {'{mes_anterior}'}, {'{empresa}'}
-              </p>
+            <div className="mb-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  📝 Templates de Mensagem (o sistema sorteará entre eles para cada envio)
+                </label>
+                <p className="text-xs text-gray-500 mb-3">
+                  Preencha 2 ou mais templates diferentes. O sistema escolherá aleatoriamente qual usar para cada colaborador.
+                  <br />
+                  Variáveis: {'{nome}'} (nome completo), {'{primeiro_nome}'} (só primeiro nome)
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor="template1" className="block text-xs font-medium text-gray-600 mb-1">
+                  Template 1 ⭐ (obrigatório)
+                </label>
+                <textarea
+                  id="template1"
+                  value={messageTemplate1}
+                  onChange={(e) => setMessageTemplate1(e.target.value)}
+                  rows={2}
+                  className="block w-full text-sm border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Ex: Olá {nome}, segue seu holerite..."
+                />
+              </div>
+
+              <div>
+                <label htmlFor="template2" className="block text-xs font-medium text-gray-600 mb-1">
+                  Template 2 (opcional)
+                </label>
+                <textarea
+                  id="template2"
+                  value={messageTemplate2}
+                  onChange={(e) => setMessageTemplate2(e.target.value)}
+                  rows={2}
+                  className="block w-full text-sm border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Ex: Prezado(a) {nome}, está disponível seu holerite..."
+                />
+              </div>
+
+              <div>
+                <label htmlFor="template3" className="block text-xs font-medium text-gray-600 mb-1">
+                  Template 3 (opcional)
+                </label>
+                <textarea
+                  id="template3"
+                  value={messageTemplate3}
+                  onChange={(e) => setMessageTemplate3(e.target.value)}
+                  rows={2}
+                  className="block w-full text-sm border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Ex: Oi {nome}! Seu holerite referente ao período..."
+                />
+              </div>
+
+              <div>
+                <label htmlFor="template4" className="block text-xs font-medium text-gray-600 mb-1">
+                  Template 4 (opcional)
+                </label>
+                <textarea
+                  id="template4"
+                  value={messageTemplate4}
+                  onChange={(e) => setMessageTemplate4(e.target.value)}
+                  rows={2}
+                  className="block w-full text-sm border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Ex: Olá {nome}, encaminhamos o holerite do mês..."
+                />
+              </div>
             </div>
 
             <button

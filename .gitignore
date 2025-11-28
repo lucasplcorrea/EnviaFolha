@@ -6,6 +6,7 @@ backup/
 *.env
 .env.local
 .env.production
+!.env.production.example
 
 # Banco de dados
 *.db
@@ -99,3 +100,11 @@ backend/employees.json
 exemplo_importacao.csv
 csv-analytics/
 tests/
+
+# Docker
+*.tar
+*.tar.gz
+docker-compose.override.yml
+data/
+*.sh
+*.ps1
