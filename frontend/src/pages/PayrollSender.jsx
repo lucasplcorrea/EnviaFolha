@@ -159,10 +159,10 @@ const PayrollSender = () => {
 
     // Aviso sobre o tempo estimado com delay anti-bot
     const estimatedTime = selectedFiles.length > 1 ? 
-      Math.round((selectedFiles.length - 1) * 27) : 0; // Média de 27 segundos entre envios
+      Math.round((selectedFiles.length - 1) * 60) : 0; // Média de 60 segundos entre envios (47-73s)
     
     if (selectedFiles.length > 1) {
-      const confirmMessage = `Atenção: O envio de ${selectedFiles.length} holerites incluirá delays aleatórios entre 7-47 segundos para evitar detecção de bot.\n\nTempo estimado: ${Math.floor(estimatedTime / 60)}min ${estimatedTime % 60}s\n\nDeseja continuar?`;
+      const confirmMessage = `Atenção: O envio de ${selectedFiles.length} holerites incluirá delays aleatórios entre 47-73 segundos para evitar detecção de bot.\n\nTempo estimado: ${Math.floor(estimatedTime / 60)}min ${estimatedTime % 60}s\n\nDeseja continuar?`;
       
       if (!window.confirm(confirmMessage)) {
         return;
