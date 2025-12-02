@@ -2691,8 +2691,12 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     import random
                     import time
                     from datetime import datetime
-                    delay = round(random.uniform(7.00, 41.00), 2)
-                    print(f"\n⏳⏳⏳ AGUARDANDO {delay:.2f} SEGUNDOS antes do envio #{idx+1}...")
+                    # Delay entre 47 e 73 segundos (47s a 1m13s) para evitar softban
+                    delay = round(random.uniform(47.00, 73.00), 2)
+                    minutes = int(delay // 60)
+                    seconds = int(delay % 60)
+                    time_str = f"{minutes}m{seconds}s" if minutes > 0 else f"{seconds}s"
+                    print(f"\n⏳⏳⏳ AGUARDANDO {delay:.2f} SEGUNDOS ({time_str}) antes do envio #{idx+1}...")
                     print(f"⏰ Início do delay: {datetime.now().strftime('%H:%M:%S')}")
                     time.sleep(delay)
                     print(f"✅ Delay concluído: {datetime.now().strftime('%H:%M:%S')}\n")
