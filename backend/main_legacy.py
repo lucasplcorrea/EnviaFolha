@@ -2459,7 +2459,11 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
     
     def split_pdf_by_employee(self, input_pdf_path, output_dir):
-        """Segmenta PDF em holerites individuais e protege com senha"""
+        """Segmenta PDF em holerites individuais e protege com senha
+        
+        NOVO: Suporta múltiplas páginas por colaborador.
+        Agrupa páginas consecutivas com o mesmo cadastro/matrícula antes de gerar o PDF.
+        """
         import re
         
         if not PDF_PROCESSING_AVAILABLE:
@@ -2478,12 +2482,13 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
                 print(f"📖 PDF contém {num_pages} páginas")
                 
+                # ========== FASE 1: ANALISAR TODAS AS PÁGINAS ==========
+                # Extrair informações de cada página antes de processar
+                page_info = []
+                
                 for i in range(num_pages):
                     page = reader.pages[i]
                     text = page.extract_text()
-                    
-                    file_identifier = f'holerite_pagina_{i+1}'
-                    employee_cpf = ''
                     
                     # Regex para encontrar o número de cadastro
                     cadastro_match = re.search(r'Cadastro\s*Nome\s*do\s*Funcionário\s*CBO\s*Empresa\s*Local\s*Departamento\s*FL\s*\n\s*(\d+)', text)
@@ -2503,30 +2508,65 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     
                     # Regex para encontrar o CPF
                     cpf_match = re.search(r'CPF:\s*(\d{3}\.\d{3}\.\d{3}-\d{2})', text)
+                    employee_cpf = ''
                     if cpf_match:
                         employee_cpf_full = cpf_match.group(1).replace('.', '').replace('-', '')
                         employee_cpf = employee_cpf_full[:4]
                     
-                    # Regex para encontrar o mês e ano de referência (aceita Mensal ou 13º Salário)
-                    # Aceita espaços múltiplos entre dígitos e também entre palavras
+                    # Regex para encontrar o mês e ano de referência
                     month_year_match = re.search(r"(\d{2})\s*/\s*(\d{4})\s*(?:Mensal|13o?\s+Sal[aá]rio)", text, re.IGNORECASE)
                     
                     if month_year_match:
-                        # Reconstruir data sem espaços: MM/YYYY
                         month_year = f"{month_year_match.group(1)}/{month_year_match.group(2)}"
                     else:
                         month_year = "UNKNOWN_DATE"
-                        # Debug: printar o texto extraído para ver o que está sendo buscado
-                        print(f"⚠️ Não foi possível extrair mês/ano. Texto extraído (primeiros 500 chars): {text[:500]}")
+                        print(f"⚠️ Página {i+1}: Não foi possível extrair mês/ano")
                     
-                    # Mapeamento de números de mês para nomes
-                    month_names = {
-                        "01": "janeiro", "02": "fevereiro", "03": "março", "04": "abril",
-                        "05": "maio", "06": "junho", "07": "julho", "08": "agosto",
-                        "09": "setembro", "10": "outubro", "11": "novembro", "12": "dezembro"
-                    }
+                    page_info.append({
+                        'page_index': i,
+                        'identifier': file_identifier,
+                        'cpf': employee_cpf,
+                        'month_year': month_year,
+                        'page': page
+                    })
                     
-                    formatted_month_year = ""
+                    print(f"📄 Página {i+1}: {file_identifier} (CPF: {'****' if employee_cpf else 'NÃO ENCONTRADO'})")
+                
+                # ========== FASE 2: AGRUPAR PÁGINAS DO MESMO COLABORADOR ==========
+                # Agrupar páginas consecutivas com o mesmo identifier
+                grouped_pages = {}
+                
+                for info in page_info:
+                    identifier = info['identifier']
+                    
+                    # Se já existe um grupo para este identifier, adicionar página
+                    if identifier in grouped_pages:
+                        grouped_pages[identifier]['pages'].append(info['page'])
+                        grouped_pages[identifier]['page_numbers'].append(info['page_index'] + 1)
+                    else:
+                        # Criar novo grupo
+                        grouped_pages[identifier] = {
+                            'pages': [info['page']],
+                            'page_numbers': [info['page_index'] + 1],
+                            'cpf': info['cpf'],
+                            'month_year': info['month_year']
+                        }
+                
+                # ========== FASE 3: CRIAR PDFs AGRUPADOS ==========
+                # Mapeamento de números de mês para nomes
+                month_names = {
+                    "01": "janeiro", "02": "fevereiro", "03": "março", "04": "abril",
+                    "05": "maio", "06": "junho", "07": "julho", "08": "agosto",
+                    "09": "setembro", "10": "outubro", "11": "novembro", "12": "dezembro"
+                }
+                
+                for identifier, group_data in grouped_pages.items():
+                    pages = group_data['pages']
+                    employee_cpf = group_data['cpf']
+                    month_year = group_data['month_year']
+                    page_numbers = group_data['page_numbers']
+                    
+                    # Formatar mês/ano
                     if month_year != "UNKNOWN_DATE":
                         month_num = month_year.split("/")[0]
                         year = month_year.split("/")[1]
@@ -2534,26 +2574,31 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     else:
                         formatted_month_year = "UNKNOWN_DATE"
                     
-                    output_pdf_path = os.path.join(output_dir, f'{file_identifier}_holerite_{formatted_month_year}.pdf')
+                    output_pdf_path = os.path.join(output_dir, f'{identifier}_holerite_{formatted_month_year}.pdf')
                     
+                    # Criar PDF writer e adicionar TODAS as páginas do colaborador
                     writer = PyPDF2.PdfWriter()
-                    writer.add_page(page)
+                    for page in pages:
+                        writer.add_page(page)
+                    
+                    num_pages_employee = len(pages)
+                    page_range = f"{page_numbers[0]}-{page_numbers[-1]}" if num_pages_employee > 1 else str(page_numbers[0])
                     
                     # Proteger com senha (4 primeiros dígitos do CPF)
                     if employee_cpf:
                         try:
                             writer.encrypt(user_password=employee_cpf, owner_password=None)
-                            print(f"🔒 Página {i+1}: {file_identifier} protegida com senha")
+                            print(f"🔒 Holerite {identifier}: {num_pages_employee} página(s) [pág. {page_range}] - protegido com senha")
                         except Exception as e:
-                            print(f"⚠️ Erro ao proteger {file_identifier}: {e}")
+                            print(f"⚠️ Erro ao proteger {identifier}: {e}")
                             unprotected_pdfs.append({
-                                'identifier': file_identifier,
+                                'identifier': identifier,
                                 'reason': f'Erro ao criptografar: {e}'
                             })
                     else:
-                        print(f"⚠️ Página {i+1}: {file_identifier} - CPF não encontrado, PDF NÃO protegido")
+                        print(f"⚠️ Holerite {identifier}: {num_pages_employee} página(s) [pág. {page_range}] - CPF não encontrado, PDF NÃO protegido")
                         unprotected_pdfs.append({
-                            'identifier': file_identifier,
+                            'identifier': identifier,
                             'reason': 'CPF não encontrado'
                         })
                     
@@ -2562,14 +2607,16 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                         writer.write(outfile)
                     
                     files_created.append({
-                        'identifier': file_identifier,
+                        'identifier': identifier,
                         'filename': os.path.basename(output_pdf_path),
                         'path': output_pdf_path,
                         'protected': bool(employee_cpf),
-                        'month_year': formatted_month_year
+                        'month_year': formatted_month_year,
+                        'pages_count': num_pages_employee,
+                        'page_range': page_range
                     })
                     
-                    print(f"✅ Holerite {file_identifier} salvo em {output_pdf_path} (senha: {'SIM' if employee_cpf else 'NÃO'})")
+                    print(f"✅ Holerite {identifier} salvo: {num_pages_employee} página(s) (senha: {'SIM' if employee_cpf else 'NÃO'})")
             
             # Preparar warnings se houver PDFs não protegidos
             warnings = []
@@ -2578,11 +2625,17 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 for pdf in unprotected_pdfs:
                     warnings.append(f"  - {pdf['identifier']}: {pdf['reason']}")
             
+            # Estatísticas de páginas múltiplas
+            multi_page_count = sum(1 for f in files_created if f.get('pages_count', 1) > 1)
+            if multi_page_count > 0:
+                print(f"\n📊 Estatística: {multi_page_count} colaborador(es) com múltiplas páginas")
+            
             return {
                 'success': True,
                 'processed_count': len(files_created),
                 'files': files_created,
-                'warnings': warnings
+                'warnings': warnings,
+                'multi_page_employees': multi_page_count
             }
             
         except Exception as e:
