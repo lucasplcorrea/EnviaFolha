@@ -93,7 +93,13 @@ class EvolutionAPIService:
             if message_template:
                 # Substituir placeholders na mensagem customizada
                 first_name = employee_name.split()[0] if employee_name else "Colaborador"
-                caption = message_template.replace('{nome}', employee_name).replace('{primeiro_nome}', first_name)
+                # Formatar mês/ano: "outubro_2025" -> "outubro de 2025"
+                month_formatted = month_year.replace('_', ' de ') if '_' in month_year else month_year
+                
+                caption = (message_template
+                          .replace('{nome}', employee_name)
+                          .replace('{primeiro_nome}', first_name)
+                          .replace('{mes_anterior}', month_formatted))
             else:
                 # Mensagem padrão simples (caso nenhum template seja fornecido)
                 caption = (f"Olá {employee_name}, segue seu holerite referente a {month_year.replace('_', ' ')}. "
