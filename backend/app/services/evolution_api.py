@@ -93,8 +93,27 @@ class EvolutionAPIService:
             if message_template:
                 # Substituir placeholders na mensagem customizada
                 first_name = employee_name.split()[0] if employee_name else "Colaborador"
-                # Formatar mês/ano: "outubro_2025" -> "outubro de 2025"
-                month_formatted = month_year.replace('_', ' de ') if '_' in month_year else month_year
+                
+                # Formatar mês/ano para exibição humanizada
+                # Pode vir em dois formatos:
+                # 1. "outubro_2025" (formato original do processamento)
+                # 2. "2025-10" (formato do banco de dados)
+                if '_' in month_year:
+                    # Formato: outubro_2025 -> "outubro de 2025"
+                    month_formatted = month_year.replace('_', ' de ')
+                elif '-' in month_year and len(month_year) == 7:
+                    # Formato: 2025-10 -> "outubro de 2025"
+                    year, month_num = month_year.split('-')
+                    month_names = {
+                        '01': 'janeiro', '02': 'fevereiro', '03': 'março', '04': 'abril',
+                        '05': 'maio', '06': 'junho', '07': 'julho', '08': 'agosto',
+                        '09': 'setembro', '10': 'outubro', '11': 'novembro', '12': 'dezembro'
+                    }
+                    month_name = month_names.get(month_num, f'mês {month_num}')
+                    month_formatted = f"{month_name} de {year}"
+                else:
+                    # Formato desconhecido, usar como está
+                    month_formatted = month_year
                 
                 caption = (message_template
                           .replace('{nome}', employee_name)
