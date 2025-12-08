@@ -625,6 +625,12 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
     """
     Processa envio em lote em background sem bloquear o servidor HTTP.
     Esta função roda em uma thread separada.
+    
+    SISTEMA ANTI-SOFTBAN AVANÇADO:
+    - Delays aleatórios entre 2-3 minutos (120-180s)
+    - A cada 20 envios: delay maior de 10-15 minutos (600-900s)
+    - Monitoramento da Evolution API (pausa se offline)
+    - Suporte para 8 templates randomizados
     """
     import asyncio
     import sys
@@ -634,6 +640,11 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
     from datetime import datetime
     
     print(f"\n🚀 [JOB {job_id[:8]}] Thread iniciada - processando {len(selected_files)} arquivos...")
+    print(f"🛡️ Sistema anti-softban AVANÇADO ativado:")
+    print(f"   • Delays: 2-3min entre envios")
+    print(f"   • Pausa: 10-15min a cada 20 envios")
+    print(f"   • Monitoramento: Evolution API")
+    print(f"   • Templates: {len(message_templates)} variações")
     
     # Obter job do dicionário global
     with jobs_lock:
@@ -642,6 +653,20 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
     if not job:
         print(f"❌ [JOB {job_id[:8]}] Job não encontrado!")
         return
+    
+    # Função auxiliar para verificar status da Evolution API
+    async def check_evolution_status(evolution_service):
+        """Verifica se Evolution API está online e operacional"""
+        try:
+            result = await evolution_service.check_instance_status()
+            if result.get('success'):
+                status_data = result.get('data', {})
+                instance_state = status_data.get('instance', {}).get('state')
+                return instance_state == 'open'
+            return False
+        except Exception as e:
+            print(f"⚠️ Erro ao verificar status da Evolution API: {e}")
+            return False
     
     try:
         # Importar serviço Evolution API
@@ -661,18 +686,84 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
+        # Verificar se Evolution API está online antes de iniciar
+        print(f"🔍 [JOB {job_id[:8]}] Verificando status da Evolution API...")
+        is_online = loop.run_until_complete(check_evolution_status(evolution_service))
+        if not is_online:
+            job.status = 'failed'
+            job.error_message = 'Evolution API está offline ou instância não conectada'
+            job.end_time = datetime.now()
+            print(f"❌ [JOB {job_id[:8]}] Evolution API offline!")
+            return
+        print(f"✅ [JOB {job_id[:8]}] Evolution API online e pronta")
+        
         # Processar cada arquivo
         for idx, file_info in enumerate(selected_files):
-            # Aplicar delay ANTES de cada envio (exceto o primeiro)
+            # ===== SISTEMA ANTI-SOFTBAN AVANÇADO =====
             if idx > 0:
-                delay = round(random.uniform(47.00, 73.00), 2)
-                minutes = int(delay // 60)
-                seconds = int(delay % 60)
-                time_str = f"{minutes}m{seconds}s" if minutes > 0 else f"{seconds}s"
-                print(f"\n⏳ [JOB {job_id[:8]}] AGUARDANDO {delay:.2f}s ({time_str}) antes do envio #{idx+1}...")
-                print(f"⏰ Início do delay: {datetime.now().strftime('%H:%M:%S')}")
-                time.sleep(delay)
-                print(f"✅ Delay concluído: {datetime.now().strftime('%H:%M:%S')}\n")
+                # Verificar se Evolution API ainda está online
+                print(f"🔍 [JOB {job_id[:8]}] Verificando Evolution API antes do envio #{idx+1}...")
+                is_online = loop.run_until_complete(check_evolution_status(evolution_service))
+                if not is_online:
+                    print(f"⚠️ [JOB {job_id[:8]}] Evolution API OFFLINE detectado! Pausando envios...")
+                    job.status = 'paused'
+                    job.error_message = 'Evolution API ficou offline durante o envio. Aguardando reconexão...'
+                    
+                    # Tentar reconectar a cada 2 minutos por até 30 minutos
+                    max_wait_time = 30 * 60  # 30 minutos
+                    wait_interval = 2 * 60   # 2 minutos
+                    total_waited = 0
+                    
+                    while total_waited < max_wait_time:
+                        print(f"⏳ [JOB {job_id[:8]}] Aguardando {wait_interval}s para verificar reconexão...")
+                        time.sleep(wait_interval)
+                        total_waited += wait_interval
+                        
+                        is_online = loop.run_until_complete(check_evolution_status(evolution_service))
+                        if is_online:
+                            print(f"✅ [JOB {job_id[:8]}] Evolution API voltou! Retomando envios...")
+                            job.status = 'running'
+                            job.error_message = None
+                            break
+                        else:
+                            print(f"❌ [JOB {job_id[:8]}] Ainda offline. Tentando novamente em {wait_interval}s...")
+                    
+                    if not is_online:
+                        job.status = 'failed'
+                        job.error_message = f'Evolution API permaneceu offline por mais de {max_wait_time/60} minutos'
+                        job.end_time = datetime.now()
+                        print(f"❌ [JOB {job_id[:8]}] Abortando job - Evolution API não reconectou")
+                        return
+                
+                # Delay maior a cada 20 envios (pausa estratégica)
+                if idx % 20 == 0:
+                    long_delay = round(random.uniform(600.00, 900.00), 2)  # 10-15 minutos
+                    minutes = int(long_delay // 60)
+                    seconds = int(long_delay % 60)
+                    print(f"\n🛡️ [JOB {job_id[:8]}] ⏸️  PAUSA ESTRATÉGICA #{idx//20} - 20 ENVIOS COMPLETADOS")
+                    print(f"⏳ Aguardando {long_delay:.2f}s ({minutes}min {seconds}s) para simular comportamento humano...")
+                    print(f"⏰ Início da pausa: {datetime.now().strftime('%H:%M:%S')}")
+                    
+                    # Dormir em chunks de 60s para permitir verificações intermediárias
+                    remaining = long_delay
+                    while remaining > 0:
+                        sleep_time = min(60, remaining)
+                        time.sleep(sleep_time)
+                        remaining -= sleep_time
+                        if remaining > 0:
+                            print(f"   ⏳ Restam {int(remaining)}s da pausa estratégica...")
+                    
+                    print(f"✅ Pausa concluída: {datetime.now().strftime('%H:%M:%S')}\n")
+                else:
+                    # Delay normal: 2-3 minutos (120-180 segundos)
+                    delay = round(random.uniform(120.00, 180.00), 2)
+                    minutes = int(delay // 60)
+                    seconds = int(delay % 60)
+                    time_str = f"{minutes}m{seconds}s"
+                    print(f"\n⏳ [JOB {job_id[:8]}] AGUARDANDO {delay:.2f}s ({time_str}) antes do envio #{idx+1}...")
+                    print(f"⏰ Início do delay: {datetime.now().strftime('%H:%M:%S')}")
+                    time.sleep(delay)
+                    print(f"✅ Delay concluído: {datetime.now().strftime('%H:%M:%S')}\n")
             else:
                 print(f"⚡ [JOB {job_id[:8]}] Primeiro holerite - SEM DELAY")
             
@@ -727,6 +818,29 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
             
             # Enviar via Evolution API
             try:
+                # 🎭 SIMULAR PRESENÇA "DIGITANDO" - Comportamento humano
+                print(f"📝 [JOB {job_id[:8]}] Simulando digitação para {employee_name}...")
+                try:
+                    presence_result = loop.run_until_complete(
+                        evolution_service.send_presence(
+                            phone=phone_number,
+                            presence_type="composing",
+                            delay=5000  # 5 segundos
+                        )
+                    )
+                    
+                    if presence_result.get('success'):
+                        print(f"✍️ [JOB {job_id[:8]}] Presença 'digitando' ativada por 5s")
+                        time.sleep(5.5)  # Aguardar os 5s + margem de 0.5s
+                    else:
+                        print(f"⚠️ [JOB {job_id[:8]}] Não foi possível enviar presença: {presence_result.get('message')}")
+                        # Continuar mesmo se presença falhar
+                
+                except Exception as presence_error:
+                    print(f"⚠️ [JOB {job_id[:8]}] Erro ao simular presença: {presence_error}")
+                    # Continuar o envio normalmente mesmo se presença falhar
+                
+                # Enviar mensagem após simulação de digitação
                 result = loop.run_until_complete(
                     evolution_service.send_payroll_message(
                         phone=phone_number,

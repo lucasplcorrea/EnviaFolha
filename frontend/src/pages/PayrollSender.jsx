@@ -27,7 +27,7 @@ const PayrollSender = () => {
   const [pollingInterval, setPollingInterval] = useState(null);
   const [showProgressModal, setShowProgressModal] = useState(false);
   
-  // Múltiplos templates de mensagem para randomização
+  // Múltiplos templates de mensagem para randomização (8 templates)
   const [messageTemplate1, setMessageTemplate1] = useState(
     'Olá {nome}, segue seu holerite de {mes_anterior}. A senha para abrir o arquivo são os 4 primeiros dígitos do seu CPF. Esta é uma mensagem automática, em caso de dúvidas contate o RH.'
   );
@@ -39,6 +39,18 @@ const PayrollSender = () => {
   );
   const [messageTemplate4, setMessageTemplate4] = useState(
     'Olá {nome}, encaminhamos o holerite do mês {mes_anterior}. Utilize os 4 primeiros dígitos do CPF para acessar o arquivo. Caso tenha alguma dúvida, favor contatar o departamento de RH.'
+  );
+  const [messageTemplate5, setMessageTemplate5] = useState(
+    'Bom dia {nome}! Segue em anexo seu contracheque referente a {mes_anterior}. Para acessar, use os 4 primeiros dígitos do CPF como senha. Qualquer questão, estamos à disposição no RH.'
+  );
+  const [messageTemplate6, setMessageTemplate6] = useState(
+    'Oi {nome}, tudo bem? Seu holerite de {mes_anterior} já foi processado e está anexo nesta mensagem. Senha: 4 primeiros números do CPF. Dúvidas? Fale com o RH!'
+  );
+  const [messageTemplate7, setMessageTemplate7] = useState(
+    'Prezado(a) {nome}, encaminhamos o comprovante de pagamento de {mes_anterior}. O arquivo está protegido com os 4 primeiros dígitos do seu CPF. Para esclarecimentos, procure o departamento pessoal.'
+  );
+  const [messageTemplate8, setMessageTemplate8] = useState(
+    'Olá {nome}! Disponibilizamos seu holerite do período {mes_anterior}. A senha de acesso corresponde aos 4 primeiros números do CPF cadastrado. Em caso de necessidade, contate o RH.'
   );
   
   // Estados para envio individual
@@ -208,21 +220,41 @@ const PayrollSender = () => {
       return;
     }
 
-    // Validar que pelo menos um template foi preenchido
-    const templates = [messageTemplate1, messageTemplate2, messageTemplate3, messageTemplate4]
-      .filter(t => t && t.trim());
+    // Validar que pelo menos um template foi preenchido (agora com 8 templates)
+    const templates = [
+      messageTemplate1, messageTemplate2, messageTemplate3, messageTemplate4,
+      messageTemplate5, messageTemplate6, messageTemplate7, messageTemplate8
+    ].filter(t => t && t.trim());
     
     if (templates.length === 0) {
       toast.error('Preencha pelo menos um template de mensagem');
       return;
     }
 
-    // Aviso sobre o tempo estimado com delay anti-bot
+    // Aviso sobre o tempo estimado com NOVOS delays anti-softban
+    const avgDelay = 150; // 2.5 minutos em média (120-180s)
+    const longPauses = Math.floor(selectedFiles.length / 20); // Pausas de 12.5min a cada 20 envios
     const estimatedTime = selectedFiles.length > 1 ? 
-      Math.round((selectedFiles.length - 1) * 60) : 0; // Média de 60 segundos entre envios (47-73s)
+      Math.round((selectedFiles.length - 1) * avgDelay + longPauses * 750) : 0;
     
     if (selectedFiles.length > 1) {
-      const confirmMessage = `Atenção: O envio de ${selectedFiles.length} holerites incluirá delays aleatórios entre 47-73 segundos para evitar detecção de bot.\n\nTempo estimado: ${Math.floor(estimatedTime / 60)}min ${estimatedTime % 60}s\n\nDeseja continuar?`;
+      const hours = Math.floor(estimatedTime / 3600);
+      const minutes = Math.floor((estimatedTime % 3600) / 60);
+      const timeStr = hours > 0 ? `${hours}h ${minutes}min` : `${minutes}min`;
+      
+      const confirmMessage = `⚠️ SISTEMA ANTI-SOFTBAN AVANÇADO ⚠️\n\n` +
+        `Arquivos a enviar: ${selectedFiles.length}\n` +
+        `Templates ativos: ${templates.length}\n\n` +
+        `PROTEÇÕES:\n` +
+        `• Delay entre envios: 2-3 minutos (aleatório)\n` +
+        `• Pausa estratégica: 10-15min a cada 20 envios\n` +
+        `• Monitoramento: Evolution API (pausa se offline)\n` +
+        `• Variação: ${templates.length} templates randomizados\n` +
+        `• Presença "digitando": 5s antes de cada envio\n\n` +
+        `⏱️ Tempo estimado: ${timeStr}\n\n` +
+        `O sistema pausará automaticamente se detectar problemas.\n` +
+        `Você pode navegar em outras páginas durante o envio.\n\n` +
+        `Deseja continuar?`;
       
       if (!window.confirm(confirmMessage)) {
         return;
@@ -522,6 +554,62 @@ const PayrollSender = () => {
                   rows={2}
                   className="block w-full text-sm border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
                   placeholder="Ex: Olá {nome}, encaminhamos o holerite do mês..."
+                />
+              </div>
+
+              <div>
+                <label htmlFor="template5" className="block text-xs font-medium text-gray-600 mb-1">
+                  Template 5 (opcional)
+                </label>
+                <textarea
+                  id="template5"
+                  value={messageTemplate5}
+                  onChange={(e) => setMessageTemplate5(e.target.value)}
+                  rows={2}
+                  className="block w-full text-sm border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Ex: Bom dia {nome}! Segue em anexo seu contracheque..."
+                />
+              </div>
+
+              <div>
+                <label htmlFor="template6" className="block text-xs font-medium text-gray-600 mb-1">
+                  Template 6 (opcional)
+                </label>
+                <textarea
+                  id="template6"
+                  value={messageTemplate6}
+                  onChange={(e) => setMessageTemplate6(e.target.value)}
+                  rows={2}
+                  className="block w-full text-sm border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Ex: Oi {nome}, tudo bem? Seu holerite de..."
+                />
+              </div>
+
+              <div>
+                <label htmlFor="template7" className="block text-xs font-medium text-gray-600 mb-1">
+                  Template 7 (opcional)
+                </label>
+                <textarea
+                  id="template7"
+                  value={messageTemplate7}
+                  onChange={(e) => setMessageTemplate7(e.target.value)}
+                  rows={2}
+                  className="block w-full text-sm border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Ex: Prezado(a) {nome}, encaminhamos o comprovante..."
+                />
+              </div>
+
+              <div>
+                <label htmlFor="template8" className="block text-xs font-medium text-gray-600 mb-1">
+                  Template 8 (opcional)
+                </label>
+                <textarea
+                  id="template8"
+                  value={messageTemplate8}
+                  onChange={(e) => setMessageTemplate8(e.target.value)}
+                  rows={2}
+                  className="block w-full text-sm border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Ex: Olá {nome}! Disponibilizamos seu holerite..."
                 />
               </div>
             </div>

@@ -71,6 +71,57 @@ class EvolutionAPIService:
             traceback.print_exc()
             return False
     
+    async def send_presence(self, phone: str, presence_type: str = "composing", delay: int = 5000) -> Dict[str, Any]:
+        """
+        Envia presença (digitando/gravando) para simular comportamento humano
+        
+        Args:
+            phone: Número do telefone no formato internacional
+            presence_type: Tipo de presença - "composing" (digitando), "recording" (gravando áudio), 
+                          "paused" (pausado), "available" (disponível)
+            delay: Tempo em milissegundos que a presença ficará ativa (padrão: 5000ms = 5s)
+        
+        Returns:
+            Dict com success (bool) e message (str)
+        """
+        if not self.headers:
+            logger.warning("Headers da Evolution API não configurados")
+            return {"success": False, "message": "API não configurada"}
+        
+        try:
+            url = f"{self.server_url}/chat/sendPresence/{self.instance_name}"
+            
+            payload = {
+                "number": phone,
+                "options": {
+                    "delay": delay,
+                    "presence": presence_type
+                }
+            }
+            
+            logger.info(f"Enviando presença '{presence_type}' para {phone} ({delay}ms)")
+            
+            response = requests.post(url, headers=self.headers, json=payload, timeout=15)
+            response.raise_for_status()
+            
+            return {
+                "success": True,
+                "message": f"Presença '{presence_type}' enviada com sucesso"
+            }
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Erro ao enviar presença: {e}")
+            return {
+                "success": False,
+                "message": f"Erro ao enviar presença: {str(e)}"
+            }
+        except Exception as e:
+            logger.error(f"Erro inesperado ao enviar presença: {e}")
+            return {
+                "success": False,
+                "message": f"Erro inesperado: {str(e)}"
+            }
+    
     async def send_payroll_message(self, phone: str, employee_name: str, 
                                  file_path: str, month_year: str, 
                                  message_template: str = None) -> Dict[str, Any]:
