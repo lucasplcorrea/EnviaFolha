@@ -251,6 +251,50 @@ employees_cache = {
     'ttl': 180  # Time to live em segundos (3 minutos)
 }
 
+# ========================================
+# GERENCIADOR DE JOBS EM BACKGROUND
+# ========================================
+import threading
+import uuid
+from datetime import datetime
+
+bulk_send_jobs = {}
+jobs_lock = threading.Lock()
+
+class BulkSendJob:
+    """Representa um job de envio em background"""
+    def __init__(self, job_id, total_files):
+        self.job_id = job_id
+        self.status = 'running'  # running, completed, failed
+        self.total_files = total_files
+        self.processed_files = 0
+        self.successful_sends = 0
+        self.failed_sends = 0
+        self.failed_employees = []
+        self.start_time = datetime.now()
+        self.end_time = None
+        self.error_message = None
+        self.current_file = None
+    
+    def to_dict(self):
+        """Converte job para dicionário serializável"""
+        elapsed = (self.end_time or datetime.now()) - self.start_time
+        return {
+            'job_id': self.job_id,
+            'status': self.status,
+            'total_files': self.total_files,
+            'processed_files': self.processed_files,
+            'successful_sends': self.successful_sends,
+            'failed_sends': self.failed_sends,
+            'failed_employees': self.failed_employees,
+            'progress_percentage': round((self.processed_files / self.total_files) * 100, 1) if self.total_files > 0 else 0,
+            'start_time': self.start_time.isoformat(),
+            'end_time': self.end_time.isoformat() if self.end_time else None,
+            'elapsed_seconds': int(elapsed.total_seconds()),
+            'error_message': self.error_message,
+            'current_file': self.current_file
+        }
+
 def load_employees_data():
     """Carrega dados dos funcionários do PostgreSQL ou JSON como fallback com cache"""
     global employees_cache
@@ -577,6 +621,272 @@ def save_employee_to_db(employee_data, created_by_user_id=3):
 # Carregar dados iniciais
 employees_data = load_employees_data()
 
+def process_bulk_send_in_background(job_id, selected_files, message_templates, user_id):
+    """
+    Processa envio em lote em background sem bloquear o servidor HTTP.
+    Esta função roda em uma thread separada.
+    """
+    import asyncio
+    import sys
+    import os
+    import time
+    import random
+    from datetime import datetime
+    
+    print(f"\n🚀 [JOB {job_id[:8]}] Thread iniciada - processando {len(selected_files)} arquivos...")
+    
+    # Obter job do dicionário global
+    with jobs_lock:
+        job = bulk_send_jobs.get(job_id)
+    
+    if not job:
+        print(f"❌ [JOB {job_id[:8]}] Job não encontrado!")
+        return
+    
+    try:
+        # Importar serviço Evolution API
+        sys.path.append(os.path.dirname(__file__))
+        from app.services.evolution_api import EvolutionAPIService
+        evolution_service = EvolutionAPIService()
+        
+        # Verificar configuração
+        if not evolution_service.server_url or not evolution_service.api_key:
+            job.status = 'failed'
+            job.error_message = 'Evolution API não está configurada. Verifique o arquivo .env'
+            job.end_time = datetime.now()
+            print(f"❌ [JOB {job_id[:8]}] Evolution API não configurada")
+            return
+        
+        # Criar event loop para thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Processar cada arquivo
+        for idx, file_info in enumerate(selected_files):
+            # Aplicar delay ANTES de cada envio (exceto o primeiro)
+            if idx > 0:
+                delay = round(random.uniform(47.00, 73.00), 2)
+                minutes = int(delay // 60)
+                seconds = int(delay % 60)
+                time_str = f"{minutes}m{seconds}s" if minutes > 0 else f"{seconds}s"
+                print(f"\n⏳ [JOB {job_id[:8]}] AGUARDANDO {delay:.2f}s ({time_str}) antes do envio #{idx+1}...")
+                print(f"⏰ Início do delay: {datetime.now().strftime('%H:%M:%S')}")
+                time.sleep(delay)
+                print(f"✅ Delay concluído: {datetime.now().strftime('%H:%M:%S')}\n")
+            else:
+                print(f"⚡ [JOB {job_id[:8]}] Primeiro holerite - SEM DELAY")
+            
+            filename = file_info.get('filename')
+            employee = file_info.get('employee', {})
+            month_year = file_info.get('month_year', 'desconhecido')
+            
+            employee_name = employee.get('full_name', 'Colaborador')
+            phone_number = employee.get('phone_number', '')
+            employee_id = employee.get('id')
+            
+            # Atualizar status do job
+            job.current_file = filename
+            
+            # Sortear template de mensagem
+            selected_template = random.choice(message_templates) if message_templates else None
+            template_num = message_templates.index(selected_template) + 1 if selected_template in message_templates else 0
+            
+            print(f"\n📄 [JOB {job_id[:8]}] [{idx + 1}/{len(selected_files)}] Enviando {filename} para {employee_name}...")
+            if selected_template:
+                print(f"📝 Usando Template {template_num} para este envio")
+            
+            # Validar telefone
+            if not phone_number or len(phone_number) < 10:
+                print(f"⚠️ [JOB {job_id[:8]}] Telefone inválido para {employee_name}")
+                job.failed_sends += 1
+                job.failed_employees.append({
+                    'filename': filename,
+                    'employee': employee_name,
+                    'reason': 'Telefone inválido'
+                })
+                job.processed_files += 1
+                continue
+            
+            # Construir caminho do arquivo
+            file_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                'holerites_formatados_final',
+                filename
+            )
+            
+            if not os.path.exists(file_path):
+                print(f"⚠️ [JOB {job_id[:8]}] Arquivo não encontrado: {file_path}")
+                job.failed_sends += 1
+                job.failed_employees.append({
+                    'filename': filename,
+                    'employee': employee_name,
+                    'reason': 'Arquivo não encontrado'
+                })
+                job.processed_files += 1
+                continue
+            
+            # Enviar via Evolution API
+            try:
+                result = loop.run_until_complete(
+                    evolution_service.send_payroll_message(
+                        phone=phone_number,
+                        employee_name=employee_name,
+                        file_path=file_path,
+                        month_year=month_year,
+                        message_template=selected_template
+                    )
+                )
+                
+                if result['success']:
+                    print(f"✅ [JOB {job_id[:8]}] Holerite enviado para {employee_name}")
+                    job.successful_sends += 1
+                    
+                    # Registrar no banco de dados
+                    try:
+                        from app.models.base import get_db
+                        from app.models.payroll_send import PayrollSend
+                        
+                        # Converter month_year para formato YYYY-MM
+                        month_for_db = month_year
+                        if '_' in month_year:
+                            month_name, year = month_year.split('_')
+                            month_map = {
+                                'janeiro': '01', 'fevereiro': '02', 'março': '03', 'marco': '03',
+                                'abril': '04', 'maio': '05', 'junho': '06', 'julho': '07',
+                                'agosto': '08', 'setembro': '09', 'outubro': '10',
+                                'novembro': '11', 'dezembro': '12'
+                            }
+                            month_num = month_map.get(month_name.lower(), '00')
+                            month_for_db = f"{year}-{month_num}"
+                        
+                        db = next(get_db())
+                        try:
+                            payroll_send = PayrollSend(
+                                employee_id=employee_id,
+                                month=month_for_db,
+                                file_path=filename,
+                                status='sent',
+                                sent_at=datetime.now(),
+                                user_id=user_id
+                            )
+                            db.add(payroll_send)
+                            db.commit()
+                            print(f"💾 [JOB {job_id[:8]}] Registrado no banco (employee_id={employee_id})")
+                        finally:
+                            db.close()
+                    except Exception as db_error:
+                        print(f"⚠️ [JOB {job_id[:8]}] Erro ao salvar no banco: {db_error}")
+                    
+                    # Mover arquivo para pasta 'enviados'
+                    try:
+                        enviados_dir = os.path.join(
+                            os.path.dirname(os.path.abspath(__file__)),
+                            'enviados'
+                        )
+                        if not os.path.exists(enviados_dir):
+                            os.makedirs(enviados_dir, exist_ok=True)
+                        
+                        dest_path = os.path.join(enviados_dir, filename)
+                        import shutil
+                        shutil.move(file_path, dest_path)
+                        print(f"📦 [JOB {job_id[:8]}] Arquivo movido para enviados/")
+                    except Exception as move_error:
+                        print(f"⚠️ [JOB {job_id[:8]}] Erro ao mover arquivo: {move_error}")
+                    
+                    # Registrar log do sistema
+                    try:
+                        log_system_event(
+                            event_type='payroll_sent',
+                            description=f"Holerite enviado para {employee_name}",
+                            details={
+                                'job_id': job_id,
+                                'filename': filename,
+                                'employee_name': employee_name,
+                                'phone_number': phone_number,
+                                'month_year': month_year
+                            },
+                            severity='info',
+                            user_id=user_id
+                        )
+                    except Exception as log_error:
+                        print(f"⚠️ [JOB {job_id[:8]}] Erro ao registrar log: {log_error}")
+                
+                else:
+                    print(f"❌ [JOB {job_id[:8]}] Falha ao enviar para {employee_name}: {result['message']}")
+                    job.failed_sends += 1
+                    job.failed_employees.append({
+                        'filename': filename,
+                        'employee': employee_name,
+                        'reason': result['message']
+                    })
+                    
+                    # Registrar falha no banco
+                    try:
+                        from app.models.base import get_db
+                        from app.models.payroll_send import PayrollSend
+                        
+                        month_for_db = month_year
+                        if '_' in month_year:
+                            month_name, year = month_year.split('_')
+                            month_map = {
+                                'janeiro': '01', 'fevereiro': '02', 'março': '03', 'marco': '03',
+                                'abril': '04', 'maio': '05', 'junho': '06', 'julho': '07',
+                                'agosto': '08', 'setembro': '09', 'outubro': '10',
+                                'novembro': '11', 'dezembro': '12'
+                            }
+                            month_num = month_map.get(month_name.lower(), '00')
+                            month_for_db = f"{year}-{month_num}"
+                        
+                        db = next(get_db())
+                        try:
+                            payroll_send = PayrollSend(
+                                employee_id=employee_id,
+                                month=month_for_db,
+                                file_path=filename,
+                                status='failed',
+                                error_message=result['message'],
+                                sent_at=datetime.now(),
+                                user_id=user_id
+                            )
+                            db.add(payroll_send)
+                            db.commit()
+                            print(f"💾 [JOB {job_id[:8]}] Falha registrada no banco")
+                        finally:
+                            db.close()
+                    except Exception as db_error:
+                        print(f"⚠️ [JOB {job_id[:8]}] Erro ao salvar falha: {db_error}")
+            
+            except Exception as send_error:
+                print(f"❌ [JOB {job_id[:8]}] Erro no envio para {employee_name}: {send_error}")
+                job.failed_sends += 1
+                job.failed_employees.append({
+                    'filename': filename,
+                    'employee': employee_name,
+                    'reason': f'Erro na API: {str(send_error)}'
+                })
+            
+            # Incrementar contador de processados
+            job.processed_files += 1
+        
+        # Finalizar job
+        job.status = 'completed'
+        job.end_time = datetime.now()
+        job.current_file = None
+        
+        elapsed = (job.end_time - job.start_time).total_seconds()
+        print(f"\n✅ [JOB {job_id[:8]}] CONCLUÍDO!")
+        print(f"📊 Resultado: {job.successful_sends}/{job.total_files} enviados com sucesso")
+        print(f"⏱️ Tempo total: {int(elapsed)}s ({elapsed/60:.1f}min)")
+        
+    except Exception as e:
+        print(f"❌ [JOB {job_id[:8]}] Erro fatal na thread: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        job.status = 'failed'
+        job.error_message = str(e)
+        job.end_time = datetime.now()
+
 class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     
     def do_OPTIONS(self):
@@ -706,6 +1016,11 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         
         elif path == '/api/v1/payrolls/processed':
             self.handle_payrolls_processed()
+        
+        # ===== ROTAS DE JOBS EM BACKGROUND =====
+        elif path.startswith('/api/v1/payrolls/bulk-send/') and path.endswith('/status'):
+            self.handle_bulk_send_status()
+        # =======================================
         
         # ===== ROTAS DE REPORTS (MODULAR) =====
         elif path == '/api/v1/reports/recent':
@@ -3087,9 +3402,9 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
 
     def handle_bulk_send_payrolls(self):
-        """Enviar holerites em lote via Evolution API"""
+        """Iniciar envio em lote em background e retornar job_id imediatamente"""
         try:
-            print("📨 Iniciando envio em lote de holerites...")
+            print("📨 Iniciando envio em lote de holerites (background mode)...")
             
             # Obter dados da requisição
             data = self.get_request_data()
@@ -3107,291 +3422,78 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json_response({"error": "Nenhum arquivo selecionado"}, 400)
                 return
             
-            print(f"📋 Enviando {len(selected_files)} holerite(s)...")
-            
-            # Pegar user_id do token JWT (se disponível)
+            # Pegar user_id do token JWT
             user_id = None
             try:
                 auth_header = self.headers.get('Authorization', '')
-                print(f"🔑 Authorization header: {auth_header[:50] if auth_header else 'VAZIO'}...")
                 if auth_header.startswith('Bearer '):
                     token = auth_header.replace('Bearer ', '')
                     from app.core.auth import decode_token
                     payload = decode_token(token)
-                    print(f"📦 Payload completo do JWT (payrolls): {payload}")
                     user_id = payload.get('user_id')
-                    print(f"👤 user_id extraído (payrolls): {user_id} (tipo: {type(user_id)})")
-                else:
-                    print(f"⚠️ Token não encontrado no header Authorization (payrolls)")
+                    print(f"👤 user_id extraído: {user_id}")
             except Exception as auth_error:
-                print(f"⚠️ Erro ao obter user_id do token (payrolls): {auth_error}")
-                import traceback
-                traceback.print_exc()
+                print(f"⚠️ Erro ao obter user_id do token: {auth_error}")
             
-            # Importar dependências
-            import asyncio
-            import sys
-            import os
-            sys.path.append(os.path.dirname(__file__))
-            from app.services.evolution_api import EvolutionAPIService
+            # Criar job_id único
+            job_id = str(uuid.uuid4())
             
-            evolution_service = EvolutionAPIService()
+            # Registrar job no dicionário global
+            with jobs_lock:
+                job = BulkSendJob(job_id, len(selected_files))
+                bulk_send_jobs[job_id] = job
             
-            # Verificar se Evolution API está configurada
-            if not evolution_service.server_url or not evolution_service.api_key:
-                self.send_json_response({
-                    "error": "Evolution API não está configurada. Verifique o arquivo .env"
-                }, 500)
-                return
+            print(f"🆔 Job criado: {job_id} ({len(selected_files)} arquivos)")
             
-            # Criar event loop
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+            # Iniciar thread em background
+            thread = threading.Thread(
+                target=process_bulk_send_in_background,
+                args=(job_id, selected_files, message_templates, user_id),
+                daemon=True
+            )
+            thread.start()
             
-            # Listas de controle
-            success_count = 0
-            failed_count = 0
-            sent_files = []
-            failed_files = []
-            
-            # Processar cada arquivo
-            for idx, file_info in enumerate(selected_files):
-                # ===== DELAY ANTI-STRIKE DO WHATSAPP =====
-                # Aplicar delay ANTES de cada envio (exceto o primeiro)
-                if idx > 0:
-                    import random
-                    import time
-                    from datetime import datetime
-                    # Delay entre 47 e 73 segundos (47s a 1m13s) para evitar softban
-                    delay = round(random.uniform(47.00, 73.00), 2)
-                    minutes = int(delay // 60)
-                    seconds = int(delay % 60)
-                    time_str = f"{minutes}m{seconds}s" if minutes > 0 else f"{seconds}s"
-                    print(f"\n⏳⏳⏳ AGUARDANDO {delay:.2f} SEGUNDOS ({time_str}) antes do envio #{idx+1}...")
-                    print(f"⏰ Início do delay: {datetime.now().strftime('%H:%M:%S')}")
-                    time.sleep(delay)
-                    print(f"✅ Delay concluído: {datetime.now().strftime('%H:%M:%S')}\n")
-                else:
-                    print(f"⚡ Primeiro holerite - SEM DELAY (instantâneo)")
-                
-                filename = file_info.get('filename')
-                employee = file_info.get('employee', {})
-                month_year = file_info.get('month_year', 'desconhecido')
-                
-                employee_name = employee.get('full_name', 'Colaborador')
-                phone_number = employee.get('phone_number', '')
-                employee_id = employee.get('id')
-                
-                # DEBUG: Verificar employee_id
-                if not employee_id:
-                    print(f"⚠️ employee_id é None! employee={employee}")
-                    print(f"⚠️ file_info keys: {file_info.keys()}")
-                
-                # Sortear template de mensagem para este envio
-                import random
-                selected_template = random.choice(message_templates) if message_templates else None
-                template_num = message_templates.index(selected_template) + 1 if selected_template in message_templates else 0
-                
-                print(f"\n📄 [{idx + 1}/{len(selected_files)}] Enviando {filename} para {employee_name}...")
-                if selected_template:
-                    print(f"📝 Usando Template {template_num} para este envio")
-                
-                # Validar telefone
-                if not phone_number or len(phone_number) < 10:
-                    print(f"⚠️ Telefone inválido para {employee_name}")
-                    failed_count += 1
-                    failed_files.append({
-                        'filename': filename,
-                        'employee': employee_name,
-                        'reason': 'Telefone inválido'
-                    })
-                    continue
-                
-                # Construir caminho do arquivo
-                import os
-                file_path = os.path.join(
-                    os.path.dirname(os.path.abspath(__file__)),
-                    'holerites_formatados_final',
-                    filename
-                )
-                
-                if not os.path.exists(file_path):
-                    print(f"⚠️ Arquivo não encontrado: {file_path}")
-                    failed_count += 1
-                    failed_files.append({
-                        'filename': filename,
-                        'employee': employee_name,
-                        'reason': 'Arquivo não encontrado'
-                    })
-                    continue
-                
-                # Enviar via Evolution API
-                try:
-                    result = loop.run_until_complete(
-                        evolution_service.send_payroll_message(
-                            phone=phone_number,
-                            employee_name=employee_name,
-                            file_path=file_path,
-                            month_year=month_year,
-                            message_template=selected_template
-                        )
-                    )
-                    
-                    if result['success']:
-                        print(f"✅ Holerite enviado para {employee_name}")
-                        success_count += 1
-                        sent_files.append({
-                            'filename': filename,
-                            'employee': employee_name,
-                            'phone': phone_number
-                        })
-                        
-                        # Registrar no banco de dados
-                        try:
-                            from app.models.base import get_db
-                            from app.models.payroll_send import PayrollSend
-                            from datetime import datetime
-                            
-                            # Converter month_year para formato YYYY-MM (banco aceita apenas 7 caracteres)
-                            month_for_db = month_year
-                            if '_' in month_year:  # Formato: outubro_2025
-                                month_name, year = month_year.split('_')
-                                month_map = {
-                                    'janeiro': '01', 'fevereiro': '02', 'março': '03', 'marco': '03',
-                                    'abril': '04', 'maio': '05', 'junho': '06', 'julho': '07',
-                                    'agosto': '08', 'setembro': '09', 'outubro': '10',
-                                    'novembro': '11', 'dezembro': '12'
-                                }
-                                month_num = month_map.get(month_name.lower(), '00')
-                                month_for_db = f"{year}-{month_num}"  # 2025-10
-                            
-                            db = next(get_db())
-                            try:
-                                payroll_send = PayrollSend(
-                                    employee_id=employee_id,  # ✅ Usar employee_id extraído
-                                    month=month_for_db,  # Formato YYYY-MM
-                                    file_path=filename,
-                                    status='sent',
-                                    sent_at=datetime.now(),
-                                    user_id=user_id  # ✅ user_id extraído do JWT
-                                )
-                                db.add(payroll_send)
-                                db.commit()
-                                print(f"💾 Envio de holerite registrado no banco (payroll_send_id={payroll_send.id}, user_id={user_id}, employee_id={employee_id}, month={month_for_db})")
-                            finally:
-                                db.close()
-                        except Exception as db_error:
-                            print(f"⚠️ Erro ao salvar holerite no banco: {db_error}")
-                        
-                        # Mover arquivo para pasta 'enviados'
-                        try:
-                            enviados_dir = os.path.join(
-                                os.path.dirname(os.path.abspath(__file__)),
-                                'enviados'
-                            )
-                            if not os.path.exists(enviados_dir):
-                                os.makedirs(enviados_dir, exist_ok=True)
-                            
-                            dest_path = os.path.join(enviados_dir, filename)
-                            import shutil
-                            shutil.move(file_path, dest_path)
-                            print(f"📦 Arquivo movido para enviados/")
-                        except Exception as move_error:
-                            print(f"⚠️ Erro ao mover arquivo: {move_error}")
-                        
-                        # Registrar no log
-                        try:
-                            log_system_event(
-                                event_type='payroll_sent',
-                                description=f"Holerite enviado para {employee_name}",
-                                details={
-                                    'filename': filename,
-                                    'employee_name': employee_name,
-                                    'phone_number': phone_number,
-                                    'month_year': month_year,
-                                    'evolution_result': result['message']
-                                },
-                                severity='info',
-                                user_id=None
-                            )
-                        except Exception as log_error:
-                            print(f"⚠️ Erro ao registrar log: {log_error}")
-                    else:
-                        print(f"❌ Falha ao enviar para {employee_name}: {result['message']}")
-                        failed_count += 1
-                        failed_files.append({
-                            'filename': filename,
-                            'employee': employee_name,
-                            'reason': result['message']
-                        })
-                        
-                        # Registrar falha no banco
-                        try:
-                            from app.models.base import get_db
-                            from app.models.payroll_send import PayrollSend
-                            from datetime import datetime
-                            
-                            # Converter month_year para formato YYYY-MM (banco aceita apenas 7 caracteres)
-                            month_for_db = month_year
-                            if '_' in month_year:  # Formato: outubro_2025
-                                month_name, year = month_year.split('_')
-                                month_map = {
-                                    'janeiro': '01', 'fevereiro': '02', 'março': '03', 'marco': '03',
-                                    'abril': '04', 'maio': '05', 'junho': '06', 'julho': '07',
-                                    'agosto': '08', 'setembro': '09', 'outubro': '10',
-                                    'novembro': '11', 'dezembro': '12'
-                                }
-                                month_num = month_map.get(month_name.lower(), '00')
-                                month_for_db = f"{year}-{month_num}"  # 2025-10
-                            
-                            db = next(get_db())
-                            try:
-                                payroll_send = PayrollSend(
-                                    employee_id=employee_id,  # ✅ Usar employee_id extraído
-                                    month=month_for_db,  # Formato YYYY-MM
-                                    file_path=filename,
-                                    status='failed',
-                                    error_message=result['message'],
-                                    sent_at=datetime.now(),
-                                    user_id=user_id  # ✅ user_id extraído do JWT
-                                )
-                                db.add(payroll_send)
-                                db.commit()
-                                print(f"💾 Falha de holerite registrada no banco (payroll_send_id={payroll_send.id}, user_id={user_id})")
-                            finally:
-                                db.close()
-                        except Exception as db_error:
-                            print(f"⚠️ Erro ao salvar falha no banco: {db_error}")
-                        
-                except Exception as send_error:
-                    print(f"❌ Erro no envio para {employee_name}: {send_error}")
-                    failed_count += 1
-                    failed_files.append({
-                        'filename': filename,
-                        'employee': employee_name,
-                        'reason': f'Erro na API: {str(send_error)}'
-                    })
-            
-            # Resultado final
-            result_message = f"{success_count}/{len(selected_files)} holerites enviados com sucesso"
-            
-            print(f"\n📊 Resultado final: {result_message}")
-            
+            # Retornar imediatamente com job_id
             self.send_json_response({
                 "success": True,
-                "message": result_message,
-                "total_count": len(selected_files),
-                "success_count": success_count,
-                "failed_count": failed_count,
-                "sent_files": sent_files,
-                "failed_files": failed_files
-            }, 200)
+                "message": f"Envio iniciado em background. Use o job_id para acompanhar o progresso.",
+                "job_id": job_id,
+                "total_files": len(selected_files),
+                "status_endpoint": f"/api/v1/payrolls/bulk-send/{job_id}/status"
+            }, 202)  # 202 Accepted
+            
+            print(f"✅ Resposta enviada ao cliente. Thread em background processando...")
             
         except Exception as e:
-            print(f"❌ Erro no envio em lote: {e}")
+            print(f"❌ Erro ao iniciar envio em lote: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_bulk_send_status(self):
+        """Verificar status de um job de envio em background"""
+        try:
+            # Extrair job_id da URL: /api/v1/payrolls/bulk-send/{job_id}/status
+            path_parts = self.path.split('/')
+            if len(path_parts) < 7:
+                self.send_json_response({"error": "job_id não informado"}, 400)
+                return
+            
+            job_id = path_parts[5]  # /api/v1/payrolls/bulk-send/{job_id}/status
+            
+            # Buscar job no dicionário
+            with jobs_lock:
+                job = bulk_send_jobs.get(job_id)
+            
+            if not job:
+                self.send_json_response({"error": "Job não encontrado"}, 404)
+                return
+            
+            # Retornar status do job
+            self.send_json_response(job.to_dict(), 200)
+            
+        except Exception as e:
+            print(f"❌ Erro ao buscar status do job: {e}")
             import traceback
             traceback.print_exc()
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)

@@ -21,6 +21,12 @@ const PayrollSender = () => {
   const [sendingBulk, setSendingBulk] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState([]);
   
+  // Estados para job em background
+  const [activeJobId, setActiveJobId] = useState(null);
+  const [jobStatus, setJobStatus] = useState(null);
+  const [pollingInterval, setPollingInterval] = useState(null);
+  const [showProgressModal, setShowProgressModal] = useState(false);
+  
   // Múltiplos templates de mensagem para randomização
   const [messageTemplate1, setMessageTemplate1] = useState(
     'Olá {nome}, segue seu holerite de {mes_anterior}. A senha para abrir o arquivo são os 4 primeiros dígitos do seu CPF. Esta é uma mensagem automática, em caso de dúvidas contate o RH.'
@@ -48,6 +54,60 @@ const PayrollSender = () => {
   useEffect(() => {
     loadPayrollFiles();
   }, [monthFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cleanup do polling quando componente é desmontado
+  useEffect(() => {
+    return () => {
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+      }
+    };
+  }, [pollingInterval]);
+
+  // Função para fazer polling do status do job
+  const pollJobStatus = async (jobId) => {
+    try {
+      const response = await api.get(`/payrolls/bulk-send/${jobId}/status`);
+      const status = response.data;
+      setJobStatus(status);
+
+      // Se job completou ou falhou, parar polling
+      if (status.status === 'completed' || status.status === 'failed') {
+        if (pollingInterval) {
+          clearInterval(pollingInterval);
+          setPollingInterval(null);
+        }
+        
+        // Mostrar resultado final
+        if (status.status === 'completed') {
+          const failedCount = status.failed_sends || 0;
+          if (failedCount === 0) {
+            toast.success(`✅ Todos os ${status.successful_sends} holerites foram enviados!`);
+          } else {
+            toast.success(`${status.successful_sends}/${status.total_files} holerites enviados`);
+            if (failedCount > 0) {
+              toast.error(`${failedCount} envios falharam`);
+            }
+          }
+        } else if (status.status === 'failed') {
+          toast.error(`Erro no envio: ${status.error_message}`);
+        }
+
+        // Limpar estados
+        setSendingBulk(false);
+        setSelectedFiles([]);
+        
+        // Recarregar lista após 2 segundos
+        setTimeout(() => {
+          loadPayrollFiles();
+          setShowProgressModal(false);
+        }, 2000);
+      }
+    } catch (error) {
+      console.error('Erro ao verificar status do job:', error);
+      // Não mostrar erro para não poluir a UI durante polling
+    }
+  };
 
   const loadPayrollFiles = async () => {
     try {
@@ -178,36 +238,55 @@ const PayrollSender = () => {
         month_year: file.month_year
       }));
 
-      toast.loading('Iniciando envio de holerites...', { duration: 3000 });
+      toast.loading('Iniciando envio em background...', { duration: 2000 });
 
       const response = await api.post('/payrolls/bulk-send', {
         selected_files: filesToSend,
-        message_templates: templates // Enviar array de templates
+        message_templates: templates
       });
 
-      const { success_count, total_count, failed_count } = response.data;
+      // Backend retorna job_id e HTTP 202
+      const { job_id, total_files } = response.data;
       
-      if (failed_count === 0) {
-        toast.success(`Todos os ${success_count} holerites foram enviados e movidos para a pasta 'enviados'!`);
+      if (job_id) {
+        setActiveJobId(job_id);
+        setShowProgressModal(true);
+        
+        // Iniciar polling a cada 2 segundos
+        const interval = setInterval(() => {
+          pollJobStatus(job_id);
+        }, 2000);
+        
+        setPollingInterval(interval);
+        
+        // Fazer primeira checagem imediatamente
+        pollJobStatus(job_id);
+        
+        toast.success(`Envio iniciado! Processando ${total_files} arquivo(s) em background...`);
       } else {
-        toast.success(`${success_count}/${total_count} holerites enviados com sucesso`);
-        if (failed_count > 0) {
-          toast.error(`${failed_count} envios falharam. Verifique o log.`);
+        // Fallback para comportamento antigo (se backend não retornar job_id)
+        const { success_count, total_count, failed_count } = response.data;
+        
+        if (failed_count === 0) {
+          toast.success(`Todos os ${success_count} holerites foram enviados!`);
+        } else {
+          toast.success(`${success_count}/${total_count} holerites enviados`);
+          if (failed_count > 0) {
+            toast.error(`${failed_count} envios falharam`);
+          }
         }
-      }
 
-      // Limpar seleção
-      setSelectedFiles([]);
-      
-      // Recarregar lista (arquivos enviados não aparecerão mais)
-      setTimeout(() => {
-        loadPayrollFiles();
-      }, 1000);
+        setSelectedFiles([]);
+        setSendingBulk(false);
+        
+        setTimeout(() => {
+          loadPayrollFiles();
+        }, 1000);
+      }
 
     } catch (error) {
       console.error('Erro no envio em lote:', error);
       toast.error(error.response?.data?.detail || 'Erro ao enviar holerites');
-    } finally {
       setSendingBulk(false);
     }
   };
@@ -613,6 +692,125 @@ const PayrollSender = () => {
           )}
         </ul>
       </div>
+
+      {/* Modal de Progresso */}
+      {showProgressModal && jobStatus && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+            {/* Background overlay */}
+            <div className="fixed inset-0 transition-opacity bg-gray-500 bg-opacity-75" onClick={() => {
+              if (jobStatus.status === 'completed' || jobStatus.status === 'failed') {
+                setShowProgressModal(false);
+              }
+            }}></div>
+
+            {/* Modal panel */}
+            <div className="inline-block align-bottom bg-white rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full sm:p-6">
+              <div>
+                <div className="text-center">
+                  <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
+                    {jobStatus.status === 'running' ? '📨 Enviando Holerites' : 
+                     jobStatus.status === 'completed' ? '✅ Envio Concluído' : 
+                     '❌ Erro no Envio'}
+                  </h3>
+                  
+                  {/* Barra de progresso */}
+                  <div className="mb-4">
+                    <div className="flex justify-between text-sm text-gray-600 mb-1">
+                      <span>{jobStatus.processed_files} / {jobStatus.total_files} arquivos</span>
+                      <span>{jobStatus.progress_percentage}%</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-2.5">
+                      <div 
+                        className={`h-2.5 rounded-full transition-all duration-500 ${
+                          jobStatus.status === 'completed' ? 'bg-green-500' :
+                          jobStatus.status === 'failed' ? 'bg-red-500' :
+                          'bg-blue-600'
+                        }`}
+                        style={{ width: `${jobStatus.progress_percentage}%` }}
+                      ></div>
+                    </div>
+                  </div>
+
+                  {/* Informações detalhadas */}
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between items-center p-2 bg-green-50 rounded">
+                      <span className="text-gray-700">✅ Enviados com sucesso:</span>
+                      <span className="font-semibold text-green-700">{jobStatus.successful_sends}</span>
+                    </div>
+                    
+                    {jobStatus.failed_sends > 0 && (
+                      <div className="flex justify-between items-center p-2 bg-red-50 rounded">
+                        <span className="text-gray-700">❌ Falhas:</span>
+                        <span className="font-semibold text-red-700">{jobStatus.failed_sends}</span>
+                      </div>
+                    )}
+
+                    <div className="flex justify-between items-center p-2 bg-gray-50 rounded">
+                      <span className="text-gray-700">⏱️ Tempo decorrido:</span>
+                      <span className="font-semibold text-gray-700">
+                        {Math.floor(jobStatus.elapsed_seconds / 60)}m {jobStatus.elapsed_seconds % 60}s
+                      </span>
+                    </div>
+
+                    {jobStatus.status === 'running' && jobStatus.current_file && (
+                      <div className="mt-3 p-3 bg-blue-50 rounded border border-blue-200">
+                        <p className="text-xs text-gray-600 mb-1">Processando agora:</p>
+                        <p className="text-sm font-medium text-blue-900 truncate">{jobStatus.current_file}</p>
+                      </div>
+                    )}
+
+                    {jobStatus.status === 'running' && (
+                      <div className="mt-3 flex items-center justify-center text-gray-500">
+                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600 mr-2"></div>
+                        <span className="text-sm">Processando em background...</span>
+                      </div>
+                    )}
+
+                    {jobStatus.error_message && (
+                      <div className="mt-3 p-3 bg-red-50 rounded border border-red-200">
+                        <p className="text-xs text-red-600 mb-1">Erro:</p>
+                        <p className="text-sm text-red-900">{jobStatus.error_message}</p>
+                      </div>
+                    )}
+
+                    {jobStatus.failed_employees && jobStatus.failed_employees.length > 0 && (
+                      <div className="mt-3 p-3 bg-yellow-50 rounded border border-yellow-200 max-h-40 overflow-y-auto">
+                        <p className="text-xs text-yellow-700 mb-2 font-semibold">Envios que falharam:</p>
+                        <ul className="text-sm space-y-1">
+                          {jobStatus.failed_employees.map((emp, idx) => (
+                            <li key={idx} className="text-yellow-900">
+                              <span className="font-medium">{emp.employee}</span>
+                              <span className="text-xs text-yellow-700"> - {emp.reason}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Botões de ação */}
+                  <div className="mt-5">
+                    {(jobStatus.status === 'completed' || jobStatus.status === 'failed') && (
+                      <button
+                        onClick={() => setShowProgressModal(false)}
+                        className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:text-sm"
+                      >
+                        Fechar
+                      </button>
+                    )}
+                    {jobStatus.status === 'running' && (
+                      <p className="text-xs text-gray-500 mt-2">
+                        💡 Você pode navegar para outras páginas enquanto o envio continua
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
