@@ -658,12 +658,9 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
     async def check_evolution_status(evolution_service):
         """Verifica se Evolution API está online e operacional"""
         try:
-            result = await evolution_service.check_instance_status()
-            if result.get('success'):
-                status_data = result.get('data', {})
-                instance_state = status_data.get('instance', {}).get('state')
-                return instance_state == 'open'
-            return False
+            # check_instance_status() retorna um booleano diretamente
+            is_online = await evolution_service.check_instance_status()
+            return is_online
         except Exception as e:
             print(f"⚠️ Erro ao verificar status da Evolution API: {e}")
             return False

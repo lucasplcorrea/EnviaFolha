@@ -22,6 +22,9 @@ const Dashboard = () => {
   const { config } = useTheme();
   const navigate = useNavigate();
   
+  const [activeJob, setActiveJob] = useState(null);
+  const [jobPollingInterval, setJobPollingInterval] = useState(null);
+  
   const [stats, setStats] = useState([
     {
       name: 'Colaboradores Cadastrados',
@@ -84,10 +87,68 @@ const Dashboard = () => {
     
     loadInitialData();
     
+    // Verificar se há jobs ativos
+    checkActiveJobs();
+    
     return () => {
       abortController.abort();
+      if (jobPollingInterval) {
+        clearInterval(jobPollingInterval);
+      }
     };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  
+  // Função para verificar jobs ativos
+  const checkActiveJobs = async () => {
+    try {
+      // Tentar recuperar job ativo do localStorage
+      const savedJobId = localStorage.getItem('activeJobId');
+      if (savedJobId) {
+        const response = await api.get(`/payrolls/bulk-send/${savedJobId}/status`);
+        const jobData = response.data;
+        
+        if (jobData.status === 'running') {
+          setActiveJob(jobData);
+          startJobPolling(savedJobId);
+        } else {
+          localStorage.removeItem('activeJobId');
+        }
+      }
+    } catch (error) {
+      localStorage.removeItem('activeJobId');
+    }
+  };
+  
+  // Polling do job ativo
+  const startJobPolling = (jobId) => {
+    if (jobPollingInterval) {
+      clearInterval(jobPollingInterval);
+    }
+    
+    const interval = setInterval(async () => {
+      try {
+        const response = await api.get(`/payrolls/bulk-send/${jobId}/status`);
+        const jobData = response.data;
+        setActiveJob(jobData);
+        
+        if (jobData.status === 'completed' || jobData.status === 'failed') {
+          clearInterval(interval);
+          setJobPollingInterval(null);
+          localStorage.removeItem('activeJobId');
+          
+          // Recarregar dados do dashboard
+          loadDashboardData();
+        }
+      } catch (error) {
+        clearInterval(interval);
+        setJobPollingInterval(null);
+        setActiveJob(null);
+        localStorage.removeItem('activeJobId');
+      }
+    }, 2000);
+    
+    setJobPollingInterval(interval);
+  };
 
   const loadDashboardData = async (signal) => {
     try {
@@ -269,6 +330,59 @@ const Dashboard = () => {
           {new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}
         </div>
       </div>
+
+      {/* Card de Job Ativo */}
+      {activeJob && activeJob.status === 'running' && (
+        <div className="mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-lg p-5 shadow-lg">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <div className="relative">
+                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
+                <PaperAirplaneIcon className="h-5 w-5 text-blue-600 absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2" />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-blue-900">📨 Envio de Holerites em Andamento</h3>
+                <p className="text-sm text-blue-700 mt-1">
+                  {activeJob.processed_files} de {activeJob.total_files} arquivos processados
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => navigate('/payroll-sender')}
+              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-semibold shadow-md hover:shadow-lg"
+            >
+              Acompanhar Detalhes
+            </button>
+          </div>
+          <div className="mt-4">
+            <div className="flex justify-between text-sm text-blue-700 mb-2">
+              <span className="font-medium">{activeJob.progress_percentage}% concluído</span>
+              <span>⏱️ {Math.floor(activeJob.elapsed_seconds / 60)}m {activeJob.elapsed_seconds % 60}s</span>
+            </div>
+            <div className="w-full bg-blue-200 rounded-full h-3 overflow-hidden">
+              <div 
+                className="bg-gradient-to-r from-blue-500 to-blue-600 h-3 rounded-full transition-all duration-500 shadow-inner"
+                style={{ width: `${activeJob.progress_percentage}%` }}
+              ></div>
+            </div>
+            <div className="mt-3 flex justify-between text-xs text-blue-600">
+              <span className="flex items-center">
+                <CheckCircleIcon className="h-4 w-4 mr-1" />
+                {activeJob.successful_sends} enviados
+              </span>
+              {activeJob.failed_sends > 0 && (
+                <span className="flex items-center text-red-600">
+                  <ExclamationTriangleIcon className="h-4 w-4 mr-1" />
+                  {activeJob.failed_sends} falhas
+                </span>
+              )}
+              <span className="font-medium">
+                {activeJob.total_files - activeJob.processed_files} restantes
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Alertas */}
       {alerts.length > 0 && (

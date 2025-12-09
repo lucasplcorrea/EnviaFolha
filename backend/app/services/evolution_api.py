@@ -91,15 +91,23 @@ class EvolutionAPIService:
         try:
             url = f"{self.server_url}/chat/sendPresence/{self.instance_name}"
             
+            # Formatar número no padrão WhatsApp se necessário
+            formatted_phone = phone
+            if '@' not in phone:
+                # Remover caracteres não numéricos
+                clean_phone = ''.join(filter(str.isdigit, phone))
+                # Adicionar @s.whatsapp.net
+                formatted_phone = f"{clean_phone}@s.whatsapp.net"
+            
             payload = {
-                "number": phone,
+                "number": formatted_phone,
                 "options": {
                     "delay": delay,
                     "presence": presence_type
                 }
             }
             
-            logger.info(f"Enviando presença '{presence_type}' para {phone} ({delay}ms)")
+            logger.info(f"Enviando presença '{presence_type}' para {formatted_phone} ({delay}ms)")
             
             response = requests.post(url, headers=self.headers, json=payload, timeout=15)
             response.raise_for_status()

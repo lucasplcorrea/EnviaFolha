@@ -65,6 +65,18 @@ const PayrollSender = () => {
 
   useEffect(() => {
     loadPayrollFiles();
+    
+    // Verificar se há job ativo ao carregar página
+    const savedJobId = localStorage.getItem('activeJobId');
+    if (savedJobId) {
+      setActiveJobId(savedJobId);
+      // Iniciar polling
+      const interval = setInterval(() => {
+        pollJobStatus(savedJobId);
+      }, 2000);
+      setPollingInterval(interval);
+      pollJobStatus(savedJobId);
+    }
   }, [monthFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Cleanup do polling quando componente é desmontado
@@ -89,6 +101,9 @@ const PayrollSender = () => {
           clearInterval(pollingInterval);
           setPollingInterval(null);
         }
+        
+        // Remover do localStorage
+        localStorage.removeItem('activeJobId');
         
         // Mostrar resultado final
         if (status.status === 'completed') {
@@ -284,6 +299,9 @@ const PayrollSender = () => {
         setActiveJobId(job_id);
         setShowProgressModal(true);
         
+        // Salvar no localStorage para persistir entre páginas
+        localStorage.setItem('activeJobId', job_id);
+        
         // Iniciar polling a cada 2 segundos
         const interval = setInterval(() => {
           pollJobStatus(job_id);
@@ -381,6 +399,42 @@ const PayrollSender = () => {
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-4">Envio de Holerites</h1>
         
+        {/* Card de Envio Ativo */}
+        {jobStatus && jobStatus.status === 'running' && !showProgressModal && (
+          <div className="mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-lg p-4 shadow-md">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <div>
+                  <h3 className="text-lg font-semibold text-blue-900">📨 Envio em Andamento</h3>
+                  <p className="text-sm text-blue-700">
+                    {jobStatus.processed_files} de {jobStatus.total_files} holerites enviados ({jobStatus.progress_percentage}%)
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowProgressModal(true)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium shadow-sm"
+              >
+                Ver Detalhes
+              </button>
+            </div>
+            <div className="mt-3">
+              <div className="w-full bg-blue-200 rounded-full h-2">
+                <div 
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+                  style={{ width: `${jobStatus.progress_percentage}%` }}
+                ></div>
+              </div>
+              <div className="mt-2 flex justify-between text-xs text-blue-700">
+                <span>✅ {jobStatus.successful_sends} enviados</span>
+                {jobStatus.failed_sends > 0 && <span>❌ {jobStatus.failed_sends} falhas</span>}
+                <span>⏱️ {Math.floor(jobStatus.elapsed_seconds / 60)}m {jobStatus.elapsed_seconds % 60}s</span>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Estatísticas */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
           <div className="bg-blue-50 p-4 rounded-lg">
@@ -878,7 +932,15 @@ const PayrollSender = () => {
                   </div>
 
                   {/* Botões de ação */}
-                  <div className="mt-5">
+                  <div className="mt-5 space-y-2">
+                    {jobStatus.status === 'running' && (
+                      <button
+                        onClick={() => setShowProgressModal(false)}
+                        className="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:text-sm"
+                      >
+                        Minimizar e continuar em background
+                      </button>
+                    )}
                     {(jobStatus.status === 'completed' || jobStatus.status === 'failed') && (
                       <button
                         onClick={() => setShowProgressModal(false)}
@@ -888,8 +950,8 @@ const PayrollSender = () => {
                       </button>
                     )}
                     {jobStatus.status === 'running' && (
-                      <p className="text-xs text-gray-500 mt-2">
-                        💡 Você pode navegar para outras páginas enquanto o envio continua
+                      <p className="text-xs text-gray-500 text-center">
+                        💡 O envio continuará mesmo se você fechar esta janela
                       </p>
                     )}
                   </div>
