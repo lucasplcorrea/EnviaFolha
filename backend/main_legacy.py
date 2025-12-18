@@ -4041,17 +4041,15 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
                 # Extrair parâmetros da query string
                 query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-                status = query_params.get('status', [None])[0]
-                queue_type = query_params.get('type', [None])[0]
-                page = int(query_params.get('page', ['1'])[0])
-                page_size = int(query_params.get('page_size', ['50'])[0])
+                status_filter = query_params.get('status', [None])[0]
+                queue_type_filter = query_params.get('type', [None])[0]
+                limit = int(query_params.get('limit', ['50'])[0])
                 
                 service = QueueManagerService(db)
                 queues = service.get_all_queues(
-                    status=status,
-                    queue_type=queue_type,
-                    page=page,
-                    page_size=page_size
+                    limit=limit,
+                    status_filter=status_filter,
+                    queue_type_filter=queue_type_filter
                 )
                 
                 self.send_json_response({"queues": queues}, 200)
