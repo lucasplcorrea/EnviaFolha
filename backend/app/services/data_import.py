@@ -175,8 +175,10 @@ class DataImportService:
                     errors.append({'row': i, 'error': error_msg, 'data': row})
                     continue
 
-                # Verificar se colaborador já existe
-                employee = self.db.query(Employee).filter(Employee.unique_id == str(unique_id)).first()
+                # Verificar se colaborador já existe (por unique_id OU por CPF para evitar duplicações)
+                employee = self.db.query(Employee).filter(
+                    (Employee.unique_id == str(unique_id)) | (Employee.cpf == str(cpf))
+                ).first()
 
                 # Preparar dados para inserção/atualização
                 data = {
