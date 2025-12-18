@@ -508,39 +508,6 @@ const Dashboard = () => {
       {/* Cards de status */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
         
-        {/* Status da Evolution API */}
-        <div className={`${config.classes.card} overflow-hidden shadow rounded-lg ${config.classes.border}`}>
-          <div className="p-6">
-            <div className="flex items-center justify-between">
-              <h3 className={`text-lg font-medium ${config.classes.text}`}>Status Evolution API</h3>
-              {evolutionStatus?.status === 'connected' ? (
-                <CheckCircleIcon className="h-5 w-5 text-green-500" />
-              ) : (
-                <ExclamationTriangleIcon className="h-5 w-5 text-red-500" />
-              )}
-            </div>
-            <div className="mt-4">
-              <div className="flex items-center">
-                <span className={`inline-flex px-2 text-xs font-semibold rounded-full ${
-                  evolutionStatus?.status === 'connected' 
-                    ? 'bg-green-100 text-green-800' 
-                    : 'bg-red-100 text-red-800'
-                }`}>
-                  {evolutionStatus?.status === 'connected' ? 'Conectado' : 'Desconectado'}
-                </span>
-                {evolutionStatus?.instance_name && (
-                  <span className={`ml-2 text-sm ${config.classes.textSecondary}`}>
-                    ({evolutionStatus.instance_name})
-                  </span>
-                )}
-              </div>
-              {evolutionStatus?.message && evolutionStatus?.status !== 'connected' && (
-                <p className="mt-2 text-sm text-red-600">{evolutionStatus.message}</p>
-              )}
-            </div>
-          </div>
-        </div>
-
         {/* Status de Endomarketing */}
         <div 
           className={`${config.classes.card} overflow-hidden shadow rounded-lg ${config.classes.border} cursor-pointer hover:shadow-lg transition-shadow`}
@@ -584,14 +551,72 @@ const Dashboard = () => {
                       {endomarketingSummary.probation?.phase2 || 0}
                     </span>
                   </div>
-                  <div className="mt-3 pt-3 border-t">
-                    <button className="text-sm text-purple-600 hover:text-purple-700 font-medium">
-                      Ver todos os indicadores →
+                  <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <button className="text-sm text-purple-600 hover:text-purple-700 dark:text-purple-400 dark:hover:text-purple-300 font-medium flex items-center">
+                      Ver detalhes completos →
                     </button>
                   </div>
                 </div>
               ) : (
-                <div className="text-sm text-gray-500">Carregando...</div>
+                <div className="text-center py-4">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500 mx-auto"></div>
+                  <p className={`mt-2 text-sm ${config.classes.textSecondary}`}>Carregando...</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Status de Envio de Folhas */}
+        <div className={`${config.classes.card} overflow-hidden shadow rounded-lg ${config.classes.border}`}>
+          <div className="p-6">
+            <div className="flex items-center justify-between">
+              <h3 className={`text-lg font-medium ${config.classes.text}`}>Status de Envio</h3>
+              <PaperAirplaneIcon className="h-5 w-5 text-blue-500" />
+            </div>
+            <div className="mt-4">
+              {evolutionStatus ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className={`text-sm ${config.classes.textSecondary}`}>Evolution API:</span>
+                    <span className={`inline-flex px-2 text-xs font-semibold rounded-full ${
+                      evolutionStatus?.status === 'connected' 
+                        ? 'bg-green-100 text-green-800' 
+                        : 'bg-red-100 text-red-800'
+                    }`}>
+                      {evolutionStatus?.status === 'connected' ? 'Conectado' : 'Desconectado'}
+                    </span>
+                  </div>
+                  {evolutionStatus?.instance_name && (
+                    <div className="flex items-center justify-between">
+                      <span className={`text-sm ${config.classes.textSecondary}`}>Instância:</span>
+                      <span className={`text-sm ${config.classes.text}`}>{evolutionStatus.instance_name}</span>
+                    </div>
+                  )}
+                  {evolutionStatus?.status === 'connected' ? (
+                    <div className={`mt-3 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg ${config.classes.border}`}>
+                      <p className="text-sm text-green-800 dark:text-green-300 flex items-center">
+                        <CheckCircleIcon className="h-4 w-4 mr-2" />
+                        Sistema pronto para envios
+                      </p>
+                    </div>
+                  ) : (
+                    <div className={`mt-3 p-3 bg-red-50 dark:bg-red-900/20 rounded-lg ${config.classes.border}`}>
+                      <p className="text-sm text-red-800 dark:text-red-300 flex items-center">
+                        <ExclamationTriangleIcon className="h-4 w-4 mr-2" />
+                        Envios indisponíveis
+                      </p>
+                      {evolutionStatus?.message && (
+                        <p className="text-xs text-red-600 dark:text-red-400 mt-1">{evolutionStatus.message}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-4">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
+                  <p className={`mt-2 text-sm ${config.classes.textSecondary}`}>Carregando...</p>
+                </div>
               )}
             </div>
           </div>

@@ -16,6 +16,7 @@ import {
   HeartIcon,
   DocumentArrowUpIcon,
   PaperAirplaneIcon,
+  PresentationChartLineIcon,
 } from '@heroicons/react/24/outline';
 
 const navigation = [
@@ -47,6 +48,7 @@ const navigation = [
   },
   { name: 'Comunicados', href: '/communications', icon: ChatBubbleLeftRightIcon },
   { name: 'Endomarketing', href: '/endomarketing', icon: HeartIcon },
+  { name: 'Indicadores RH', href: '/rh-indicators', icon: PresentationChartLineIcon },
   { name: 'Relatórios', href: '/reports', icon: ChartBarIcon },
   { name: 'Configurações', href: '/settings', icon: CogIcon },
 ];
