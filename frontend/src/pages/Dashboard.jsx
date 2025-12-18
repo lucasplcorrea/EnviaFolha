@@ -64,7 +64,7 @@ const Dashboard = () => {
   ]);
 
   const [evolutionStatus, setEvolutionStatus] = useState(null);
-  const [processingStatus, setProcessingStatus] = useState(null);
+  const [endomarketingSummary, setEndomarketingSummary] = useState(null);
   const [recentActivity, setRecentActivity] = useState([]);
   const [alerts, setAlerts] = useState([]);
 
@@ -75,7 +75,7 @@ const Dashboard = () => {
       try {
         await loadDashboardData(abortController.signal);
         await loadEvolutionStatus(abortController.signal);
-        await loadProcessingStatus(abortController.signal);
+        await loadEndomarketingSummary(abortController.signal);
         await loadRecentActivity(abortController.signal);
         await loadAlerts(abortController.signal);
       } catch (error) {
@@ -235,13 +235,15 @@ const Dashboard = () => {
     }
   };
 
-  const loadProcessingStatus = async (signal) => {
-    setProcessingStatus({
-      hasActiveProcesses: false,
-      queuedFiles: 0,
-      activeUploads: 0,
-      lastProcessed: null
-    });
+  const loadEndomarketingSummary = async (signal) => {
+    try {
+      const response = await api.get('/endomarketing/summary', { signal });
+      setEndomarketingSummary(response.data);
+    } catch (error) {
+      if (error.name !== 'AbortError' && error.name !== 'CanceledError') {
+        console.error('Erro ao carregar resumo de endomarketing:', error);
+      }
+    }
   };
 
   const loadRecentActivity = async (signal) => {
@@ -539,36 +541,58 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {/* Status de processamento */}
-        <div className={`${config.classes.card} overflow-hidden shadow rounded-lg ${config.classes.border}`}>
+        {/* Status de Endomarketing */}
+        <div 
+          className={`${config.classes.card} overflow-hidden shadow rounded-lg ${config.classes.border} cursor-pointer hover:shadow-lg transition-shadow`}
+          onClick={() => navigate('/endomarketing')}
+        >
           <div className="p-6">
             <div className="flex items-center justify-between">
-              <h3 className={`text-lg font-medium ${config.classes.text}`}>Status de Processamento</h3>
-              {processingStatus?.hasActiveProcesses ? (
-                <ClockIcon className="h-5 w-5 text-yellow-500 animate-spin" />
-              ) : (
-                <CheckCircleIcon className="h-5 w-5 text-green-500" />
-              )}
+              <h3 className={`text-lg font-medium ${config.classes.text}`}>📊 Endomarketing</h3>
+              <CalendarIcon className="h-5 w-5 text-purple-500" />
             </div>
             <div className="mt-4">
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className={config.classes.textSecondary}>Arquivos na fila:</span>
-                  <span className={`font-medium ${config.classes.text}`}>{processingStatus?.queuedFiles || 0}</span>
+              {endomarketingSummary ? (
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className={config.classes.textSecondary}>🎂 Aniversariantes (semana):</span>
+                    <span className={`font-medium ${config.classes.text}`}>
+                      {endomarketingSummary.birthdays?.week || 0}
+                      {endomarketingSummary.birthdays?.today > 0 && (
+                        <span className="ml-1 text-yellow-600">({endomarketingSummary.birthdays.today} hoje!)</span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className={config.classes.textSecondary}>🏢 Tempo de casa (semana):</span>
+                    <span className={`font-medium ${config.classes.text}`}>
+                      {endomarketingSummary.work_anniversaries?.week || 0}
+                      {endomarketingSummary.work_anniversaries?.today > 0 && (
+                        <span className="ml-1 text-blue-600">({endomarketingSummary.work_anniversaries.today} hoje!)</span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className={config.classes.textSecondary}>📋 Experiência (45 dias):</span>
+                    <span className={`font-medium ${config.classes.text}`}>
+                      {endomarketingSummary.probation?.phase1 || 0}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className={config.classes.textSecondary}>📋 Experiência (90 dias):</span>
+                    <span className={`font-medium ${config.classes.text}`}>
+                      {endomarketingSummary.probation?.phase2 || 0}
+                    </span>
+                  </div>
+                  <div className="mt-3 pt-3 border-t">
+                    <button className="text-sm text-purple-600 hover:text-purple-700 font-medium">
+                      Ver todos os indicadores →
+                    </button>
+                  </div>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className={config.classes.textSecondary}>Uploads ativos:</span>
-                  <span className={`font-medium ${config.classes.text}`}>{processingStatus?.activeUploads || 0}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className={config.classes.textSecondary}>Status:</span>
-                  <span className={`font-medium ${
-                    processingStatus?.hasActiveProcesses ? 'text-yellow-600' : 'text-green-600'
-                  }`}>
-                    {processingStatus?.hasActiveProcesses ? 'Processando...' : 'Ocioso'}
-                  </span>
-                </div>
-              </div>
+              ) : (
+                <div className="text-sm text-gray-500">Carregando...</div>
+              )}
             </div>
           </div>
         </div>

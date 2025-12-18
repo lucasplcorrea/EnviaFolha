@@ -19,6 +19,7 @@ import PayrollDataProcessor from './pages/PayrollDataProcessor.jsx';
 import DataImport from './pages/DataImport.jsx';
 import EmployeeDetail from './pages/EmployeeDetail.jsx';
 import SystemLogs from './pages/SystemLogs.jsx';
+import Endomarketing from './pages/Endomarketing.jsx';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -68,6 +69,7 @@ function AppContent() {
                     <Route path="payroll-sender" element={<ProtectedRoute><PayrollSender /></ProtectedRoute>} />
                     <Route path="payroll" element={<ProtectedRoute><PayrollSender /></ProtectedRoute>} />
                     <Route path="communications" element={<ProtectedRoute><CommunicationSender /></ProtectedRoute>} />
+                    <Route path="endomarketing" element={<ProtectedRoute><Endomarketing /></ProtectedRoute>} />
                     <Route path="reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
                     <Route path="users" element={<ProtectedRoute><Users /></ProtectedRoute>} />
                     <Route path="settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />

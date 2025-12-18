@@ -13,6 +13,7 @@ import {
   ArrowRightOnRectangleIcon,
   Bars3Icon,
   XMarkIcon,
+  HeartIcon,
   DocumentArrowUpIcon,
   PaperAirplaneIcon,
 } from '@heroicons/react/24/outline';
@@ -45,6 +46,7 @@ const navigation = [
     description: 'Processamento de planilhas'
   },
   { name: 'Comunicados', href: '/communications', icon: ChatBubbleLeftRightIcon },
+  { name: 'Endomarketing', href: '/endomarketing', icon: HeartIcon },
   { name: 'Relatórios', href: '/reports', icon: ChartBarIcon },
   { name: 'Configurações', href: '/settings', icon: CogIcon },
 ];

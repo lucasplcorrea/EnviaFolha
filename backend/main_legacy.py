@@ -1142,6 +1142,24 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             ReportsRouter(self).handle_statistics()
         # ======================================
         
+        # ===== ROTAS DE ENDOMARKETING =====
+        elif path == '/api/v1/endomarketing/summary':
+            self.handle_endomarketing_summary()
+        elif path.startswith('/api/v1/endomarketing/birthdays'):
+            # Extrair período da query string (week ou month)
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            period = query_params.get('period', ['month'])[0]
+            self.handle_endomarketing_birthdays(period)
+        elif path.startswith('/api/v1/endomarketing/work-anniversaries'):
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            period = query_params.get('period', ['month'])[0]
+            self.handle_endomarketing_work_anniversaries(period)
+        elif path.startswith('/api/v1/endomarketing/probation'):
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            phase = int(query_params.get('phase', ['1'])[0])
+            self.handle_endomarketing_probation(phase)
+        # ===================================
+        
         # ===== ROTAS DE SCRIPTS ÚTEIS =====
         elif path.startswith('/api/v1/scripts/') and path.endswith('/preview'):
             script_id = path.split('/')[-2]
@@ -3829,6 +3847,130 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
         except Exception as e:
             print(f"❌ Erro ao executar script: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_endomarketing_summary(self):
+        """Retorna resumo dos indicadores de endomarketing"""
+        try:
+            print("📊 Carregando resumo de endomarketing...")
+            
+            db = SessionLocal()
+            user = self.get_authenticated_user(db)
+            if not user:
+                db.close()
+                self.send_json_response({"error": "Autenticação necessária"}, 401)
+                return
+            
+            try:
+                import sys
+                sys.path.append(os.path.dirname(__file__))
+                from app.services.endomarketing import EndomarketingService
+                
+                service = EndomarketingService(db)
+                summary = service.get_dashboard_summary()
+                
+                self.send_json_response(summary, 200)
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao carregar resumo de endomarketing: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_endomarketing_birthdays(self, period: str):
+        """Retorna lista de aniversariantes"""
+        try:
+            print(f"🎂 Carregando aniversariantes ({period})...")
+            
+            db = SessionLocal()
+            user = self.get_authenticated_user(db)
+            if not user:
+                db.close()
+                self.send_json_response({"error": "Autenticação necessária"}, 401)
+                return
+            
+            try:
+                import sys
+                sys.path.append(os.path.dirname(__file__))
+                from app.services.endomarketing import EndomarketingService
+                
+                service = EndomarketingService(db)
+                result = service.get_birthday_employees(period)
+                
+                self.send_json_response(result, 200)
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao carregar aniversariantes: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_endomarketing_work_anniversaries(self, period: str):
+        """Retorna lista de aniversariantes de empresa"""
+        try:
+            print(f"🏢 Carregando aniversariantes de empresa ({period})...")
+            
+            db = SessionLocal()
+            user = self.get_authenticated_user(db)
+            if not user:
+                db.close()
+                self.send_json_response({"error": "Autenticação necessária"}, 401)
+                return
+            
+            try:
+                import sys
+                sys.path.append(os.path.dirname(__file__))
+                from app.services.endomarketing import EndomarketingService
+                
+                service = EndomarketingService(db)
+                result = service.get_work_anniversary_employees(period)
+                
+                self.send_json_response(result, 200)
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao carregar aniversariantes de empresa: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_endomarketing_probation(self, phase: int):
+        """Retorna lista de colaboradores em experiência"""
+        try:
+            print(f"📋 Carregando colaboradores em experiência (fase {phase})...")
+            
+            db = SessionLocal()
+            user = self.get_authenticated_user(db)
+            if not user:
+                db.close()
+                self.send_json_response({"error": "Autenticação necessária"}, 401)
+                return
+            
+            try:
+                import sys
+                sys.path.append(os.path.dirname(__file__))
+                from app.services.endomarketing import EndomarketingService
+                
+                service = EndomarketingService(db)
+                result = service.get_probation_employees(phase)
+                
+                self.send_json_response(result, 200)
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao carregar colaboradores em experiência: {e}")
             import traceback
             traceback.print_exc()
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
