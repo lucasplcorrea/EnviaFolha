@@ -86,7 +86,7 @@ class UtilityScriptsService:
                 to_fix += 1
                 preview_items.append({
                     'id': employee.id,
-                    'full_name': employee.full_name,
+                    'full_name': employee.name,
                     'old_id': old_id,
                     'new_id': new_id
                 })
@@ -140,26 +140,26 @@ class UtilityScriptsService:
                 
                 if existing:
                     conflicts.append({
-                        'employee': employee.full_name,
+                        'employee': employee.name,
                         'old_id': old_id,
                         'new_id': new_id,
-                        'conflict_with': existing.full_name
+                        'conflict_with': existing.name
                     })
                     logger.warning(
-                        f"Conflito: {employee.full_name} ({old_id} -> {new_id}) "
-                        f"já existe em {existing.full_name}"
+                        f"Conflito: {employee.name} ({old_id} -> {new_id}) "
+                        f"já existe em {existing.name}"
                     )
                     continue
                 
                 # Aplicar correção
                 employee.unique_id = new_id
                 corrections.append({
-                    'employee': employee.full_name,
+                    'employee': employee.name,
                     'old_id': old_id,
                     'new_id': new_id
                 })
                 
-                logger.info(f"Corrigido: {employee.full_name} - {old_id} -> {new_id}")
+                logger.info(f"Corrigido: {employee.name} - {old_id} -> {new_id}")
         
         # Commit das alterações
         if corrections:
