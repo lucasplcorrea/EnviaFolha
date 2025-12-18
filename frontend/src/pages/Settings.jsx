@@ -5,6 +5,7 @@ import { usePermissions } from '../hooks/usePermissions';
 import ThemeSelector from '../components/ThemeSelector';
 import Users from './Users';
 import SystemInfo from './SystemInfo';
+import UtilityScripts from './UtilityScripts';
 
 const Settings = () => {
   const [activeTab, setActiveTab] = useState('general');
@@ -15,7 +16,8 @@ const Settings = () => {
   const tabs = [
     { id: 'general', name: 'Geral', icon: '⚙️' },
     ...(isAdmin() ? [{ id: 'users', name: 'Usuários', icon: '👥' }] : []),
-    { id: 'system', name: 'Sistema', icon: '🖥️' }
+    { id: 'system', name: 'Sistema', icon: '🖥️' },
+    ...(isAdmin() ? [{ id: 'scripts', name: 'Scripts Úteis', icon: '🛠️' }] : [])
   ];
 
   const renderGeneralSettings = () => (
@@ -87,6 +89,8 @@ const Settings = () => {
         return isAdmin() ? <Users /> : renderGeneralSettings();
       case 'system':
         return <SystemInfo />;
+      case 'scripts':
+        return isAdmin() ? <UtilityScripts /> : renderGeneralSettings();
       default:
         return renderGeneralSettings();
     }

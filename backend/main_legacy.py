@@ -1142,6 +1142,12 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             ReportsRouter(self).handle_statistics()
         # ======================================
         
+        # ===== ROTAS DE SCRIPTS ÚTEIS =====
+        elif path.startswith('/api/v1/scripts/') and path.endswith('/preview'):
+            script_id = path.split('/')[-2]
+            self.handle_script_preview(script_id)
+        # ==================================
+        
         else:
             self.send_error(404, "Endpoint não encontrado")
     
@@ -1183,6 +1189,9 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_send_communication()
         elif path == '/api/v1/evolution/test-message':
             self.handle_test_evolution_message()
+        elif path.startswith('/api/v1/scripts/'):
+            script_id = path.split('/')[-1]
+            self.handle_execute_script(script_id)
         else:
             self.send_json_response({"error": "Endpoint não encontrado"}, 404)
     
@@ -3710,6 +3719,116 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
         except Exception as e:
             print(f"❌ Erro no teste da Evolution API: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_script_preview(self, script_id):
+        """Preview de alterações que um script faria"""
+        try:
+            print(f"🔍 Preview do script: {script_id}")
+            
+            # Verificar autenticação
+            db = SessionLocal()
+            user = self.get_authenticated_user(db)
+            if not user:
+                db.close()
+                self.send_json_response({"error": "Autenticação necessária"}, 401)
+                return
+            
+            # Verificar se é admin
+            if not user.is_admin:
+                db.close()
+                self.send_json_response({
+                    "error": "Apenas administradores podem visualizar scripts"
+                }, 403)
+                return
+            
+            # Importar serviço de scripts
+            import sys
+            sys.path.append(os.path.dirname(__file__))
+            from app.services.utility_scripts import UtilityScriptsService
+            
+            try:
+                service = UtilityScriptsService(db)
+                result = service.preview_script(script_id)
+                
+                print(f"✅ Preview gerado: {result.get('affected_count', 0)} registros")
+                self.send_json_response(result, 200)
+                
+            except ValueError as e:
+                print(f"❌ Script não encontrado: {e}")
+                self.send_json_response({"error": str(e)}, 404)
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao gerar preview do script: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_execute_script(self, script_id):
+        """Executa um script utilitário"""
+        try:
+            print(f"⚡ Executando script: {script_id}")
+            
+            # Verificar autenticação
+            db = SessionLocal()
+            user = self.get_authenticated_user(db)
+            if not user:
+                db.close()
+                self.send_json_response({"error": "Autenticação necessária"}, 401)
+                return
+            
+            # Verificar se é admin
+            if not user.is_admin:
+                db.close()
+                self.send_json_response({
+                    "error": "Apenas administradores podem executar scripts"
+                }, 403)
+                return
+            
+            # Importar serviço de scripts
+            import sys
+            sys.path.append(os.path.dirname(__file__))
+            from app.services.utility_scripts import UtilityScriptsService
+            
+            try:
+                service = UtilityScriptsService(db)
+                result = service.execute_script(script_id)
+                
+                print(f"✅ Script executado: {result.get('affected_count', 0)} registros alterados")
+                
+                # Registrar no log do sistema
+                try:
+                    log_system_event(
+                        event_type='utility_script_executed',
+                        description=f"Script '{script_id}' executado por {user.username}",
+                        details={
+                            'script_id': script_id,
+                            'result': result,
+                            'user_id': user.id
+                        },
+                        severity='info',
+                        user_id=user.id
+                    )
+                except Exception as log_error:
+                    print(f"⚠️ Erro ao registrar log: {log_error}")
+                
+                self.send_json_response(result, 200)
+                
+            except ValueError as e:
+                print(f"❌ Script não encontrado: {e}")
+                self.send_json_response({"error": str(e)}, 404)
+            except Exception as e:
+                db.rollback()
+                raise
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao executar script: {e}")
             import traceback
             traceback.print_exc()
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
