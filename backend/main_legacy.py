@@ -640,6 +640,9 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
     import random
     from datetime import datetime
     
+    # Inicializar queue_id como None (será atribuído se fila for criada com sucesso)
+    queue_id = None
+    
     print(f"\n🚀 [JOB {job_id[:8]}] Thread iniciada - processando {len(selected_files)} arquivos...")
     print(f"🛡️ Sistema anti-softban AVANÇADO ativado:")
     print(f"   • Delays: 2-3min entre envios")
@@ -667,10 +670,14 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
             return False
     
     try:
-        # Importar serviço Evolution API
+        # Importar serviços
         sys.path.append(os.path.dirname(__file__))
         from app.services.evolution_api import EvolutionAPIService
+        from app.services.queue_manager import QueueManagerService
+        from app.models.base import get_db
+        
         evolution_service = EvolutionAPIService()
+        queue_service = QueueManagerService()
         
         # Verificar configuração
         if not evolution_service.server_url or not evolution_service.api_key:
@@ -694,6 +701,54 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
             print(f"❌ [JOB {job_id[:8]}] Evolution API offline!")
             return
         print(f"✅ [JOB {job_id[:8]}] Evolution API online e pronta")
+        
+        # 🎯 CRIAR FILA NO SISTEMA DE GESTÃO DE ENVIOS
+        db = next(get_db())
+        try:
+            # Obter informações do usuário e computador
+            import socket
+            computer_name = socket.gethostname()
+            ip_address = socket.gethostbyname(computer_name)
+            
+            # Criar fila
+            queue_id = queue_service.create_queue(
+                db=db,
+                user_id=user_id,
+                queue_type='holerite',
+                description=f'Envio de {len(selected_files)} holerites',
+                total_items=len(selected_files),
+                computer_name=computer_name,
+                ip_address=ip_address,
+                queue_metadata={
+                    'job_id': job_id,
+                    'templates_count': len(message_templates),
+                    'anti_softban': True
+                }
+            )
+            print(f"📋 [JOB {job_id[:8]}] Fila criada: {queue_id}")
+            
+            # Adicionar itens à fila
+            for file_info in selected_files:
+                employee = file_info.get('employee', {})
+                queue_service.add_queue_item(
+                    db=db,
+                    queue_id=queue_id,
+                    employee_id=employee.get('id'),
+                    phone_number=employee.get('phone_number', ''),
+                    file_path=file_info.get('filename', ''),
+                    item_metadata={
+                        'employee_name': employee.get('full_name', ''),
+                        'month_year': file_info.get('month_year', '')
+                    }
+                )
+            db.commit()
+            print(f"✅ [JOB {job_id[:8]}] {len(selected_files)} itens adicionados à fila")
+        except Exception as queue_error:
+            print(f"⚠️ [JOB {job_id[:8]}] Erro ao criar fila: {queue_error}")
+            # Continuar mesmo se fila falhar
+            queue_id = None
+        finally:
+            db.close()
         
         # Processar cada arquivo
         for idx, file_info in enumerate(selected_files):
@@ -794,6 +849,23 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                     'reason': 'Telefone inválido'
                 })
                 job.processed_files += 1
+                
+                # 📊 ATUALIZAR FILA - TELEFONE INVÁLIDO
+                if queue_id:
+                    try:
+                        db = next(get_db())
+                        try:
+                            queue_service.update_queue_progress(db=db, queue_id=queue_id, success=False)
+                            queue_service.update_item_status(
+                                db=db, queue_id=queue_id, employee_id=employee_id,
+                                status='failed', error_message='Telefone inválido'
+                            )
+                            db.commit()
+                        finally:
+                            db.close()
+                    except Exception as e:
+                        print(f"⚠️ [JOB {job_id[:8]}] Erro ao atualizar fila: {e}")
+                
                 continue
             
             # Construir caminho do arquivo
@@ -812,6 +884,23 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                     'reason': 'Arquivo não encontrado'
                 })
                 job.processed_files += 1
+                
+                # 📊 ATUALIZAR FILA - ARQUIVO NÃO ENCONTRADO
+                if queue_id:
+                    try:
+                        db = next(get_db())
+                        try:
+                            queue_service.update_queue_progress(db=db, queue_id=queue_id, success=False)
+                            queue_service.update_item_status(
+                                db=db, queue_id=queue_id, employee_id=employee_id,
+                                status='failed', error_message='Arquivo não encontrado'
+                            )
+                            db.commit()
+                        finally:
+                            db.close()
+                    except Exception as e:
+                        print(f"⚠️ [JOB {job_id[:8]}] Erro ao atualizar fila: {e}")
+                
                 continue
             
             # Enviar via Evolution API
@@ -852,6 +941,29 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                 if result['success']:
                     print(f"✅ [JOB {job_id[:8]}] Holerite enviado para {employee_name}")
                     job.successful_sends += 1
+                    
+                    # 📊 ATUALIZAR FILA DE ENVIOS
+                    if queue_id:
+                        try:
+                            db = next(get_db())
+                            try:
+                                queue_service.update_queue_progress(
+                                    db=db,
+                                    queue_id=queue_id,
+                                    success=True
+                                )
+                                # Encontrar e atualizar item específico
+                                queue_service.update_item_status(
+                                    db=db,
+                                    queue_id=queue_id,
+                                    employee_id=employee_id,
+                                    status='sent'
+                                )
+                                db.commit()
+                            finally:
+                                db.close()
+                        except Exception as queue_update_error:
+                            print(f"⚠️ [JOB {job_id[:8]}] Erro ao atualizar fila: {queue_update_error}")
                     
                     # Registrar no banco de dados
                     try:
@@ -932,6 +1044,30 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                         'reason': result['message']
                     })
                     
+                    # 📊 ATUALIZAR FILA DE ENVIOS COM FALHA
+                    if queue_id:
+                        try:
+                            db = next(get_db())
+                            try:
+                                queue_service.update_queue_progress(
+                                    db=db,
+                                    queue_id=queue_id,
+                                    success=False
+                                )
+                                # Atualizar item com erro
+                                queue_service.update_item_status(
+                                    db=db,
+                                    queue_id=queue_id,
+                                    employee_id=employee_id,
+                                    status='failed',
+                                    error_message=result['message']
+                                )
+                                db.commit()
+                            finally:
+                                db.close()
+                        except Exception as queue_update_error:
+                            print(f"⚠️ [JOB {job_id[:8]}] Erro ao atualizar fila: {queue_update_error}")
+                    
                     # Registrar falha no banco
                     try:
                         from app.models.base import get_db
@@ -976,6 +1112,29 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                     'employee': employee_name,
                     'reason': f'Erro na API: {str(send_error)}'
                 })
+                
+                # 📊 ATUALIZAR FILA DE ENVIOS COM EXCEÇÃO
+                if queue_id:
+                    try:
+                        db = next(get_db())
+                        try:
+                            queue_service.update_queue_progress(
+                                db=db,
+                                queue_id=queue_id,
+                                success=False
+                            )
+                            queue_service.update_item_status(
+                                db=db,
+                                queue_id=queue_id,
+                                employee_id=employee_id,
+                                status='failed',
+                                error_message=str(send_error)
+                            )
+                            db.commit()
+                        finally:
+                            db.close()
+                    except Exception as queue_update_error:
+                        print(f"⚠️ [JOB {job_id[:8]}] Erro ao atualizar fila: {queue_update_error}")
             
             # Incrementar contador de processados
             job.processed_files += 1
@@ -984,6 +1143,24 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
         job.status = 'completed'
         job.end_time = datetime.now()
         job.current_file = None
+        
+        # 🎯 FINALIZAR FILA NO SISTEMA DE GESTÃO
+        if queue_id:
+            try:
+                db = next(get_db())
+                try:
+                    # A função update_queue_progress marca automaticamente como 'completed'
+                    # quando processed_items == total_items
+                    from app.models.send_queue import SendQueue
+                    queue = db.query(SendQueue).filter(SendQueue.queue_id == queue_id).first()
+                    if queue and queue.status != 'completed':
+                        queue.status = 'completed'
+                        db.commit()
+                    print(f"✅ [JOB {job_id[:8]}] Fila marcada como concluída")
+                finally:
+                    db.close()
+            except Exception as queue_final_error:
+                print(f"⚠️ [JOB {job_id[:8]}] Erro ao finalizar fila: {queue_final_error}")
         
         elapsed = (job.end_time - job.start_time).total_seconds()
         print(f"\n✅ [JOB {job_id[:8]}] CONCLUÍDO!")
@@ -998,6 +1175,23 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
         job.status = 'failed'
         job.error_message = str(e)
         job.end_time = datetime.now()
+        
+        # 🎯 MARCAR FILA COMO FALHA
+        if queue_id:
+            try:
+                db = next(get_db())
+                try:
+                    from app.models.send_queue import SendQueue
+                    queue = db.query(SendQueue).filter(SendQueue.queue_id == queue_id).first()
+                    if queue:
+                        queue.status = 'failed'
+                        queue.error_message = str(e)
+                        db.commit()
+                    print(f"❌ [JOB {job_id[:8]}] Fila marcada como falha")
+                finally:
+                    db.close()
+            except Exception as queue_fail_error:
+                print(f"⚠️ [JOB {job_id[:8]}] Erro ao marcar fila como falha: {queue_fail_error}")
 
 class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     

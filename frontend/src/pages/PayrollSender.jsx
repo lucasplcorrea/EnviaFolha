@@ -27,6 +27,10 @@ const PayrollSender = () => {
   const [pollingInterval, setPollingInterval] = useState(null);
   const [showProgressModal, setShowProgressModal] = useState(false);
   
+  // Estados para filas ativas do sistema
+  const [activeQueues, setActiveQueues] = useState([]);
+  const [queuesPollingInterval, setQueuesPollingInterval] = useState(null);
+  
   // Múltiplos templates de mensagem para randomização (8 templates)
   const [messageTemplate1, setMessageTemplate1] = useState(
     'Olá {nome}, segue seu holerite de {mes_anterior}. A senha para abrir o arquivo são os 4 primeiros dígitos do seu CPF. Esta é uma mensagem automática, em caso de dúvidas contate o RH. Por favor, confirme o recebimento com um 👍'
@@ -65,6 +69,7 @@ const PayrollSender = () => {
 
   useEffect(() => {
     loadPayrollFiles();
+    loadActiveQueues();
     
     // Verificar se há job ativo ao carregar página
     const savedJobId = localStorage.getItem('activeJobId');
@@ -77,6 +82,14 @@ const PayrollSender = () => {
       setPollingInterval(interval);
       pollJobStatus(savedJobId);
     }
+    
+    // Polling de filas ativas a cada 5 segundos
+    const queuesInterval = setInterval(loadActiveQueues, 5000);
+    setQueuesPollingInterval(queuesInterval);
+    
+    return () => {
+      if (queuesInterval) clearInterval(queuesInterval);
+    };
   }, [monthFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Cleanup do polling quando componente é desmontado
@@ -154,6 +167,16 @@ const PayrollSender = () => {
       toast.error('Erro ao carregar holerites processados');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadActiveQueues = async () => {
+    try {
+      const response = await api.get('/queue/active');
+      setActiveQueues(response.data.queues || []);
+    } catch (error) {
+      console.error('Erro ao carregar filas ativas:', error);
+      // Não mostrar toast para não poluir UI durante polling
     }
   };
 
@@ -399,7 +422,44 @@ const PayrollSender = () => {
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-4">Envio de Holerites</h1>
         
-        {/* Card de Envio Ativo */}
+        {/* Cards de Filas Ativas de Outros Usuários */}
+        {activeQueues.length > 0 && activeQueues.some(q => q.is_active) && (
+          <div className="mb-6 space-y-3">
+            <h3 className="text-sm font-semibold text-gray-700">⚠️ Envios em Andamento no Sistema</h3>
+            {activeQueues.filter(q => q.is_active).map((queue) => (
+              <div key={queue.queue_id} className="bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-200 rounded-lg p-4 shadow-md">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <div className="animate-pulse rounded-full h-3 w-3 bg-amber-500"></div>
+                    <div>
+                      <h4 className="text-sm font-semibold text-amber-900">
+                        {queue.description || 'Envio de Holerites'}
+                      </h4>
+                      <p className="text-xs text-amber-700">
+                        {queue.processed_items} de {queue.total_items} enviados ({queue.progress_percentage}%)
+                        {queue.user_name && ` • Iniciado por: ${queue.user_name}`}
+                        {queue.computer_name && ` • PC: ${queue.computer_name}`}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-xs text-amber-600">
+                    ✅ {queue.successful_items} • ❌ {queue.failed_items}
+                  </div>
+                </div>
+                <div className="mt-2">
+                  <div className="w-full bg-amber-200 rounded-full h-1.5">
+                    <div 
+                      className="bg-amber-600 h-1.5 rounded-full transition-all duration-500"
+                      style={{ width: `${queue.progress_percentage}%` }}
+                    ></div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Card de Envio Ativo (Meu Envio) */}
         {jobStatus && jobStatus.status === 'running' && !showProgressModal && (
           <div className="mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-lg p-4 shadow-md">
             <div className="flex items-center justify-between">
