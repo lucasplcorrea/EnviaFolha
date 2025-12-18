@@ -22,13 +22,13 @@ const Endomarketing = () => {
     setLoading(true);
     try {
       if (activeTab === 'birthdays') {
-        const response = await api.get(`/api/v1/endomarketing/birthdays?period=${period}`);
+        const response = await api.get(`/endomarketing/birthdays?period=${period}`);
         setBirthdays(response.data.employees || []);
       } else if (activeTab === 'work-anniversaries') {
-        const response = await api.get(`/api/v1/endomarketing/work-anniversaries?period=${period}`);
+        const response = await api.get(`/endomarketing/work-anniversaries?period=${period}`);
         setWorkAnniversaries(response.data.employees || []);
       } else if (activeTab === 'probation') {
-        const response = await api.get(`/api/v1/endomarketing/probation?phase=${probationPhase}`);
+        const response = await api.get(`/endomarketing/probation?phase=${probationPhase}`);
         setProbationEmployees(response.data.employees || []);
       }
     } catch (error) {
