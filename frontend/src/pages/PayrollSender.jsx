@@ -29,28 +29,28 @@ const PayrollSender = () => {
   
   // Múltiplos templates de mensagem para randomização (8 templates)
   const [messageTemplate1, setMessageTemplate1] = useState(
-    'Olá {nome}, segue seu holerite de {mes_anterior}. A senha para abrir o arquivo são os 4 primeiros dígitos do seu CPF. Esta é uma mensagem automática, em caso de dúvidas contate o RH.'
+    'Olá {nome}, segue seu holerite de {mes_anterior}. A senha para abrir o arquivo são os 4 primeiros dígitos do seu CPF. Esta é uma mensagem automática, em caso de dúvidas contate o RH. Por favor, confirme o recebimento com um 👍'
   );
   const [messageTemplate2, setMessageTemplate2] = useState(
-    'Prezado(a) {nome}, está disponível seu holerite de {mes_anterior}. Para abrir o documento, utilize os 4 primeiros dígitos do seu CPF como senha. Qualquer dúvida, entre em contato com o Recursos Humanos.'
+    'Prezado(a) {nome}, está disponível seu holerite de {mes_anterior}. Para abrir o documento, utilize os 4 primeiros dígitos do seu CPF como senha. Qualquer dúvida, entre em contato com o Recursos Humanos. Responda "OK" quando visualizar! 📄'
   );
   const [messageTemplate3, setMessageTemplate3] = useState(
-    'Oi {nome}! Seu holerite referente ao período de {mes_anterior} já está disponível. A senha de acesso é composta pelos 4 primeiros números do seu CPF. Em caso de dúvidas, procure o setor de RH.'
+    'Oi {nome}! Seu holerite referente ao período de {mes_anterior} já está disponível. A senha de acesso é composta pelos 4 primeiros números do seu CPF. Em caso de dúvidas, procure o setor de RH. Confirme o recebimento respondendo "Recebi" ✅'
   );
   const [messageTemplate4, setMessageTemplate4] = useState(
-    'Olá {nome}, encaminhamos o holerite do mês {mes_anterior}. Utilize os 4 primeiros dígitos do CPF para acessar o arquivo. Caso tenha alguma dúvida, favor contatar o departamento de RH.'
+    'Olá {nome}, encaminhamos o holerite do mês {mes_anterior}. Utilize os 4 primeiros dígitos do CPF para acessar o arquivo. Caso tenha alguma dúvida, favor contatar o departamento de RH. Aguardamos sua confirmação de recebimento! 📩'
   );
   const [messageTemplate5, setMessageTemplate5] = useState(
-    'Bom dia {nome}! Segue em anexo seu contracheque referente a {mes_anterior}. Para acessar, use os 4 primeiros dígitos do CPF como senha. Qualquer questão, estamos à disposição no RH.'
+    'Bom dia {nome}! Segue em anexo seu contracheque referente a {mes_anterior}. Para acessar, use os 4 primeiros dígitos do CPF como senha. Qualquer questão, estamos à disposição no RH. Por gentileza, reaja com ❤️ ao receber'
   );
   const [messageTemplate6, setMessageTemplate6] = useState(
-    'Oi {nome}, tudo bem? Seu holerite de {mes_anterior} já foi processado e está anexo nesta mensagem. Senha: 4 primeiros números do CPF. Dúvidas? Fale com o RH!'
+    'Oi {nome}, tudo bem? Seu holerite de {mes_anterior} já foi processado e está anexo nesta mensagem. Senha: 4 primeiros números do CPF. Dúvidas? Fale com o RH! Manda um "Valeu!" pra confirmar que recebeu 😊'
   );
   const [messageTemplate7, setMessageTemplate7] = useState(
-    'Prezado(a) {nome}, encaminhamos o comprovante de pagamento de {mes_anterior}. O arquivo está protegido com os 4 primeiros dígitos do seu CPF. Para esclarecimentos, procure o departamento pessoal.'
+    'Prezado(a) {nome}, encaminhamos o comprovante de pagamento de {mes_anterior}. O arquivo está protegido com os 4 primeiros dígitos do seu CPF. Para esclarecimentos, procure o departamento pessoal. Confirme o recebimento com 👍 ou "Recebido"'
   );
   const [messageTemplate8, setMessageTemplate8] = useState(
-    'Olá {nome}! Disponibilizamos seu holerite do período {mes_anterior}. A senha de acesso corresponde aos 4 primeiros números do CPF cadastrado. Em caso de necessidade, contate o RH.'
+    'Olá {nome}! Disponibilizamos seu holerite do período {mes_anterior}. A senha de acesso corresponde aos 4 primeiros números do CPF cadastrado. Em caso de necessidade, contate o RH. Reaja com ✅ para confirmar que visualizou'
   );
   
   // Estados para envio individual
@@ -565,7 +565,7 @@ const PayrollSender = () => {
                   onChange={(e) => setMessageTemplate1(e.target.value)}
                   rows={2}
                   className="block w-full text-sm border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="Ex: Olá {nome}, segue seu holerite..."
+                  placeholder="Ex: Olá {nome}, segue seu holerite... Confirme com 👍"
                 />
               </div>
 
@@ -607,7 +607,7 @@ const PayrollSender = () => {
                   onChange={(e) => setMessageTemplate4(e.target.value)}
                   rows={2}
                   className="block w-full text-sm border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="Ex: Olá {nome}, encaminhamos o holerite do mês..."
+                  placeholder="Ex: Prezado(a) {nome}, encaminhamos o holerite... Responda 'OK'!"
                 />
               </div>
 
@@ -663,7 +663,7 @@ const PayrollSender = () => {
                   onChange={(e) => setMessageTemplate8(e.target.value)}
                   rows={2}
                   className="block w-full text-sm border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="Ex: Olá {nome}! Disponibilizamos seu holerite..."
+                  placeholder="Ex: Oi {nome}! Disponibilizamos seu holerite... Reaja com ✅"
                 />
               </div>
             </div>

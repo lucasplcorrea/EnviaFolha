@@ -182,7 +182,8 @@ class EvolutionAPIService:
                 # Mensagem padrão simples (caso nenhum template seja fornecido)
                 caption = (f"Olá {employee_name}, segue seu holerite referente a {month_year.replace('_', ' ')}. "
                           f"A senha para abrir o arquivo são os 4 primeiros dígitos do seu CPF. "
-                          f"Esta é uma mensagem automática, em caso de dúvidas contate o RH.")
+                          f"Esta é uma mensagem automática, em caso de dúvidas contate o RH. "
+                          f"Por favor, confirme o recebimento com um 👍")
             
             url = f"{self.server_url}/message/sendMedia/{self.instance_name}"
             
