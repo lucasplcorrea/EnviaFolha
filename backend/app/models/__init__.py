@@ -11,6 +11,7 @@ from .system_log import SystemLog, LogLevel, LogCategory
 from .payroll_send import PayrollSend
 from .communication_send import CommunicationSend
 from .communication_recipient import CommunicationRecipient
+from .send_queue import SendQueue, SendQueueItem
 
 # keep older payroll-related imports if they exist elsewhere; import safe names
 try:
@@ -44,7 +45,9 @@ __all__ = [
     "PayrollProcessingLog",
     "PayrollSend",
     "CommunicationSend",
-    "CommunicationRecipient"
+    "CommunicationRecipient",
+    "SendQueue",
+    "SendQueueItem"
     # "AuditLog",
     # "SystemSetting"
 ]

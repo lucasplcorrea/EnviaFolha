@@ -21,6 +21,7 @@ import EmployeeDetail from './pages/EmployeeDetail.jsx';
 import SystemLogs from './pages/SystemLogs.jsx';
 import Endomarketing from './pages/Endomarketing.jsx';
 import RHIndicators from './pages/RHIndicators.jsx';
+import QueueManagement from './pages/QueueManagement.jsx';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -72,6 +73,7 @@ function AppContent() {
                     <Route path="communications" element={<ProtectedRoute><CommunicationSender /></ProtectedRoute>} />
                     <Route path="endomarketing" element={<ProtectedRoute><Endomarketing /></ProtectedRoute>} />
                     <Route path="rh-indicators" element={<ProtectedRoute><RHIndicators /></ProtectedRoute>} />
+                    <Route path="queue-management" element={<ProtectedRoute><QueueManagement /></ProtectedRoute>} />
                     <Route path="reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
                     <Route path="users" element={<ProtectedRoute><Users /></ProtectedRoute>} />
                     <Route path="settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />

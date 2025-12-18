@@ -145,6 +145,7 @@ def setup_database():
         
         # Importar todos os modelos para garantir que estejam registrados
         from app.models import Base, User, Employee, Role, PayrollPeriod, PayrollData, PayrollTemplate, PayrollProcessingLog
+        from app.models.send_queue import SendQueue, SendQueueItem
         
         # Criar tabelas se não existirem
         Base.metadata.create_all(bind=engine)
@@ -1160,6 +1161,18 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_endomarketing_probation(phase)
         # ===================================
         
+        # ===== ROTAS DE GERENCIAMENTO DE FILAS =====
+        elif path == '/api/v1/queue/active':
+            self.handle_get_active_queues()
+        elif path == '/api/v1/queue/list':
+            self.handle_get_all_queues()
+        elif path == '/api/v1/queue/statistics':
+            self.handle_get_queue_statistics()
+        elif path.startswith('/api/v1/queue/') and path.endswith('/details'):
+            queue_id = path.split('/')[-2]
+            self.handle_get_queue_details(queue_id)
+        # ===========================================
+        
         # ===== ROTAS DE SCRIPTS ÚTEIS =====
         elif path.startswith('/api/v1/scripts/') and path.endswith('/preview'):
             script_id = path.split('/')[-2]
@@ -1210,6 +1223,9 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         elif path.startswith('/api/v1/scripts/'):
             script_id = path.split('/')[-1]
             self.handle_execute_script(script_id)
+        elif path.startswith('/api/v1/queue/') and path.endswith('/cancel'):
+            queue_id = path.split('/')[-2]
+            self.handle_cancel_queue(queue_id)
         else:
             self.send_json_response({"error": "Endpoint não encontrado"}, 404)
     
@@ -3971,6 +3987,179 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
         except Exception as e:
             print(f"❌ Erro ao carregar colaboradores em experiência: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_get_active_queues(self):
+        """Retorna lista de filas ativas"""
+        try:
+            print("📋 Carregando filas ativas...")
+            
+            db = SessionLocal()
+            user = self.get_authenticated_user(db)
+            if not user:
+                db.close()
+                self.send_json_response({"error": "Autenticação necessária"}, 401)
+                return
+            
+            try:
+                import sys
+                sys.path.append(os.path.dirname(__file__))
+                from app.services.queue_manager import QueueManagerService
+                
+                service = QueueManagerService(db)
+                queues = service.get_active_queues()
+                
+                self.send_json_response({"queues": queues}, 200)
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao carregar filas ativas: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_get_all_queues(self):
+        """Retorna lista de todas as filas com filtros"""
+        try:
+            print("📋 Carregando todas as filas...")
+            
+            db = SessionLocal()
+            user = self.get_authenticated_user(db)
+            if not user:
+                db.close()
+                self.send_json_response({"error": "Autenticação necessária"}, 401)
+                return
+            
+            try:
+                import sys
+                sys.path.append(os.path.dirname(__file__))
+                from app.services.queue_manager import QueueManagerService
+                
+                # Extrair parâmetros da query string
+                query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                status = query_params.get('status', [None])[0]
+                queue_type = query_params.get('type', [None])[0]
+                page = int(query_params.get('page', ['1'])[0])
+                page_size = int(query_params.get('page_size', ['50'])[0])
+                
+                service = QueueManagerService(db)
+                queues = service.get_all_queues(
+                    status=status,
+                    queue_type=queue_type,
+                    page=page,
+                    page_size=page_size
+                )
+                
+                self.send_json_response({"queues": queues}, 200)
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao carregar filas: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_get_queue_details(self, queue_id: str):
+        """Retorna detalhes completos de uma fila"""
+        try:
+            print(f"🔍 Carregando detalhes da fila {queue_id}...")
+            
+            db = SessionLocal()
+            user = self.get_authenticated_user(db)
+            if not user:
+                db.close()
+                self.send_json_response({"error": "Autenticação necessária"}, 401)
+                return
+            
+            try:
+                import sys
+                sys.path.append(os.path.dirname(__file__))
+                from app.services.queue_manager import QueueManagerService
+                
+                service = QueueManagerService(db)
+                details = service.get_queue_details(queue_id)
+                
+                if details is None:
+                    self.send_json_response({"error": "Fila não encontrada"}, 404)
+                else:
+                    self.send_json_response(details, 200)
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao carregar detalhes da fila: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_get_queue_statistics(self):
+        """Retorna estatísticas gerais das filas"""
+        try:
+            print("📊 Carregando estatísticas das filas...")
+            
+            db = SessionLocal()
+            user = self.get_authenticated_user(db)
+            if not user:
+                db.close()
+                self.send_json_response({"error": "Autenticação necessária"}, 401)
+                return
+            
+            try:
+                import sys
+                sys.path.append(os.path.dirname(__file__))
+                from app.services.queue_manager import QueueManagerService
+                
+                service = QueueManagerService(db)
+                stats = service.get_queue_statistics()
+                
+                self.send_json_response(stats, 200)
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao carregar estatísticas: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_cancel_queue(self, queue_id: str):
+        """Cancela uma fila em execução"""
+        try:
+            print(f"🛑 Cancelando fila {queue_id}...")
+            
+            db = SessionLocal()
+            user = self.get_authenticated_user(db)
+            if not user:
+                db.close()
+                self.send_json_response({"error": "Autenticação necessária"}, 401)
+                return
+            
+            try:
+                import sys
+                sys.path.append(os.path.dirname(__file__))
+                from app.services.queue_manager import QueueManagerService
+                
+                service = QueueManagerService(db)
+                success = service.cancel_queue(queue_id, user.id)
+                
+                if success:
+                    self.send_json_response({"message": "Fila cancelada com sucesso"}, 200)
+                else:
+                    self.send_json_response({"error": "Não foi possível cancelar a fila"}, 400)
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao cancelar fila: {e}")
             import traceback
             traceback.print_exc()
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
