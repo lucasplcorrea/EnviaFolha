@@ -103,12 +103,14 @@ const Endomarketing = () => {
               </div>
               <div className="flex justify-between items-center">
                 <span className={`text-sm ${config.classes.textSecondary}`}>
-                  {employee.is_today ? 'Hoje!' : 'Faltam:'}
+                  {employee.is_today ? 'Hoje!' : employee.days_until < 0 ? 'Passaram:' : 'Faltam:'}
                 </span>
                 <span className={`text-sm font-medium ${
-                  employee.is_today ? 'text-yellow-600' : config.classes.text
+                  employee.is_today ? 'text-yellow-600' : 
+                  employee.days_until < 0 ? 'text-gray-500' : 
+                  config.classes.text
                 }`}>
-                  {employee.is_today ? '🎉' : `${employee.days_until} dias`}
+                  {employee.is_today ? '🎉' : `${Math.abs(employee.days_until)} dias`}
                 </span>
               </div>
             </div>
@@ -176,12 +178,14 @@ const Endomarketing = () => {
               </div>
               <div className="flex justify-between items-center">
                 <span className={`text-sm ${config.classes.textSecondary}`}>
-                  {employee.is_today ? 'Hoje!' : 'Faltam:'}
+                  {employee.is_today ? 'Hoje!' : employee.days_until < 0 ? 'Passaram:' : 'Faltam:'}
                 </span>
                 <span className={`text-sm font-medium ${
-                  employee.is_today ? 'text-blue-600' : config.classes.text
+                  employee.is_today ? 'text-blue-600' : 
+                  employee.days_until < 0 ? 'text-gray-500' : 
+                  config.classes.text
                 }`}>
-                  {employee.is_today ? '🎊' : `${employee.days_until} dias`}
+                  {employee.is_today ? '🎊' : `${Math.abs(employee.days_until)} dias`}
                 </span>
               </div>
             </div>
@@ -250,7 +254,7 @@ const Endomarketing = () => {
               <div className="flex justify-between items-center">
                 <span className={`text-sm ${config.classes.textSecondary}`}>Dias trabalhados:</span>
                 <span className={`text-sm font-medium ${config.classes.text}`}>
-                  {employee.days_working} dias
+                  {employee.days_working || 0} dias
                 </span>
               </div>
               <div className="flex justify-between items-center">
@@ -258,7 +262,7 @@ const Endomarketing = () => {
                   Data da fase {probationPhase}:
                 </span>
                 <span className={`text-sm font-medium ${config.classes.text}`}>
-                  {employee.phase_date}
+                  {employee.phase_date || 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center">
@@ -270,8 +274,8 @@ const Endomarketing = () => {
                   employee.is_today ? 'text-orange-600' : config.classes.text
                 }`}>
                   {employee.is_today ? '⚠️' : 
-                   employee.is_overdue ? `${Math.abs(employee.days_until)} dias` :
-                   `${employee.days_until} dias`}
+                   (employee.days_until !== undefined && employee.days_until !== null && !isNaN(employee.days_until)) ? 
+                   `${Math.abs(employee.days_until)} dias` : '0 dias'}
                 </span>
               </div>
             </div>

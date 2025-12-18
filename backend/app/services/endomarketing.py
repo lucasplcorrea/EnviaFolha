@@ -88,11 +88,10 @@ class EndomarketingService:
                     age -= 1
                 
                 # Calcular dias até aniversário
-                next_birthday = emp.birth_date.replace(year=today.year)
-                if next_birthday < today.date():
-                    next_birthday = emp.birth_date.replace(year=today.year + 1)
-                
-                days_until = (next_birthday - today.date()).days
+                # Se a data já passou este ano, calcular quantos dias passaram (negativo)
+                # Se ainda vai acontecer este ano, calcular quantos dias faltam (positivo)
+                birthday_this_year = emp.birth_date.replace(year=today.year)
+                days_until = (birthday_this_year - today.date()).days
                 
                 birthdays.append({
                     'id': emp.id,
@@ -161,6 +160,7 @@ class EndomarketingService:
                     extract('day', Employee.admission_date)
                 ).all()
         else:
+            # Mês inteiro
             employees = self.db.query(Employee).filter(
                 Employee.is_active == True,
                 Employee.admission_date.isnot(None),
@@ -182,11 +182,11 @@ class EndomarketingService:
                 
                 # Apenas se for completar 1 ano ou mais
                 if years_completing >= 1:
-                    next_anniversary = emp.admission_date.replace(year=today.year)
-                    if next_anniversary < today.date():
-                        next_anniversary = emp.admission_date.replace(year=today.year + 1)
-                    
-                    days_until = (next_anniversary - today.date()).days
+                    # Calcular dias até aniversário de empresa
+                    # Se a data já passou este ano, calcular quantos dias passaram (negativo)
+                    # Se ainda vai acontecer este ano, calcular quantos dias faltam (positivo)
+                    anniversary_this_year = emp.admission_date.replace(year=today.year)
+                    days_until = (anniversary_this_year - today.date()).days
                     
                     anniversaries.append({
                         'id': emp.id,
@@ -260,7 +260,7 @@ class EndomarketingService:
                     'admission_date': emp.admission_date.strftime('%d/%m/%Y'),
                     'days_working': days_working,
                     'phase_date': phase_date.strftime('%d/%m/%Y'),
-                    'days_until_phase': days_until_phase,
+                    'days_until': days_until_phase,  # Corrigido de days_until_phase para days_until
                     'is_today': days_until_phase == 0,
                     'is_overdue': days_until_phase < 0
                 })
