@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PlusIcon, DocumentArrowUpIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import api from '../services/api';
@@ -8,6 +8,7 @@ import { useTheme } from '../contexts/ThemeContext';
 const Employees = () => {
   const navigate = useNavigate();
   const { config } = useTheme();
+  const [searchParams] = useSearchParams();
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -41,7 +42,12 @@ const Employees = () => {
 
   useEffect(() => {
     loadEmployees();
-  }, []);
+    // Check if coming from import page with refresh parameter
+    const refresh = searchParams.get('refresh');
+    if (refresh) {
+      toast.success('Lista de colaboradores atualizada!');
+    }
+  }, [searchParams]);
 
   const loadEmployees = async () => {
     try {
