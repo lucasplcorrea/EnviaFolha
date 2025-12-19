@@ -905,29 +905,11 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
             
             # Enviar via Evolution API
             try:
-                # 🎭 SIMULAR PRESENÇA "DIGITANDO" - Comportamento humano
-                print(f"📝 [JOB {job_id[:8]}] Simulando digitação para {employee_name}...")
-                try:
-                    presence_result = loop.run_until_complete(
-                        evolution_service.send_presence(
-                            phone=phone_number,
-                            presence_type="composing",
-                            delay=5000  # 5 segundos
-                        )
-                    )
-                    
-                    if presence_result.get('success'):
-                        print(f"✍️ [JOB {job_id[:8]}] Presença 'digitando' ativada por 5s")
-                        time.sleep(5.5)  # Aguardar os 5s + margem de 0.5s
-                    else:
-                        print(f"⚠️ [JOB {job_id[:8]}] Não foi possível enviar presença: {presence_result.get('message')}")
-                        # Continuar mesmo se presença falhar
+                # 🎭 PRESENÇA REMOVIDA - Causava "Aguardando Mensagem" no iPhone
+                # Envio direto de documento é mais confiável e evita problemas de sincronização
+                print(f"📄 [JOB {job_id[:8]}] Enviando documento para {employee_name}...")
                 
-                except Exception as presence_error:
-                    print(f"⚠️ [JOB {job_id[:8]}] Erro ao simular presença: {presence_error}")
-                    # Continuar o envio normalmente mesmo se presença falhar
-                
-                # Enviar mensagem após simulação de digitação
+                # Enviar mensagem diretamente (sem presença prévia)
                 result = loop.run_until_complete(
                     evolution_service.send_payroll_message(
                         phone=phone_number,
