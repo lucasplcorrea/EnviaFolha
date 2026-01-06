@@ -17,7 +17,7 @@ const ROUTE_TO_PAGE = {
   '/payroll-processor': 'payroll',
   '/payroll-sender': 'payroll',
   '/payroll-data': 'payroll',
-  '/data-import': 'employees',  // Importação faz parte de employees
+  // '/data-import': removido - importação agora apenas em /employees
   '/communications': 'communications',
   '/endomarketing': 'reports',  // Endomarketing faz parte de reports/analytics
   '/rh-indicators': 'reports',  // Indicadores RH faz parte de reports/analytics

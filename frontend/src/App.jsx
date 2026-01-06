@@ -66,7 +66,7 @@ function AppContent() {
                     <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
                     <Route path="employees/:id" element={<ProtectedRoute><EmployeeDetail /></ProtectedRoute>} />
                     <Route path="employees" element={<ProtectedRoute><Employees /></ProtectedRoute>} />
-                    <Route path="data-import" element={<ProtectedRoute><DataImport /></ProtectedRoute>} />
+                    {/* Rota removida: importação agora é feita em /employees */}
                     <Route path="payroll-processor" element={<ProtectedRoute><PayrollProcessor /></ProtectedRoute>} />
                     <Route path="payroll-sender" element={<ProtectedRoute><PayrollSender /></ProtectedRoute>} />
                     <Route path="payroll" element={<ProtectedRoute><PayrollSender /></ProtectedRoute>} />
