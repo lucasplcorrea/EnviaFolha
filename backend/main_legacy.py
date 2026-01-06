@@ -868,12 +868,16 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                 
                 continue
             
-            # Construir caminho do arquivo
-            file_path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                'holerites_formatados_final',
-                filename
-            )
+            # NOVO: Usar caminho do arquivo (filepath) se fornecido, senão construir caminho antigo
+            file_path = file_data.get('filepath')
+            
+            if not file_path:
+                # Fallback: formato antigo (holerites_formatados_final/)
+                file_path = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)),
+                    'holerites_formatados_final',
+                    filename
+                )
             
             if not os.path.exists(file_path):
                 print(f"⚠️ [JOB {job_id[:8]}] Arquivo não encontrado: {file_path}")
@@ -1307,6 +1311,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         
         elif path == '/api/v1/payrolls/processed':
             self.handle_payrolls_processed()
+        elif path == '/api/v1/payrolls/periods':
+            self.handle_list_payroll_periods()
         
         # ===== ROTAS DE JOBS EM BACKGROUND =====
         elif path.startswith('/api/v1/payrolls/bulk-send/') and path.endswith('/status'):
@@ -1389,6 +1395,10 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_create_payroll_template()
         elif path == '/api/v1/payroll/process' or path == '/api/v1/payrolls/process':
             self.handle_process_payroll_file()
+        elif path == '/api/v1/payrolls/periods':
+            self.handle_list_payroll_periods()
+        elif path == '/api/v1/payrolls/export-batch':
+            self.handle_export_payroll_batch()
         elif path == '/api/v1/payrolls/bulk-send':
             self.handle_bulk_send_payrolls()
         elif path == '/api/v1/payrolls/delete-file':
@@ -1728,15 +1738,18 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         self.send_json_response(status)
     
     def handle_payrolls_processed(self):
-        """Lista de holerites processados"""
+        """Lista de holerites processados (NOVO: busca em processed/ e subpastas)"""
         try:
             import os
             import glob
             
-            # Diretório onde os holerites processados são salvos
-            output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'holerites_formatados_final')
+            # NOVO: Diretório processed/ com subpastas organizadas
+            processed_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'processed')
             
-            if not os.path.exists(output_dir):
+            # Fallback: pasta antiga para compatibilidade
+            legacy_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'holerites_formatados_final')
+            
+            if not os.path.exists(processed_dir) and not os.path.exists(legacy_dir):
                 self.send_json_response({
                     "files": [],
                     "statistics": {
@@ -1748,8 +1761,12 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 })
                 return
             
-            # Buscar todos os PDFs no diretório
-            pdf_files = glob.glob(os.path.join(output_dir, '*.pdf'))
+            # Buscar todos os PDFs recursivamente (processed/** e legacy)
+            pdf_files = []
+            if os.path.exists(processed_dir):
+                pdf_files.extend(glob.glob(os.path.join(processed_dir, '**', '*.pdf'), recursive=True))
+            if os.path.exists(legacy_dir):
+                pdf_files.extend(glob.glob(os.path.join(legacy_dir, '*.pdf')))
             
             # Carregar dados dos colaboradores
             employees_data = load_employees_data()
@@ -1768,25 +1785,40 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             
             for pdf_path in pdf_files:
                 filename = os.path.basename(pdf_path)
+                folder_name = os.path.basename(os.path.dirname(pdf_path))
                 
-                # Extrair unique_id do nome do arquivo (formato: XXXXXXXXX_holerite_mes_ano.pdf)
-                parts = filename.split('_')
-                unique_id = parts[0] if parts else 'unknown'
-                
-                # Extrair mês/ano no formato YYYY-MM (banco aceita apenas 7 caracteres)
-                month_year = 'desconhecido'
-                if len(parts) >= 4:  # XXXXXXXXX_holerite_mes_ano.pdf
-                    month_name = parts[2].lower()
-                    year = parts[3].replace('.pdf', '')
+                # Extrair unique_id e month_year baseado no formato
+                if filename.startswith('EN_'):  # NOVO FORMATO: EN_MATRICULA_TIPO_MES_ANO.pdf
+                    parts = filename.replace('.pdf', '').split('_')
+                    unique_id = parts[1] if len(parts) > 1 else 'unknown'  # Matrícula (sem zeros à esquerda)
                     
-                    # Converter nome do mês para número
-                    month_map = {
-                        'janeiro': '01', 'fevereiro': '02', 'marco': '03', 'abril': '04',
-                        'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',
-                        'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
-                    }
-                    month_num = month_map.get(month_name, '00')
-                    month_year = f"{year}-{month_num}"  # Formato YYYY-MM (7 caracteres)
+                    # Adicionar zeros à esquerda para busca (formato completo: 005900169)
+                    if unique_id.isdigit() and len(unique_id) < 9:
+                        unique_id = unique_id.zfill(9)
+                    
+                    # Extrair mês/ano: EN_MATRICULA_TIPO_MES_ANO.pdf
+                    if len(parts) >= 5:
+                        month_num = parts[3].zfill(2)  # Mês
+                        year = parts[4]  # Ano
+                        month_year = f"{year}-{month_num}"  # Formato YYYY-MM
+                    else:
+                        month_year = 'desconhecido'
+                else:  # FORMATO ANTIGO: XXXXXXXXX_holerite_mes_ano.pdf
+                    parts = filename.split('_')
+                    unique_id = parts[0] if parts else 'unknown'
+                    
+                    month_year = 'desconhecido'
+                    if len(parts) >= 4:
+                        month_name = parts[2].lower()
+                        year = parts[3].replace('.pdf', '')
+                        
+                        month_map = {
+                            'janeiro': '01', 'fevereiro': '02', 'marco': '03', 'abril': '04',
+                            'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',
+                            'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
+                        }
+                        month_num = month_map.get(month_name, '00')
+                        month_year = f"{year}-{month_num}"
                 
                 # Buscar colaborador associado
                 employee = employees_by_id.get(unique_id)
@@ -1795,6 +1827,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     "filename": filename,
                     "unique_id": unique_id,
                     "month_year": month_year,
+                    "folder": folder_name,  # Pasta onde está (ex: Mensal_11_2025)
+                    "filepath": pdf_path,  # Caminho completo para envio
                     "size": os.path.getsize(pdf_path),
                     "created_at": datetime.fromtimestamp(os.path.getctime(pdf_path)).isoformat(),
                     "is_orphan": employee is None,
@@ -3007,13 +3041,18 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json_response({"error": f"Erro ao fazer upload: {str(e)}"}, 500)
 
     def handle_process_payroll_file(self):
-        """Processar arquivo de folha de pagamento - segmenta PDF e protege com senha"""
+        """Processar arquivo de folha de pagamento - NOVO FORMATO: EN_MATRICULA_TIPO_MES_ANO.pdf"""
         try:
-            print("📄 Iniciando processamento de holerites...")
+            print("📄 Iniciando processamento de holerites (NOVO FORMATO)...")
             
             # Obter dados da requisição
             data = self.get_request_data()
             uploaded_file = data.get('uploadedFile', {})
+            payroll_type = data.get('payrollType', '11')  # Padrão: Mensal
+            month = int(data.get('month', datetime.now().month))
+            year = int(data.get('year', datetime.now().year))
+            
+            print(f"📋 NOVO FORMATO - Tipo: {payroll_type}, Mês: {month}, Ano: {year}")
             
             if not uploaded_file:
                 self.send_json_response({"error": "Nenhum arquivo foi enviado"}, 400)
@@ -3026,7 +3065,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json_response({"error": "Dados do arquivo incompletos"}, 400)
                 return
             
-            print(f"📂 Processando arquivo: {filepath}")
+            print(f"📂 Processando arquivo com novo formato: {filepath}")
             
             # Verificar se arquivo existe
             import os
@@ -3034,33 +3073,46 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json_response({"error": f"Arquivo não encontrado: {filepath}"}, 404)
                 return
             
-            # Criar diretório de saída se não existir
-            output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'holerites_formatados_final')
-            if not os.path.exists(output_dir):
-                os.makedirs(output_dir)
-                print(f"✅ Diretório criado: {output_dir}")
+            # Importar novo serviço de formatação
+            from app.services.payroll_formatter import segment_pdf_by_employee
             
-            # Processar PDF
-            result = self.split_pdf_by_employee(filepath, output_dir)
+            # Carregar dados dos funcionários
+            employees_data = load_employees_data()
+            employees_list = employees_data.get('employees', [])
+            
+            if not employees_list:
+                self.send_json_response({"error": "Nenhum funcionário encontrado no banco de dados"}, 500)
+                return
+            
+            print(f"👥 {len(employees_list)} funcionários carregados")
+            
+            # Processar PDF com novo formato
+            result = segment_pdf_by_employee(
+                pdf_path=filepath,
+                employees_data=employees_list,
+                payroll_type=payroll_type,
+                month=month,
+                year=year
+            )
             
             if result['success']:
                 # Registrar processamento no banco de dados
                 try:
-                    # Extrair mês/ano do primeiro arquivo processado
-                    month_year = 'desconhecido'
-                    if result['files'] and len(result['files']) > 0:
-                        month_year = result['files'][0].get('month_year', 'desconhecido')
+                    export_info = result.get('export_info', {})
                     
                     # Log de processamento bem-sucedido
                     log_system_event(
                         event_type='payroll_processing',
-                        description=f"PDF processado: {filename}",
+                        description=f"PDF processado (Novo Formato): {filename}",
                         details={
                             'original_file': filename,
+                            'payroll_type': payroll_type,
+                            'month': month,
+                            'year': year,
                             'processed_count': result['processed_count'],
-                            'month_year': month_year,
+                            'folder': export_info.get('folder', ''),
                             'files_generated': [f['filename'] for f in result['files'][:10]],  # Primeiros 10
-                            'warnings': result.get('warnings', [])
+                            'errors': result.get('errors', [])
                         },
                         severity='info',
                         user_id=None  # TODO: Pegar do token JWT
@@ -3070,25 +3122,31 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     print(f"⚠️ Erro ao registrar log: {log_error}")
                 
                 print(f"✅ Processamento concluído: {result['processed_count']} holerites gerados")
+                print(f"📁 Pasta: {export_info.get('folder', '')}")
+                
                 self.send_json_response({
                     "success": True,
-                    "message": f"PDF processado com sucesso",
+                    "message": f"PDF processado com sucesso (Novo Formato)",
                     "processed_count": result['processed_count'],
                     "files": result['files'],
-                    "warnings": result.get('warnings', []),
-                    "month_year": month_year if 'month_year' in locals() else 'desconhecido'
+                    "export_info": export_info,
+                    "errors": result.get('errors', [])
                 }, 200)
             else:
-                print(f"❌ Erro no processamento: {result['error']}")
+                print(f"❌ Erro no processamento: {result.get('error', 'Erro desconhecido')}")
                 
                 # Registrar erro no log
                 try:
                     log_system_event(
                         event_type='payroll_processing_error',
-                        description=f"Erro ao processar PDF: {filename}",
+                        description=f"Erro ao processar PDF (Novo Formato): {filename}",
                         details={
                             'original_file': filename,
-                            'error': result['error']
+                            'payroll_type': payroll_type,
+                            'month': month,
+                            'year': year,
+                            'error': result.get('error', 'Erro desconhecido'),
+                            'errors': result.get('errors', [])
                         },
                         severity='error',
                         user_id=None
@@ -3097,7 +3155,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     print(f"⚠️ Erro ao registrar log de erro: {log_error}")
                 
                 self.send_json_response({
-                    "error": result['error']
+                    "error": result.get('error', 'Erro desconhecido'),
+                    "errors": result.get('errors', [])
                 }, 500)
                 
         except Exception as e:
@@ -3105,6 +3164,147 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             import traceback
             traceback.print_exc()
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_list_payroll_periods(self):
+        """Lista períodos disponíveis para download"""
+        try:
+            import os
+            import glob
+            
+            processed_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'processed')
+            
+            if not os.path.exists(processed_dir):
+                self.send_json_response({"periods": []})
+                return
+            
+            # Listar todas as subpastas em processed/
+            periods = []
+            for folder_name in os.listdir(processed_dir):
+                folder_path = os.path.join(processed_dir, folder_name)
+                
+                if not os.path.isdir(folder_path):
+                    continue
+                
+                # Contar PDFs na pasta
+                pdf_files = glob.glob(os.path.join(folder_path, '*.pdf'))
+                file_count = len(pdf_files)
+                
+                if file_count == 0:
+                    continue
+                
+                # Extrair informações da pasta (formato: TipoNome_MM_YYYY)
+                # Ex: Mensal_11_2025, Adiantamento_13_12_2025
+                parts = folder_name.split('_')
+                
+                # Tentar extrair tipo, mês e ano
+                payroll_type = None
+                month = None
+                year = None
+                
+                if len(parts) >= 3:
+                    # Último é ano, penúltimo é mês
+                    try:
+                        year = int(parts[-1])
+                        month = int(parts[-2])
+                        
+                        # Tipo pode ter múltiplas palavras (Adiantamento_13)
+                        type_name = '_'.join(parts[:-2])
+                        
+                        # Mapear nome para código
+                        type_map = {
+                            'Mensal': '11',
+                            'Adiantamento_13': '31',
+                            '13_Integral': '32',
+                            'Adiantamento_Salarial': '91'
+                        }
+                        payroll_type = type_map.get(type_name, '11')
+                    except (ValueError, IndexError):
+                        pass
+                
+                periods.append({
+                    "folder": folder_name,
+                    "file_count": file_count,
+                    "payroll_type": payroll_type,
+                    "month": month,
+                    "year": year,
+                    "path": folder_path
+                })
+            
+            # Ordenar por ano e mês (mais recentes primeiro)
+            periods.sort(key=lambda x: (x.get('year', 0), x.get('month', 0)), reverse=True)
+            
+            print(f"📁 {len(periods)} período(s) disponível(is)")
+            self.send_json_response({"periods": periods})
+            
+        except Exception as e:
+            print(f"❌ Erro ao listar períodos: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro ao listar períodos: {str(e)}"}, 500)
+    
+    def handle_export_payroll_batch(self):
+        """Exportar lote de holerites como ZIP"""
+        try:
+            import os
+            import zipfile
+            from io import BytesIO
+            
+            data = self.get_request_data()
+            payroll_type = data.get('payrollType', '11')
+            month = int(data.get('month', datetime.now().month))
+            year = int(data.get('year', datetime.now().year))
+            
+            print(f"📦 Exportando lote: Tipo {payroll_type}, {month}/{year}")
+            
+            # Determinar pasta de origem
+            from app.services.payroll_formatter import PayrollFormatter
+            formatter = PayrollFormatter(payroll_type, month, year)
+            source_dir = formatter.output_dir
+            
+            if not os.path.exists(source_dir):
+                self.send_json_response({"error": "Nenhum arquivo encontrado para este período"}, 404)
+                return
+            
+            # Listar PDFs
+            pdf_files = [f for f in os.listdir(source_dir) if f.endswith('.pdf') and f.startswith('EN_')]
+            
+            if not pdf_files:
+                self.send_json_response({"error": "Nenhum arquivo PDF encontrado"}, 404)
+                return
+            
+            print(f"📄 {len(pdf_files)} arquivos encontrados")
+            
+            # Criar ZIP em memória
+            zip_buffer = BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                for pdf_file in pdf_files:
+                    file_path = os.path.join(source_dir, pdf_file)
+                    zip_file.write(file_path, pdf_file)
+            
+            zip_buffer.seek(0)
+            zip_data = zip_buffer.getvalue()
+            
+            # Nome do arquivo ZIP
+            type_name = formatter.PAYROLL_TYPES[payroll_type]
+            zip_filename = f"Holerites_{type_name}_{month:02d}_{year}.zip"
+            
+            print(f"✅ ZIP criado: {zip_filename} ({len(zip_data)} bytes)")
+            
+            # Enviar ZIP com headers CORS
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/zip')
+            self.send_header('Content-Disposition', f'attachment; filename="{zip_filename}"')
+            self.send_header('Content-Length', str(len(zip_data)))
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Expose-Headers', 'Content-Disposition')
+            self.end_headers()
+            self.wfile.write(zip_data)
+            
+        except Exception as e:
+            print(f"❌ Erro ao exportar lote: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro ao exportar: {str(e)}"}, 500)
     
     def split_pdf_by_employee(self, input_pdf_path, output_dir):
         """Segmenta PDF em holerites individuais e protege com senha
