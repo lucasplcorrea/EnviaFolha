@@ -1291,6 +1291,9 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         elif path == '/api/v1/evolution/status':
             from app.routes import SystemRouter
             SystemRouter(self).handle_evolution_status()
+        elif path == '/api/v1/evolution/instances':
+            from app.routes import SystemRouter
+            SystemRouter(self).handle_evolution_instances_status()
         elif path == '/api/v1/system/status':
             from app.routes import SystemRouter
             SystemRouter(self).handle_system_status()

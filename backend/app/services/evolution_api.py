@@ -14,17 +14,23 @@ logger = logging.getLogger(__name__)
 class EvolutionAPIService:
     """Serviço para comunicação com a Evolution API"""
     
-    def __init__(self):
+    def __init__(self, instance_name: str = None):
+        """
+        Inicializa serviço para uma instância específica
+        
+        Args:
+            instance_name: Nome da instância. Se None, usa settings.EVOLUTION_INSTANCE_NAME
+        """
         self.server_url = settings.EVOLUTION_SERVER_URL.rstrip('/') if settings.EVOLUTION_SERVER_URL else None
         self.api_key = settings.EVOLUTION_API_KEY
-        self.instance_name = settings.EVOLUTION_INSTANCE_NAME
+        self.instance_name = instance_name or settings.EVOLUTION_INSTANCE_NAME
         self.headers = {
             "Content-Type": "application/json",
             "apikey": self.api_key
         } if self.api_key else None
         
         if not all([self.server_url, self.api_key, self.instance_name]):
-            logger.warning("Configurações da Evolution API incompletas")
+            logger.warning(f"Configurações da Evolution API incompletas para instância {self.instance_name}")
     
     def _add_random_delay(self, base_delay: int = 30, variation: int = 10):
         """Adiciona delay aleatório entre envios"""

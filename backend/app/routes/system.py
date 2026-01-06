@@ -179,6 +179,84 @@ class SystemRouter(BaseRouter):
                 "error": str(e)
             }, 500)
     
+    def handle_evolution_instances_status(self):
+        """
+        GET /api/v1/evolution/instances
+        Retorna status de todas as instâncias WhatsApp configuradas (1-3)
+        """
+        try:
+            import asyncio
+            from app.services.instance_manager import get_instance_manager
+            
+            manager = get_instance_manager()
+            instances_list = manager.instances
+            
+            if not instances_list:
+                self.send_json_response({
+                    "instances": [],
+                    "total": 0,
+                    "connected": 0,
+                    "message": "Nenhuma instância WhatsApp configurada"
+                })
+                return
+            
+            # Criar event loop se necessário
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Verificar status de todas as instâncias
+            try:
+                status_dict = loop.run_until_complete(
+                    asyncio.wait_for(
+                        manager.check_all_instances_status(),
+                        timeout=10.0
+                    )
+                )
+            except asyncio.TimeoutError:
+                # Timeout: marcar todas como desconhecidas
+                status_dict = {inst: "timeout" for inst in instances_list}
+            
+            # Obter estatísticas de uso
+            stats = manager.get_instance_stats()
+            
+            # Formatar resposta
+            instances = []
+            connected_count = 0
+            
+            for inst_name in instances_list:
+                is_connected = status_dict.get(inst_name, False)
+                if is_connected:
+                    connected_count += 1
+                
+                inst_stats = stats.get(inst_name, {})
+                
+                instances.append({
+                    "name": inst_name,
+                    "status": "connected" if is_connected else ("timeout" if status_dict.get(inst_name) == "timeout" else "disconnected"),
+                    "ready": inst_stats.get("ready", True),
+                    "seconds_since_last_send": inst_stats.get("seconds_since_last_send"),
+                    "last_check": datetime.now().isoformat()
+                })
+            
+            self.send_json_response({
+                "instances": instances,
+                "total": len(instances),
+                "connected": connected_count,
+                "server_url": os.getenv('EVOLUTION_SERVER_URL', ''),
+                "has_multiple": manager.has_multiple_instances()
+            })
+            
+        except Exception as e:
+            print(f"❌ Erro ao verificar instâncias: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({
+                "error": str(e)
+            }, 500)
+    
     def handle_system_logs(self):
         """
         GET /api/v1/system/logs
