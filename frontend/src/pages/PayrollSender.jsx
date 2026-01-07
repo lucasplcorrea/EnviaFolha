@@ -201,6 +201,43 @@ const PayrollSender = () => {
     }
   };
 
+  const handlePauseQueue = async (queueId) => {
+    try {
+      await api.post(`/queue/${queueId}/pause`);
+      toast.success('Fila pausada com sucesso');
+      loadActiveQueues();
+    } catch (error) {
+      console.error('Erro ao pausar fila:', error);
+      toast.error(error.response?.data?.error || 'Erro ao pausar fila');
+    }
+  };
+
+  const handleResumeQueue = async (queueId) => {
+    try {
+      await api.post(`/queue/${queueId}/resume`);
+      toast.success('Fila retomada com sucesso');
+      loadActiveQueues();
+    } catch (error) {
+      console.error('Erro ao retomar fila:', error);
+      toast.error(error.response?.data?.error || 'Erro ao retomar fila');
+    }
+  };
+
+  const handleCancelQueue = async (queueId) => {
+    if (!window.confirm('Tem certeza que deseja cancelar este envio?')) {
+      return;
+    }
+    
+    try {
+      await api.post(`/queue/${queueId}/cancel`);
+      toast.success('Fila cancelada com sucesso');
+      loadActiveQueues();
+    } catch (error) {
+      console.error('Erro ao cancelar fila:', error);
+      toast.error(error.response?.data?.error || 'Erro ao cancelar fila');
+    }
+  };
+
   const handleDeleteFile = async (filename) => {
     if (!window.confirm(`Tem certeza que deseja remover o arquivo: ${filename}?`)) {
       return;
@@ -431,10 +468,11 @@ const PayrollSender = () => {
               <div key={queue.queue_id} className="bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-200 rounded-lg p-4 shadow-md">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-3">
-                    <div className="animate-pulse rounded-full h-3 w-3 bg-amber-500"></div>
+                    <div className={`rounded-full h-3 w-3 ${queue.status === 'paused' ? 'bg-yellow-500' : 'animate-pulse bg-amber-500'}`}></div>
                     <div>
                       <h4 className="text-sm font-semibold text-amber-900">
                         {queue.description || 'Envio de Holerites'}
+                        {queue.status === 'paused' && <span className="ml-2 text-yellow-600">(⏸️ Pausado)</span>}
                       </h4>
                       <p className="text-xs text-amber-700">
                         {queue.processed_items} de {queue.total_items} enviados ({queue.progress_percentage}%)
@@ -443,8 +481,35 @@ const PayrollSender = () => {
                       </p>
                     </div>
                   </div>
-                  <div className="text-xs text-amber-600">
-                    ✅ {queue.successful_items} • ❌ {queue.failed_items}
+                  <div className="flex items-center space-x-2">
+                    <div className="text-xs text-amber-600 mr-2">
+                      ✅ {queue.successful_items} • ❌ {queue.failed_items}
+                    </div>
+                    {queue.status === 'processing' && (
+                      <button
+                        onClick={() => handlePauseQueue(queue.queue_id)}
+                        className="px-3 py-1 bg-yellow-500 text-white rounded hover:bg-yellow-600 transition-colors text-xs font-medium"
+                        title="Pausar envio"
+                      >
+                        ⏸️ Pausar
+                      </button>
+                    )}
+                    {queue.status === 'paused' && (
+                      <button
+                        onClick={() => handleResumeQueue(queue.queue_id)}
+                        className="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 transition-colors text-xs font-medium"
+                        title="Retomar envio"
+                      >
+                        ▶️ Retomar
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleCancelQueue(queue.queue_id)}
+                      className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 transition-colors text-xs font-medium"
+                      title="Cancelar envio"
+                    >
+                      🛑 Cancelar
+                    </button>
                   </div>
                 </div>
                 <div className="mt-2">

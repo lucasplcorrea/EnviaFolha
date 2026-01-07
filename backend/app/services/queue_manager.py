@@ -180,10 +180,66 @@ class QueueManagerService:
         logger.info(f"Fila cancelada: {queue_id} por usuário {user_id}")
         return True
     
+    def pause_queue(self, queue_id: str, user_id: int) -> bool:
+        """
+        Pausa uma fila em execução.
+        
+        Args:
+            queue_id: ID da fila
+            user_id: ID do usuário solicitando pausa
+            
+        Returns:
+            True se pausado com sucesso
+        """
+        queue = self.db.query(SendQueue).filter(
+            SendQueue.queue_id == queue_id
+        ).first()
+        
+        if not queue:
+            return False
+        
+        # Só pode pausar filas em processamento
+        if queue.status != 'processing':
+            return False
+        
+        queue.status = 'paused'
+        self.db.commit()
+        
+        logger.info(f"Fila pausada: {queue_id} por usuário {user_id}")
+        return True
+    
+    def resume_queue(self, queue_id: str, user_id: int) -> bool:
+        """
+        Retoma uma fila pausada.
+        
+        Args:
+            queue_id: ID da fila
+            user_id: ID do usuário solicitando retomada
+            
+        Returns:
+            True se retomado com sucesso
+        """
+        queue = self.db.query(SendQueue).filter(
+            SendQueue.queue_id == queue_id
+        ).first()
+        
+        if not queue:
+            return False
+        
+        # Só pode retomar filas pausadas
+        if queue.status != 'paused':
+            return False
+        
+        queue.status = 'processing'
+        self.db.commit()
+        
+        logger.info(f"Fila retomada: {queue_id} por usuário {user_id}")
+        return True
+    
     def get_active_queues(self) -> List[Dict[str, Any]]:
-        """Retorna todas as filas ativas (pending ou processing)."""
+        """Retorna todas as filas ativas (pending, processing ou paused)."""
         queues = self.db.query(SendQueue).filter(
-            SendQueue.status.in_(['pending', 'processing'])
+            SendQueue.status.in_(['pending', 'processing', 'paused'])
         ).order_by(desc(SendQueue.created_at)).all()
         
         return self._format_queues(queues)

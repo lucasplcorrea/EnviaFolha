@@ -759,29 +759,70 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
         
         # Processar cada arquivo
         for idx, file_info in enumerate(selected_files):
-            # 🛑 VERIFICAR SE FILA FOI CANCELADA
+            # 🛑 VERIFICAR SE FILA FOI CANCELADA OU PAUSADA
             if queue_id:
                 try:
                     from app.models.send_queue import SendQueue
                     temp_db = SessionLocal()
                     try:
                         queue = temp_db.query(SendQueue).filter(SendQueue.queue_id == queue_id).first()
+                        
+                        # Cancelamento
                         if queue and queue.status == 'cancelled':
                             print(f"🛑 [JOB {job_id[:8]}] Fila cancelada pelo usuário. Interrompendo envios...")
                             job.status = 'cancelled'
                             job.end_time = datetime.now()
                             temp_db.close()
                             return
+                        
+                        # Pausa - aguardar até retomar
+                        while queue and queue.status == 'paused':
+                            print(f"⏸️  [JOB {job_id[:8]}] Fila pausada. Aguardando retomada...")
+                            time.sleep(5)  # Verificar a cada 5 segundos
+                            temp_db.refresh(queue)
+                            
+                            # Verificar se foi cancelada durante a pausa
+                            if queue.status == 'cancelled':
+                                print(f"🛑 [JOB {job_id[:8]}] Fila cancelada durante pausa. Interrompendo...")
+                                job.status = 'cancelled'
+                                job.end_time = datetime.now()
+                                temp_db.close()
+                                return
+                        
+                        if queue and queue.status == 'processing':
+                            print(f"▶️  [JOB {job_id[:8]}] Fila retomada. Continuando envios...")
                     finally:
                         temp_db.close()
                 except Exception as e:
-                    print(f"⚠️ [JOB {job_id[:8]}] Erro ao verificar cancelamento: {e}")
+                    print(f"⚠️ [JOB {job_id[:8]}] Erro ao verificar status da fila: {e}")
             
-            # ===== SISTEMA ANTI-SOFTBAN AVANÇADO =====
+            # ===== SISTEMA ANTI-SOFTBAN AVANÇADO COM OTIMIZAÇÃO MULTI-INSTÂNCIA =====
             if idx > 0:
+                # Selecionar próxima instância
+                next_instance = instance_manager.get_next_instance()
+                
+                # 🚀 OTIMIZAÇÃO: Verificar se instância precisa de delay
+                # Se a instância nunca foi usada ou já passou tempo suficiente, não precisa delay
+                min_delay_seconds = 120  # 2 minutos mínimo entre envios da mesma instância
+                needs_delay = instance_manager.should_wait(next_instance, min_delay=min_delay_seconds)
+                
+                if needs_delay:
+                    # Esta instância foi usada recentemente, calcular delay necessário
+                    elapsed = instance_manager.get_instance_delay(next_instance)
+                    remaining_delay = min_delay_seconds - elapsed
+                    
+                    print(f"⏱️  [JOB {job_id[:8]}] Instância {next_instance} usada há {elapsed:.1f}s")
+                    print(f"⏳ [JOB {job_id[:8]}] Aguardando {remaining_delay:.1f}s antes de reusar...")
+                    time.sleep(remaining_delay)
+                else:
+                    print(f"🚀 [JOB {job_id[:8]}] Instância {next_instance} disponível - SEM DELAY necessário")
+                
                 # Verificar se Evolution API ainda está online
                 print(f"🔍 [JOB {job_id[:8]}] Verificando Evolution API antes do envio #{idx+1}...")
-                is_online = loop.run_until_complete(check_evolution_status(evolution_service))
+                # Criar serviço temporário para a próxima instância
+                temp_evolution = EvolutionAPIService(instance_name=next_instance)
+                is_online = loop.run_until_complete(check_evolution_status(temp_evolution))
+                
                 if not is_online:
                     print(f"⚠️ [JOB {job_id[:8]}] Evolution API OFFLINE detectado! Pausando envios...")
                     job.status = 'paused'
@@ -797,7 +838,7 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                         time.sleep(wait_interval)
                         total_waited += wait_interval
                         
-                        is_online = loop.run_until_complete(check_evolution_status(evolution_service))
+                        is_online = loop.run_until_complete(check_evolution_status(temp_evolution))
                         if is_online:
                             print(f"✅ [JOB {job_id[:8]}] Evolution API voltou! Retomando envios...")
                             job.status = 'running'
@@ -813,7 +854,7 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                         print(f"❌ [JOB {job_id[:8]}] Abortando job - Evolution API não reconectou")
                         return
                 
-                # Delay maior a cada 20 envios (pausa estratégica)
+                # Pausa estratégica a cada 20 envios (independente de instância)
                 if idx % 20 == 0:
                     long_delay = round(random.uniform(600.00, 900.00), 2)  # 10-15 minutos
                     minutes = int(long_delay // 60)
@@ -832,18 +873,8 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                             print(f"   ⏳ Restam {int(remaining)}s da pausa estratégica...")
                     
                     print(f"✅ Pausa concluída: {datetime.now().strftime('%H:%M:%S')}\n")
-                else:
-                    # Delay normal: 2-3 minutos (120-180 segundos)
-                    delay = round(random.uniform(120.00, 180.00), 2)
-                    minutes = int(delay // 60)
-                    seconds = int(delay % 60)
-                    time_str = f"{minutes}m{seconds}s"
-                    print(f"\n⏳ [JOB {job_id[:8]}] AGUARDANDO {delay:.2f}s ({time_str}) antes do envio #{idx+1}...")
-                    print(f"⏰ Início do delay: {datetime.now().strftime('%H:%M:%S')}")
-                    time.sleep(delay)
-                    print(f"✅ Delay concluído: {datetime.now().strftime('%H:%M:%S')}\n")
             else:
-                print(f"⚡ [JOB {job_id[:8]}] Primeiro holerite - SEM DELAY")
+                print(f"⚡ [JOB {job_id[:8]}] Primeiro envio - SEM DELAY")
             
             filename = file_info.get('filename')
             employee = file_info.get('employee', {})
@@ -1410,6 +1441,12 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         elif path.startswith('/api/v1/queue/') and path.endswith('/cancel'):
             queue_id = path.split('/')[-2]
             self.handle_cancel_queue(queue_id)
+        elif path.startswith('/api/v1/queue/') and path.endswith('/pause'):
+            queue_id = path.split('/')[-2]
+            self.handle_pause_queue(queue_id)
+        elif path.startswith('/api/v1/queue/') and path.endswith('/resume'):
+            queue_id = path.split('/')[-2]
+            self.handle_resume_queue(queue_id)
         else:
             self.send_json_response({"error": "Endpoint não encontrado"}, 404)
     
@@ -4721,6 +4758,74 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
         except Exception as e:
             print(f"❌ Erro ao cancelar fila: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_pause_queue(self, queue_id: str):
+        """Pausa uma fila em execução"""
+        try:
+            print(f"⏸️  Pausando fila {queue_id}...")
+            
+            db = SessionLocal()
+            user = self.get_authenticated_user(db)
+            if not user:
+                db.close()
+                self.send_json_response({"error": "Autenticação necessária"}, 401)
+                return
+            
+            try:
+                import sys
+                sys.path.append(os.path.dirname(__file__))
+                from app.services.queue_manager import QueueManagerService
+                
+                service = QueueManagerService(db)
+                success = service.pause_queue(queue_id, user.id)
+                
+                if success:
+                    self.send_json_response({"message": "Fila pausada com sucesso"}, 200)
+                else:
+                    self.send_json_response({"error": "Não foi possível pausar a fila"}, 400)
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao pausar fila: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_resume_queue(self, queue_id: str):
+        """Retoma uma fila pausada"""
+        try:
+            print(f"▶️  Retomando fila {queue_id}...")
+            
+            db = SessionLocal()
+            user = self.get_authenticated_user(db)
+            if not user:
+                db.close()
+                self.send_json_response({"error": "Autenticação necessária"}, 401)
+                return
+            
+            try:
+                import sys
+                sys.path.append(os.path.dirname(__file__))
+                from app.services.queue_manager import QueueManagerService
+                
+                service = QueueManagerService(db)
+                success = service.resume_queue(queue_id, user.id)
+                
+                if success:
+                    self.send_json_response({"message": "Fila retomada com sucesso"}, 200)
+                else:
+                    self.send_json_response({"error": "Não foi possível retomar a fila"}, 400)
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao retomar fila: {e}")
             import traceback
             traceback.print_exc()
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
