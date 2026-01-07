@@ -6,14 +6,35 @@ Uso: python fix_hr_indicators_table.py
 import os
 import sys
 from sqlalchemy import create_engine, text
-from dotenv import load_dotenv
-
-# Carregar variáveis de ambiente
-load_dotenv()
 
 def get_database_url():
     """Constrói URL do banco a partir das variáveis de ambiente"""
+    # DEBUG: Mostrar o que está no ambiente
+    import sys
+    print(f"🔍 DEBUG - DATABASE_URL do ambiente: {os.getenv('DATABASE_URL')}", file=sys.stderr)
+    print(f"🔍 DEBUG - DATABASE_TYPE do ambiente: {os.getenv('DATABASE_TYPE')}", file=sys.stderr)
+    
+    # Primeiro: tentar ler DATABASE_URL diretamente do ambiente (Docker)
+    # IMPORTANTE: Ler ANTES do load_dotenv() para não sobrescrever
+    db_url = os.getenv('DATABASE_URL')
+    if db_url:
+        print(f"📌 DATABASE_URL detectada do ambiente: {db_url.split('@')[0]}@***")
+        return db_url
+    
+    # Segundo: tentar carregar do .env (desenvolvimento local)
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(override=False)  # NÃO sobrescreve variáveis existentes
+        db_url = os.getenv('DATABASE_URL')
+        if db_url:
+            print(f"📌 DATABASE_URL carregada do .env")
+            return db_url
+    except ImportError:
+        pass
+    
+    # Terceiro: construir manualmente
     db_type = os.getenv('DATABASE_TYPE', 'sqlite')
+    print(f"📌 Construindo URL manualmente. DATABASE_TYPE={db_type}")
     
     if db_type == 'sqlite':
         db_path = os.getenv('DATABASE_PATH', './nexo_rh.db')
@@ -30,7 +51,12 @@ def fix_hr_indicators_table():
     """Corrige os tipos de colunas da tabela hr_indicator_snapshots"""
     
     db_url = get_database_url()
-    print(f"🔧 Conectando ao banco: {db_url.split('@')[-1] if '@' in db_url else db_url}")
+    
+    # Debug: mostrar o tipo de banco detectado
+    if 'postgresql' in db_url:
+        print(f"🔧 Conectando ao PostgreSQL: {db_url.split('@')[-1]}")
+    else:
+        print(f"🔧 Conectando ao banco: {db_url}")
     
     engine = create_engine(db_url)
     
