@@ -1,69 +1,161 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import {
   ChartBarIcon,
   UserGroupIcon,
   ClockIcon,
-  CurrencyDollarIcon,
-  AcademicCapIcon,
   ExclamationTriangleIcon,
   ArrowTrendingUpIcon,
   ArrowTrendingDownIcon,
-  ArrowPathIcon,
-  WrenchScrewdriverIcon
+  ArrowPathIcon
 } from '@heroicons/react/24/outline';
+import api from '../services/api';
+import toast from 'react-hot-toast';
 
 const RHIndicators = () => {
   const { config } = useTheme();
   const [activeCategory, setActiveCategory] = useState('overview');
+  const [loading, setLoading] = useState(true);
+  const [indicatorsData, setIndicatorsData] = useState(null);
 
-  // Mockup data - será substituído por dados reais no futuro
-  const mockData = {
-    overview: {
-      totalEmployees: 156,
-      turnover: 2.3,
-      averageTenure: 3.2,
-      headcountGrowth: 8.5
-    },
-    recruitment: {
-      openPositions: 12,
-      timeToHire: 28,
-      costPerHire: 3500,
-      offerAcceptanceRate: 85
-    },
-    retention: {
-      retentionRate: 94.2,
-      voluntaryTurnover: 1.8,
-      involuntaryTurnover: 0.5,
-      criticalRoleRetention: 97.1
-    },
-    performance: {
-      performanceReviewsCompleted: 89,
-      averagePerformanceScore: 4.2,
-      promotionRate: 12,
-      goalCompletionRate: 78
-    },
-    training: {
-      trainingHoursPerEmployee: 24,
-      trainingCompletionRate: 92,
-      trainingInvestment: 125000,
-      certificationRate: 45
-    },
-    compensation: {
-      averageSalary: 5200,
-      salaryIncreaseRate: 5.5,
-      benefitsCost: 890000,
-      payrollAccuracy: 99.8
+  // Carregar dados ao montar ou trocar categoria
+  useEffect(() => {
+    loadIndicators();
+  }, [activeCategory]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadIndicators = useCallback(async () => {
+    setLoading(true);
+    try {
+      let response;
+      
+      switch (activeCategory) {
+        case 'overview':
+          response = await api.get('/indicators/overview');
+          break;
+        case 'headcount':
+          response = await api.get('/indicators/headcount');
+          break;
+        case 'turnover':
+          response = await api.get('/indicators/turnover');
+          break;
+        case 'demographics':
+          response = await api.get('/indicators/demographics');
+          break;
+        case 'tenure':
+          response = await api.get('/indicators/tenure');
+          break;
+        case 'leaves':
+          response = await api.get('/indicators/leaves');
+          break;
+        default:
+          response = await api.get('/indicators/overview');
+      }
+      
+      setIndicatorsData(response.data);
+    } catch (error) {
+      console.error('Erro ao carregar indicadores:', error);
+      toast.error('Erro ao carregar indicadores de RH');
+    } finally {
+      setLoading(false);
     }
+  }, [activeCategory]);
+
+  const refreshIndicators = async () => {
+    // Invalidar cache no backend primeiro
+    try {
+      await api.post('/indicators/cache/invalidate');
+      toast.success('Cache invalidado, recalculando...');
+    } catch (error) {
+      console.error('Erro ao invalidar cache:', error);
+    }
+    
+    // Recarregar dados
+    await loadIndicators();
+    toast.success('Indicadores atualizados!');
   };
+
+  // Função para traduzir labels técnicos para português
+  const translateLabel = (key) => {
+    const translations = {
+      // Headcount/Efetivo
+      'total_active': 'Total de Colaboradores Ativos',
+      'by_department': 'Por Departamento',
+      'by_sector': 'Por Setor',
+      'by_company': 'Por Empresa',
+      'by_contract_type': 'Por Tipo de Contrato',
+      'by_employment_status': 'Por Status de Emprego',
+      'department': 'Departamento',
+      'sector': 'Setor',
+      'company_code': 'Código da Empresa',
+      'contract_type': 'Tipo de Contrato',
+      'employment_status': 'Status de Emprego',
+      'count': 'Quantidade',
+      
+      // Turnover/Rotatividade
+      'period': 'Período',
+      'start': 'Início',
+      'end': 'Fim',
+      'headcount': 'Efetivo',
+      'average': 'Média',
+      'movements': 'Movimentações',
+      'admissions': 'Admissões',
+      'terminations': 'Desligamentos',
+      'rates': 'Taxas',
+      'turnover': 'Rotatividade',
+      'admission': 'Admissão',
+      'termination': 'Desligamento',
+      'termination_reasons': 'Motivos de Desligamento',
+      'turnover_by_department': 'Rotatividade por Departamento',
+      'reason': 'Motivo',
+      
+      // Demografia
+      'by_sex': 'Por Sexo',
+      'age_ranges': 'Faixas Etárias',
+      'average_age': 'Idade Média',
+      'sex': 'Sexo',
+      'range': 'Faixa',
+      'M': 'Masculino',
+      'F': 'Feminino',
+      
+      // Tempo de Casa/Tenure
+      'average_tenure_years': 'Tempo Médio de Casa (anos)',
+      'tenure_ranges': 'Faixas de Tempo de Casa',
+      'avg_years': 'Média (anos)',
+      
+      // Afastamentos/Leaves
+      'currently_on_leave': 'Atualmente Afastados',
+      'by_leave_type': 'Por Tipo de Afastamento',
+      'by_leave_reason': 'Por Motivo de Afastamento',
+      'leave_type': 'Tipo de Afastamento',
+      'leave_reason': 'Motivo de Afastamento'
+    };
+    
+    return translations[key] || key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  };
+
+  // Função para formatar tempo (anos/meses)
+  const formatTenure = (years, months) => {
+    if (!years && !months) return '0 meses';
+    
+    if (years >= 1) {
+      const remainingMonths = months ? months % 12 : 0;
+      if (remainingMonths === 0) {
+        return years === 1 ? '1 ano' : `${years} anos`;
+      }
+      return `${years} ${years === 1 ? 'ano' : 'anos'} e ${remainingMonths} ${remainingMonths === 1 ? 'mês' : 'meses'}`;
+    }
+    
+    return `${months} ${months === 1 ? 'mês' : 'meses'}`;
+  };
+
 
   const categories = [
     { id: 'overview', name: 'Visão Geral', icon: ChartBarIcon, color: 'blue' },
-    { id: 'recruitment', name: 'Recrutamento', icon: UserGroupIcon, color: 'green' },
-    { id: 'retention', name: 'Retenção', icon: ArrowPathIcon, color: 'purple' },
-    { id: 'performance', name: 'Performance', icon: ArrowTrendingUpIcon, color: 'yellow' },
-    { id: 'training', name: 'Treinamento', icon: AcademicCapIcon, color: 'indigo' },
-    { id: 'compensation', name: 'Remuneração', icon: CurrencyDollarIcon, color: 'pink' }
+    { id: 'headcount', name: 'Efetivo', icon: UserGroupIcon, color: 'green' },
+    { id: 'turnover', name: 'Rotatividade', icon: ArrowPathIcon, color: 'purple' },
+    { id: 'demographics', name: 'Demografia', icon: UserGroupIcon, color: 'yellow' },
+    { id: 'tenure', name: 'Tempo de Casa', icon: ClockIcon, color: 'indigo' },
+    { id: 'leaves', name: 'Afastamentos', icon: ExclamationTriangleIcon, color: 'pink' }
   ];
 
   const MetricCard = ({ title, value, unit, trend, trendValue, icon: Icon, color = 'blue' }) => {
@@ -102,245 +194,168 @@ const RHIndicators = () => {
     );
   };
 
-  const renderOverview = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-      <MetricCard
-        title="Total de Colaboradores"
-        value={mockData.overview.totalEmployees}
-        icon={UserGroupIcon}
-        color="blue"
-        trend="up"
-        trendValue="8.5"
-      />
-      <MetricCard
-        title="Taxa de Turnover"
-        value={mockData.overview.turnover}
-        unit="%"
-        icon={ArrowPathIcon}
-        color="green"
-        trend="down"
-        trendValue="0.3"
-      />
-      <MetricCard
-        title="Tempo Médio de Casa"
-        value={mockData.overview.averageTenure}
-        unit="anos"
-        icon={ClockIcon}
-        color="purple"
-        trend="up"
-        trendValue="5.2"
-      />
-      <MetricCard
-        title="Crescimento do Quadro"
-        value={mockData.overview.headcountGrowth}
-        unit="%"
-        icon={ArrowTrendingUpIcon}
-        color="yellow"
-        trend="up"
-        trendValue="2.1"
-      />
-    </div>
-  );
+  const renderOverview = () => {
+    if (!indicatorsData?.headcount) return null;
+    
+    const { headcount, turnover, tenure, leaves } = indicatorsData;
+    
+    return (
+      <div className="space-y-6">
+        {/* Métricas principais */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <MetricCard
+            title="Total de Colaboradores"
+            value={headcount.total_active}
+            icon={UserGroupIcon}
+            color="blue"
+          />
+          <MetricCard
+            title="Taxa de Rotatividade"
+            value={turnover.rates?.turnover || 0}
+            unit="%"
+            icon={ArrowPathIcon}
+            color="green"
+          />
+          <MetricCard
+            title="Tempo Médio de Casa"
+            value={formatTenure(tenure.average_tenure_years || 0, tenure.average_tenure_months || 0)}
+            icon={ClockIcon}
+            color="purple"
+          />
+          <MetricCard
+            title="Colaboradores Afastados"
+            value={leaves.currently_on_leave || 0}
+            icon={ExclamationTriangleIcon}
+            color="yellow"
+          />
+        </div>
 
-  const renderRecruitment = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-      <MetricCard
-        title="Vagas Abertas"
-        value={mockData.recruitment.openPositions}
-        icon={UserGroupIcon}
-        color="green"
-      />
-      <MetricCard
-        title="Tempo Médio de Contratação"
-        value={mockData.recruitment.timeToHire}
-        unit="dias"
-        icon={ClockIcon}
-        color="blue"
-        trend="down"
-        trendValue="5"
-      />
-      <MetricCard
-        title="Custo por Contratação"
-        value={`R$ ${mockData.recruitment.costPerHire}`}
-        icon={CurrencyDollarIcon}
-        color="pink"
-        trend="down"
-        trendValue="8"
-      />
-      <MetricCard
-        title="Taxa de Aceitação"
-        value={mockData.recruitment.offerAcceptanceRate}
-        unit="%"
-        icon={ArrowTrendingUpIcon}
-        color="green"
-        trend="up"
-        trendValue="3"
-      />
-    </div>
-  );
+        {/* Distribuição por Departamento */}
+        {headcount.by_department && headcount.by_department.length > 0 && (
+          <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
+            <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
+              Efetivo por Departamento
+            </h3>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              {headcount.by_department.map((dept, idx) => (
+                <div key={idx} className={`p-3 rounded-lg ${config.classes.background} border ${config.classes.border}`}>
+                  <p className={`text-sm ${config.classes.textSecondary}`}>{dept.department || 'Não informado'}</p>
+                  <p className={`text-2xl font-bold ${config.classes.text}`}>{dept.count}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
-  const renderRetention = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-      <MetricCard
-        title="Taxa de Retenção"
-        value={mockData.retention.retentionRate}
-        unit="%"
-        icon={UserGroupIcon}
-        color="green"
-        trend="up"
-        trendValue="1.2"
-      />
-      <MetricCard
-        title="Turnover Voluntário"
-        value={mockData.retention.voluntaryTurnover}
-        unit="%"
-        icon={ArrowTrendingDownIcon}
-        color="yellow"
-        trend="down"
-        trendValue="0.3"
-      />
-      <MetricCard
-        title="Turnover Involuntário"
-        value={mockData.retention.involuntaryTurnover}
-        unit="%"
-        icon={ExclamationTriangleIcon}
-        color="red"
-      />
-      <MetricCard
-        title="Retenção de Funções Críticas"
-        value={mockData.retention.criticalRoleRetention}
-        unit="%"
-        icon={ArrowTrendingUpIcon}
-        color="purple"
-        trend="up"
-        trendValue="2.1"
-      />
-    </div>
-  );
-
-  const renderPerformance = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-      <MetricCard
-        title="Avaliações Concluídas"
-        value={mockData.performance.performanceReviewsCompleted}
-        unit="%"
-        icon={ChartBarIcon}
-        color="blue"
-      />
-      <MetricCard
-        title="Score Médio de Performance"
-        value={mockData.performance.averagePerformanceScore}
-        unit="/5"
-        icon={ArrowTrendingUpIcon}
-        color="green"
-        trend="up"
-        trendValue="3"
-      />
-      <MetricCard
-        title="Taxa de Promoção"
-        value={mockData.performance.promotionRate}
-        unit="%"
-        icon={ArrowTrendingUpIcon}
-        color="purple"
-      />
-      <MetricCard
-        title="Conclusão de Metas"
-        value={mockData.performance.goalCompletionRate}
-        unit="%"
-        icon={ChartBarIcon}
-        color="yellow"
-        trend="up"
-        trendValue="5"
-      />
-    </div>
-  );
-
-  const renderTraining = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-      <MetricCard
-        title="Horas de Treinamento por Colaborador"
-        value={mockData.training.trainingHoursPerEmployee}
-        unit="h"
-        icon={AcademicCapIcon}
-        color="indigo"
-        trend="up"
-        trendValue="12"
-      />
-      <MetricCard
-        title="Taxa de Conclusão"
-        value={mockData.training.trainingCompletionRate}
-        unit="%"
-        icon={ChartBarIcon}
-        color="green"
-      />
-      <MetricCard
-        title="Investimento em Treinamento"
-        value={`R$ ${(mockData.training.trainingInvestment / 1000).toFixed(0)}k`}
-        icon={CurrencyDollarIcon}
-        color="pink"
-      />
-      <MetricCard
-        title="Taxa de Certificação"
-        value={mockData.training.certificationRate}
-        unit="%"
-        icon={AcademicCapIcon}
-        color="purple"
-        trend="up"
-        trendValue="8"
-      />
-    </div>
-  );
-
-  const renderCompensation = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-      <MetricCard
-        title="Salário Médio"
-        value={`R$ ${mockData.compensation.averageSalary}`}
-        icon={CurrencyDollarIcon}
-        color="pink"
-        trend="up"
-        trendValue="5.5"
-      />
-      <MetricCard
-        title="Taxa de Aumento Salarial"
-        value={mockData.compensation.salaryIncreaseRate}
-        unit="%"
-        icon={ArrowTrendingUpIcon}
-        color="green"
-      />
-      <MetricCard
-        title="Custo Total de Benefícios"
-        value={`R$ ${(mockData.compensation.benefitsCost / 1000).toFixed(0)}k`}
-        icon={CurrencyDollarIcon}
-        color="blue"
-      />
-      <MetricCard
-        title="Precisão da Folha"
-        value={mockData.compensation.payrollAccuracy}
-        unit="%"
-        icon={ChartBarIcon}
-        color="green"
-      />
-    </div>
-  );
+        {/* Faixas Etárias */}
+        {indicatorsData.demographics?.age_ranges && (
+          <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
+            <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
+              Distribuição por Faixa Etária
+            </h3>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+              {indicatorsData.demographics.age_ranges.map((range, idx) => (
+                <div key={idx} className={`p-3 rounded-lg ${config.classes.background} border ${config.classes.border}`}>
+                  <p className={`text-sm ${config.classes.textSecondary}`}>{range.range}</p>
+                  <p className={`text-2xl font-bold ${config.classes.text}`}>{range.count}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const renderContent = () => {
-    switch (activeCategory) {
-      case 'overview':
-        return renderOverview();
-      case 'recruitment':
-        return renderRecruitment();
-      case 'retention':
-        return renderRetention();
-      case 'performance':
-        return renderPerformance();
-      case 'training':
-        return renderTraining();
-      case 'compensation':
-        return renderCompensation();
-      default:
-        return renderOverview();
+    if (loading) {
+      return (
+        <div className="flex items-center justify-center py-12">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+          <span className={`ml-4 text-lg ${config.classes.textSecondary}`}>Carregando indicadores...</span>
+        </div>
+      );
     }
+
+    if (!indicatorsData) {
+      return (
+        <div className={`${config.classes.card} rounded-lg shadow p-8 text-center`}>
+          <ExclamationTriangleIcon className="h-12 w-12 text-yellow-500 mx-auto mb-4" />
+          <p className={config.classes.text}>Nenhum dado disponível</p>
+        </div>
+      );
+    }
+
+    if (activeCategory === 'overview') {
+      return renderOverview();
+    }
+
+    // Renderizar dados específicos de cada categoria
+    const metrics = indicatorsData.metrics || indicatorsData;
+    
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {Object.entries(metrics).map(([key, value]) => {
+            if (typeof value === 'object' && !Array.isArray(value)) return null;
+            if (Array.isArray(value)) return null;
+            
+            // Formatação especial para campos específicos
+            let displayValue = value;
+            let displayUnit = '';
+            
+            if (key === 'average_age') {
+              displayValue = value;
+              displayUnit = value === 1 ? 'ano' : 'anos';
+            } else if (key === 'average_tenure_years') {
+              displayValue = formatTenure(indicatorsData.metrics?.average_tenure_years, indicatorsData.metrics?.average_tenure_months);
+            } else if (typeof value === 'number') {
+              displayValue = Number.isInteger(value) ? value : value.toFixed(2);
+            }
+            
+            return (
+              <MetricCard
+                key={key}
+                title={translateLabel(key)}
+                value={displayValue}
+                unit={displayUnit}
+                icon={ChartBarIcon}
+                color="blue"
+              />
+            );
+          })}
+        </div>
+
+        {/* Renderizar arrays/objetos como tabelas */}
+        {Object.entries(metrics).map(([key, value]) => {
+          if (!Array.isArray(value) || value.length === 0) return null;
+          
+          return (
+            <div key={key} className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
+              <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
+                {translateLabel(key)}
+              </h3>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {value.map((item, idx) => (
+                  <div key={idx} className={`p-3 rounded-lg ${config.classes.background} border ${config.classes.border}`}>
+                    {Object.entries(item).map(([k, v]) => (
+                      <div key={k}>
+                        <p className={`text-xs ${config.classes.textSecondary}`}>{translateLabel(k)}</p>
+                        <p className={`text-lg font-semibold ${config.classes.text}`}>
+                          {typeof v === 'number' 
+                            ? (Number.isInteger(v) ? v : v.toFixed(2)) 
+                            : (translateLabel(String(v)) || v)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   return (
@@ -357,11 +372,25 @@ const RHIndicators = () => {
                 Métricas e KPIs para gestão estratégica de pessoas
               </p>
             </div>
-            <div className={`flex items-center px-4 py-2 rounded-lg ${config.classes.card} ${config.classes.border}`}>
-              <WrenchScrewdriverIcon className="h-5 w-5 text-yellow-500 mr-2" />
-              <span className={`text-sm font-medium ${config.classes.text}`}>
-                Mockup - Dados de Exemplo
-              </span>
+            <div className="flex items-center space-x-3">
+              {indicatorsData?.cached && (
+                <div className={`flex items-center px-4 py-2 rounded-lg ${config.classes.card} ${config.classes.border}`}>
+                  <span className="h-2 w-2 bg-green-500 rounded-full mr-2"></span>
+                  <span className={`text-sm font-medium ${config.classes.text}`}>
+                    Cache Ativo
+                  </span>
+                </div>
+              )}
+              <button
+                onClick={refreshIndicators}
+                disabled={loading}
+                className={`flex items-center px-4 py-2 rounded-lg ${config.classes.card} ${config.classes.border} hover:${config.classes.cardHover} transition-colors`}
+              >
+                <ArrowPathIcon className={`h-5 w-5 mr-2 ${loading ? 'animate-spin' : ''}`} />
+                <span className={`text-sm font-medium ${config.classes.text}`}>
+                  {loading ? 'Atualizando...' : 'Atualizar'}
+                </span>
+              </button>
             </div>
           </div>
         </div>
@@ -395,35 +424,30 @@ const RHIndicators = () => {
           {renderContent()}
         </div>
 
-        {/* Info Banner */}
-        <div className={`${config.classes.card} rounded-lg shadow-md p-6 ${config.classes.border}`}>
-          <div className="flex items-start">
-            <WrenchScrewdriverIcon className="h-6 w-6 text-yellow-500 mr-3 mt-1 flex-shrink-0" />
-            <div>
-              <h3 className={`text-lg font-semibold ${config.classes.text} mb-2`}>
-                🚧 Página em Desenvolvimento
-              </h3>
-              <p className={`text-sm ${config.classes.textSecondary} mb-4`}>
-                Esta é uma visualização mockup dos indicadores de RH. Os dados apresentados são exemplos
-                para demonstração da interface e funcionalidades planejadas.
-              </p>
-              <div className={`${config.classes.background} rounded-lg p-4 border-l-4 border-blue-500`}>
-                <h4 className={`text-sm font-semibold ${config.classes.text} mb-2`}>
-                  Funcionalidades Planejadas:
-                </h4>
-                <ul className={`text-sm ${config.classes.textSecondary} space-y-1 list-disc list-inside`}>
-                  <li>Cálculo automático de métricas com base em dados reais</li>
-                  <li>Filtros por período, departamento e outros critérios</li>
-                  <li>Gráficos interativos e visualizações avançadas</li>
-                  <li>Exportação de relatórios em PDF e Excel</li>
-                  <li>Alertas e notificações para indicadores críticos</li>
-                  <li>Comparações históricas e análise de tendências</li>
-                  <li>Benchmarking com métricas do mercado</li>
-                </ul>
+        {/* Info sobre cache e cálculos */}
+        {indicatorsData && (
+          <div className={`${config.classes.card} rounded-lg shadow-md p-4 ${config.classes.border}`}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center">
+                <ChartBarIcon className="h-5 w-5 text-blue-500 mr-3" />
+                <div>
+                  <p className={`text-sm font-medium ${config.classes.text}`}>
+                    {indicatorsData.cached ? '✅ Dados em cache' : '🔄 Dados recém-calculados'}
+                  </p>
+                  <p className={`text-xs ${config.classes.textSecondary}`}>
+                    {indicatorsData.calculation_time_ms && `Tempo de processamento: ${indicatorsData.calculation_time_ms}ms`}
+                    {indicatorsData.total_records && ` • ${indicatorsData.total_records} registros`}
+                  </p>
+                </div>
               </div>
+              {indicatorsData.cached_at && (
+                <p className={`text-xs ${config.classes.textSecondary}`}>
+                  Última atualização: {new Date(indicatorsData.cached_at).toLocaleString('pt-BR')}
+                </p>
+              )}
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

@@ -20,7 +20,6 @@ const PayrollProcessor = () => {
   const [processing, setProcessing] = useState(false);
   const [processResult, setProcessResult] = useState(null);
   const [availablePeriods, setAvailablePeriods] = useState([]);
-  const [loadingPeriods, setLoadingPeriods] = useState(false);
   const [periodsExpanded, setPeriodsExpanded] = useState(false);
   
   // Novos campos para o novo formato
@@ -35,13 +34,10 @@ const PayrollProcessor = () => {
 
   const loadAvailablePeriods = async () => {
     try {
-      setLoadingPeriods(true);
       const response = await api.get('/payrolls/periods');
       setAvailablePeriods(response.data.periods || []);
     } catch (error) {
       console.error('Erro ao carregar períodos:', error);
-    } finally {
-      setLoadingPeriods(false);
     }
   };
 

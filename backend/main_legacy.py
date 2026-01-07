@@ -674,10 +674,19 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
         sys.path.append(os.path.dirname(__file__))
         from app.services.evolution_api import EvolutionAPIService
         from app.services.queue_manager import QueueManagerService
+        from app.services.instance_manager import InstanceManager
         from app.models.base import get_db
         
-        evolution_service = EvolutionAPIService()
-        queue_service = QueueManagerService()
+        # Criar sessão do banco de dados para a thread
+        db = SessionLocal()
+        
+        # Inicializar gerenciador de instâncias
+        instance_manager = InstanceManager()
+        
+        # Selecionar instância inicial (será randomizada a cada envio)
+        initial_instance = instance_manager.get_next_instance()
+        evolution_service = EvolutionAPIService(instance_name=initial_instance)
+        queue_service = QueueManagerService(db)
         
         # Verificar configuração
         if not evolution_service.server_url or not evolution_service.api_key:
@@ -712,14 +721,13 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
             
             # Criar fila
             queue_id = queue_service.create_queue(
-                db=db,
                 user_id=user_id,
                 queue_type='holerite',
                 description=f'Envio de {len(selected_files)} holerites',
                 total_items=len(selected_files),
                 computer_name=computer_name,
                 ip_address=ip_address,
-                queue_metadata={
+                metadata={
                     'job_id': job_id,
                     'templates_count': len(message_templates),
                     'anti_softban': True
@@ -731,12 +739,11 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
             for file_info in selected_files:
                 employee = file_info.get('employee', {})
                 queue_service.add_queue_item(
-                    db=db,
                     queue_id=queue_id,
                     employee_id=employee.get('id'),
                     phone_number=employee.get('phone_number', ''),
                     file_path=file_info.get('filename', ''),
-                    item_metadata={
+                    metadata={
                         'employee_name': employee.get('full_name', ''),
                         'month_year': file_info.get('month_year', '')
                     }
@@ -752,6 +759,24 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
         
         # Processar cada arquivo
         for idx, file_info in enumerate(selected_files):
+            # 🛑 VERIFICAR SE FILA FOI CANCELADA
+            if queue_id:
+                try:
+                    from app.models.send_queue import SendQueue
+                    temp_db = SessionLocal()
+                    try:
+                        queue = temp_db.query(SendQueue).filter(SendQueue.queue_id == queue_id).first()
+                        if queue and queue.status == 'cancelled':
+                            print(f"🛑 [JOB {job_id[:8]}] Fila cancelada pelo usuário. Interrompendo envios...")
+                            job.status = 'cancelled'
+                            job.end_time = datetime.now()
+                            temp_db.close()
+                            return
+                    finally:
+                        temp_db.close()
+                except Exception as e:
+                    print(f"⚠️ [JOB {job_id[:8]}] Erro ao verificar cancelamento: {e}")
+            
             # ===== SISTEMA ANTI-SOFTBAN AVANÇADO =====
             if idx > 0:
                 # Verificar se Evolution API ainda está online
@@ -853,29 +878,20 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                 # 📊 ATUALIZAR FILA - TELEFONE INVÁLIDO
                 if queue_id:
                     try:
-                        db = next(get_db())
-                        try:
-                            queue_service.update_queue_progress(db=db, queue_id=queue_id, success=False)
-                            queue_service.update_item_status(
-                                db=db, queue_id=queue_id, employee_id=employee_id,
-                                status='failed', error_message='Telefone inválido'
-                            )
-                            db.commit()
-                        finally:
-                            db.close()
+                        queue_service.update_queue_progress(queue_id=queue_id, failed=1)
                     except Exception as e:
                         print(f"⚠️ [JOB {job_id[:8]}] Erro ao atualizar fila: {e}")
                 
                 continue
             
             # NOVO: Usar caminho do arquivo (filepath) se fornecido, senão construir caminho antigo
-            file_path = file_data.get('filepath')
+            file_path = file_info.get('filepath')
             
             if not file_path:
-                # Fallback: formato antigo (holerites_formatados_final/)
+                # Fallback: formato atual (processed/)
                 file_path = os.path.join(
                     os.path.dirname(os.path.abspath(__file__)),
-                    'holerites_formatados_final',
+                    'processed',
                     filename
                 )
             
@@ -892,16 +908,7 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                 # 📊 ATUALIZAR FILA - ARQUIVO NÃO ENCONTRADO
                 if queue_id:
                     try:
-                        db = next(get_db())
-                        try:
-                            queue_service.update_queue_progress(db=db, queue_id=queue_id, success=False)
-                            queue_service.update_item_status(
-                                db=db, queue_id=queue_id, employee_id=employee_id,
-                                status='failed', error_message='Arquivo não encontrado'
-                            )
-                            db.commit()
-                        finally:
-                            db.close()
+                        queue_service.update_queue_progress(queue_id=queue_id, failed=1)
                     except Exception as e:
                         print(f"⚠️ [JOB {job_id[:8]}] Erro ao atualizar fila: {e}")
                 
@@ -909,6 +916,14 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
             
             # Enviar via Evolution API
             try:
+                # 🔄 RANDOMIZAR INSTÂNCIA WHATSAPP (Round-Robin)
+                next_instance = instance_manager.get_next_instance()
+                if next_instance != evolution_service.instance_name:
+                    print(f"🔄 [JOB {job_id[:8]}] Alternando para instância: {next_instance}")
+                    evolution_service = EvolutionAPIService(instance_name=next_instance)
+                else:
+                    print(f"📱 [JOB {job_id[:8]}] Usando instância: {next_instance}")
+                
                 # 🎭 PRESENÇA REMOVIDA - Causava "Aguardando Mensagem" no iPhone
                 # Envio direto de documento é mais confiável e evita problemas de sincronização
                 print(f"📄 [JOB {job_id[:8]}] Enviando documento para {employee_name}...")
@@ -924,6 +939,9 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                     )
                 )
                 
+                # Registrar envio na instância
+                instance_manager.register_send(next_instance)
+                
                 if result['success']:
                     print(f"✅ [JOB {job_id[:8]}] Holerite enviado para {employee_name}")
                     job.successful_sends += 1
@@ -931,23 +949,11 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                     # 📊 ATUALIZAR FILA DE ENVIOS
                     if queue_id:
                         try:
-                            db = next(get_db())
-                            try:
-                                queue_service.update_queue_progress(
-                                    db=db,
-                                    queue_id=queue_id,
-                                    success=True
-                                )
-                                # Encontrar e atualizar item específico
-                                queue_service.update_item_status(
-                                    db=db,
-                                    queue_id=queue_id,
-                                    employee_id=employee_id,
-                                    status='sent'
-                                )
-                                db.commit()
-                            finally:
-                                db.close()
+                            queue_service.update_queue_progress(
+                                queue_id=queue_id,
+                                processed=1,
+                                successful=1
+                            )
                         except Exception as queue_update_error:
                             print(f"⚠️ [JOB {job_id[:8]}] Erro ao atualizar fila: {queue_update_error}")
                     
@@ -1033,24 +1039,11 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                     # 📊 ATUALIZAR FILA DE ENVIOS COM FALHA
                     if queue_id:
                         try:
-                            db = next(get_db())
-                            try:
-                                queue_service.update_queue_progress(
-                                    db=db,
-                                    queue_id=queue_id,
-                                    success=False
-                                )
-                                # Atualizar item com erro
-                                queue_service.update_item_status(
-                                    db=db,
-                                    queue_id=queue_id,
-                                    employee_id=employee_id,
-                                    status='failed',
-                                    error_message=result['message']
-                                )
-                                db.commit()
-                            finally:
-                                db.close()
+                            queue_service.update_queue_progress(
+                                queue_id=queue_id,
+                                processed=1,
+                                failed=1
+                            )
                         except Exception as queue_update_error:
                             print(f"⚠️ [JOB {job_id[:8]}] Erro ao atualizar fila: {queue_update_error}")
                     
@@ -1102,23 +1095,11 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                 # 📊 ATUALIZAR FILA DE ENVIOS COM EXCEÇÃO
                 if queue_id:
                     try:
-                        db = next(get_db())
-                        try:
-                            queue_service.update_queue_progress(
-                                db=db,
-                                queue_id=queue_id,
-                                success=False
-                            )
-                            queue_service.update_item_status(
-                                db=db,
-                                queue_id=queue_id,
-                                employee_id=employee_id,
-                                status='failed',
-                                error_message=str(send_error)
-                            )
-                            db.commit()
-                        finally:
-                            db.close()
+                        queue_service.update_queue_progress(
+                            queue_id=queue_id,
+                            processed=1,
+                            failed=1
+                        )
                     except Exception as queue_update_error:
                         print(f"⚠️ [JOB {job_id[:8]}] Erro ao atualizar fila: {queue_update_error}")
             
@@ -1133,18 +1114,14 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
         # 🎯 FINALIZAR FILA NO SISTEMA DE GESTÃO
         if queue_id:
             try:
-                db = next(get_db())
-                try:
-                    # A função update_queue_progress marca automaticamente como 'completed'
-                    # quando processed_items == total_items
-                    from app.models.send_queue import SendQueue
-                    queue = db.query(SendQueue).filter(SendQueue.queue_id == queue_id).first()
-                    if queue and queue.status != 'completed':
-                        queue.status = 'completed'
-                        db.commit()
-                    print(f"✅ [JOB {job_id[:8]}] Fila marcada como concluída")
-                finally:
-                    db.close()
+                # A função update_queue_progress marca automaticamente como 'completed'
+                # quando processed_items == total_items
+                from app.models.send_queue import SendQueue
+                queue = db.query(SendQueue).filter(SendQueue.queue_id == queue_id).first()
+                if queue and queue.status != 'completed':
+                    queue.status = 'completed'
+                    db.commit()
+                print(f"✅ [JOB {job_id[:8]}] Fila marcada como concluída")
             except Exception as queue_final_error:
                 print(f"⚠️ [JOB {job_id[:8]}] Erro ao finalizar fila: {queue_final_error}")
         
@@ -1165,19 +1142,20 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
         # 🎯 MARCAR FILA COMO FALHA
         if queue_id:
             try:
-                db = next(get_db())
-                try:
-                    from app.models.send_queue import SendQueue
-                    queue = db.query(SendQueue).filter(SendQueue.queue_id == queue_id).first()
-                    if queue:
-                        queue.status = 'failed'
-                        queue.error_message = str(e)
-                        db.commit()
-                    print(f"❌ [JOB {job_id[:8]}] Fila marcada como falha")
-                finally:
-                    db.close()
+                from app.models.send_queue import SendQueue
+                queue = db.query(SendQueue).filter(SendQueue.queue_id == queue_id).first()
+                if queue:
+                    queue.status = 'failed'
+                    queue.error_message = str(e)
+                    db.commit()
+                print(f"❌ [JOB {job_id[:8]}] Fila marcada como falha")
             except Exception as queue_fail_error:
                 print(f"⚠️ [JOB {job_id[:8]}] Erro ao marcar fila como falha: {queue_fail_error}")
+    finally:
+        # Fechar sessão principal do banco
+        if 'db' in locals():
+            db.close()
+            print(f"🔒 [JOB {job_id[:8]}] Sessão do banco fechada")
 
 class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     
@@ -1309,6 +1287,21 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             SystemRouter(self).handle_system_logs()
         # ==================================================
         
+        # ===== ROTAS DE INDICADORES RH =====
+        elif path == '/api/v1/indicators/overview':
+            self.handle_indicators_overview()
+        elif path == '/api/v1/indicators/headcount':
+            self.handle_indicators_headcount()
+        elif path == '/api/v1/indicators/turnover':
+            self.handle_indicators_turnover()
+        elif path == '/api/v1/indicators/demographics':
+            self.handle_indicators_demographics()
+        elif path == '/api/v1/indicators/tenure':
+            self.handle_indicators_tenure()
+        elif path == '/api/v1/indicators/leaves':
+            self.handle_indicators_leaves()
+        # ===================================
+        
         elif path == '/api/v1/payrolls/processed':
             self.handle_payrolls_processed()
         elif path == '/api/v1/payrolls/periods':
@@ -1385,6 +1378,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_import_employees()
         elif path == '/api/v1/employees/cache/invalidate':
             self.handle_cache_invalidate()
+        elif path == '/api/v1/indicators/cache/invalidate':
+            self.handle_indicators_invalidate_cache()
         elif path == '/api/v1/users':
             self.handle_create_user()
         elif path == '/api/v1/users/permissions':
@@ -3241,6 +3236,195 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             import traceback
             traceback.print_exc()
             self.send_json_response({"error": f"Erro ao listar períodos: {str(e)}"}, 500)
+    
+    # ==========================================
+    # INDICADORES DE RH
+    # ==========================================
+    
+    def handle_indicators_overview(self):
+        """Retorna visão geral dos indicadores de RH"""
+        try:
+            from app.services.hr_indicators import HRIndicatorsService
+            
+            # Parse query params para controle de cache
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            use_cache = query_params.get('use_cache', ['true'])[0].lower() != 'false'
+            
+            db = SessionLocal()
+            try:
+                service = HRIndicatorsService(db)
+                result = service.get_overview_metrics(use_cache=use_cache)
+                self.send_json_response(result)
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar overview de indicadores: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": str(e)}, 500)
+    
+    def handle_indicators_headcount(self):
+        """Retorna métricas de headcount (efetivo)"""
+        try:
+            from app.services.hr_indicators import HRIndicatorsService
+            
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            use_cache = query_params.get('use_cache', ['true'])[0].lower() != 'false'
+            
+            db = SessionLocal()
+            try:
+                service = HRIndicatorsService(db)
+                result = service.get_headcount_metrics(use_cache=use_cache)
+                self.send_json_response(result)
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar headcount: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": str(e)}, 500)
+    
+    def handle_indicators_turnover(self):
+        """Retorna métricas de turnover"""
+        try:
+            from app.services.hr_indicators import HRIndicatorsService
+            from datetime import datetime, timedelta
+            
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            use_cache = query_params.get('use_cache', ['true'])[0].lower() != 'false'
+            
+            # Parse período se fornecido
+            period_start = None
+            period_end = None
+            
+            if 'period_start' in query_params:
+                period_start = datetime.strptime(query_params['period_start'][0], '%Y-%m-%d').date()
+            if 'period_end' in query_params:
+                period_end = datetime.strptime(query_params['period_end'][0], '%Y-%m-%d').date()
+            
+            db = SessionLocal()
+            try:
+                service = HRIndicatorsService(db)
+                result = service.get_turnover_metrics(
+                    period_start=period_start,
+                    period_end=period_end,
+                    use_cache=use_cache
+                )
+                self.send_json_response(result)
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar turnover: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": str(e)}, 500)
+    
+    def handle_indicators_demographics(self):
+        """Retorna perfil demográfico"""
+        try:
+            from app.services.hr_indicators import HRIndicatorsService
+            
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            use_cache = query_params.get('use_cache', ['true'])[0].lower() != 'false'
+            
+            db = SessionLocal()
+            try:
+                service = HRIndicatorsService(db)
+                result = service.get_demographic_metrics(use_cache=use_cache)
+                self.send_json_response(result)
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar demographics: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": str(e)}, 500)
+    
+    def handle_indicators_tenure(self):
+        """Retorna métricas de tempo de casa"""
+        try:
+            from app.services.hr_indicators import HRIndicatorsService
+            
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            use_cache = query_params.get('use_cache', ['true'])[0].lower() != 'false'
+            
+            db = SessionLocal()
+            try:
+                service = HRIndicatorsService(db)
+                result = service.get_tenure_metrics(use_cache=use_cache)
+                self.send_json_response(result)
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar tenure: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": str(e)}, 500)
+    
+    def handle_indicators_leaves(self):
+        """Retorna métricas de afastamentos"""
+        try:
+            from app.services.hr_indicators import HRIndicatorsService
+            
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            use_cache = query_params.get('use_cache', ['true'])[0].lower() != 'false'
+            
+            db = SessionLocal()
+            try:
+                service = HRIndicatorsService(db)
+                result = service.get_leave_metrics(use_cache=use_cache)
+                self.send_json_response(result)
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar leaves: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": str(e)}, 500)
+    
+    def handle_indicators_invalidate_cache(self):
+        """Invalida cache de indicadores e employees"""
+        try:
+            from app.services.hr_indicators import HRIndicatorsService
+            
+            print("🔄 Invalidando cache de indicadores...")
+            
+            # Tentar obter dados do request (pode ser vazio para POST sem body)
+            try:
+                data = self.get_request_data()
+                indicator_type = data.get('indicator_type') if data else None
+            except:
+                indicator_type = None
+            
+            # Invalidar cache de employees primeiro
+            print("🗑️  Invalidando cache de employees...")
+            invalidate_employees_cache()
+            
+            db = SessionLocal()
+            try:
+                service = HRIndicatorsService(db)
+                print(f"🗑️  Invalidando cache de indicadores (type: {indicator_type})...")
+                service.invalidate_cache(indicator_type=indicator_type)
+                
+                message = f"Cache invalidado: {indicator_type} + employees" if indicator_type else "Todo cache invalidado (indicators + employees)"
+                print(f"✅ {message}")
+                self.send_json_response({"success": True, "message": message})
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao invalidar cache: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": str(e)}, 500)
+    
+    # ==========================================
     
     def handle_export_payroll_batch(self):
         """Exportar lote de holerites como ZIP"""

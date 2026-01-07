@@ -31,7 +31,7 @@ class QueueManagerService:
         computer_name: Optional[str] = None,
         ip_address: Optional[str] = None,
         metadata: Optional[Dict] = None
-    ) -> SendQueue:
+    ) -> str:
         """
         Cria uma nova fila de envio.
         
@@ -63,7 +63,7 @@ class QueueManagerService:
             user_id=user_id,
             computer_name=computer_name,
             ip_address=ip_address,
-            metadata=metadata or {},
+            queue_metadata=metadata or {},
             started_at=datetime.now()
         )
         
@@ -72,7 +72,7 @@ class QueueManagerService:
         self.db.refresh(queue)
         
         logger.info(f"Fila criada: {queue_id} - {description}")
-        return queue
+        return queue_id
     
     def add_queue_item(
         self,
@@ -89,7 +89,7 @@ class QueueManagerService:
             phone_number=phone_number,
             file_path=file_path,
             status='pending',
-            metadata=metadata or {}
+            item_metadata=metadata or {}
         )
         
         self.db.add(item)
@@ -277,7 +277,7 @@ class QueueManagerService:
             'completed_at': queue.completed_at.isoformat() if queue.completed_at else None,
             'cancelled_at': queue.cancelled_at.isoformat() if queue.cancelled_at else None,
             'created_at': queue.created_at.isoformat(),
-            'metadata': queue.metadata
+            'metadata': queue.queue_metadata or {}
         }
     
     def _format_queues(self, queues: List[SendQueue]) -> List[Dict[str, Any]]:
@@ -297,6 +297,6 @@ class QueueManagerService:
                 'sent_at': item.sent_at.isoformat() if item.sent_at else None,
                 'error_message': item.error_message,
                 'retry_count': item.retry_count,
-                'metadata': item.metadata
+                'metadata': item.item_metadata or {}
             })
         return result

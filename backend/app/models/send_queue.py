@@ -51,7 +51,14 @@ class SendQueue(Base, TimestampMixin):
     ip_address = Column(String(45))
     
     def __repr__(self):
-        return f"<SendQueue(id={self.id}, queue_id={self.queue_id}, type={self.queue_type}, status={self.status})>"
+        try:
+            # Usar object.__getattribute__ para evitar recursão com SQLAlchemy
+            queue_id = object.__getattribute__(self, '__dict__').get('queue_id', 'N/A')
+            queue_type = object.__getattribute__(self, '__dict__').get('queue_type', 'N/A')
+            status = object.__getattribute__(self, '__dict__').get('status', 'N/A')
+            return f"<SendQueue(queue_id={queue_id}, type={queue_type}, status={status})>"
+        except:
+            return "<SendQueue(...)>"
     
     @property
     def progress_percentage(self):
@@ -104,4 +111,10 @@ class SendQueueItem(Base, TimestampMixin):
     item_metadata = Column(JSON)
     
     def __repr__(self):
-        return f"<SendQueueItem(id={self.id}, queue_id={self.queue_id}, status={self.status})>"
+        try:
+            # Usar object.__getattribute__ para evitar recursão com SQLAlchemy
+            queue_id = object.__getattribute__(self, '__dict__').get('queue_id', 'N/A')
+            status = object.__getattribute__(self, '__dict__').get('status', 'N/A')
+            return f"<SendQueueItem(queue_id={queue_id}, status={status})>"
+        except:
+            return "<SendQueueItem(...)>"

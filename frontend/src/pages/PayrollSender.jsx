@@ -304,6 +304,7 @@ const PayrollSender = () => {
 
       const filesToSend = selectedFiles.map(file => ({
         filename: file.filename,
+        filepath: file.filepath,  // IMPORTANTE: caminho completo do arquivo
         employee: file.associated_employee,
         month_year: file.month_year
       }));

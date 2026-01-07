@@ -12,6 +12,7 @@ from .payroll_send import PayrollSend
 from .communication_send import CommunicationSend
 from .communication_recipient import CommunicationRecipient
 from .send_queue import SendQueue, SendQueueItem
+from .hr_indicators import HRIndicatorSnapshot
 
 # keep older payroll-related imports if they exist elsewhere; import safe names
 try:
@@ -47,7 +48,8 @@ __all__ = [
     "CommunicationSend",
     "CommunicationRecipient",
     "SendQueue",
-    "SendQueueItem"
+    "SendQueueItem",
+    "HRIndicatorSnapshot"
     # "AuditLog",
     # "SystemSetting"
 ]
