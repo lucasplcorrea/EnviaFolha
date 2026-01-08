@@ -4189,14 +4189,14 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             
             print(f"🗑️ Arquivo solicitado para exclusão: {filename}")
             
-            # Caminho do arquivo na pasta holerites_formatados_final
+            # Caminho do arquivo na pasta processed (onde ficam os holerites segmentados)
             # Usar caminho absoluto a partir do diretório do script (funciona em Windows e Linux)
             import os
             
             # Obter diretório backend (onde está o main_legacy.py)
             backend_dir = os.path.dirname(os.path.abspath(__file__))
-            # O diretório holerites_formatados_final fica dentro do backend/
-            processed_dir = os.path.join(backend_dir, 'holerites_formatados_final')
+            # O diretório processed fica dentro do backend/
+            processed_dir = os.path.join(backend_dir, 'processed')
             
             # Normalizar o caminho (resolve .., /, \, etc)
             processed_dir = os.path.normpath(processed_dir)
