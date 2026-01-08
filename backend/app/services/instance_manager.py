@@ -139,6 +139,53 @@ class InstanceManager:
     def has_multiple_instances(self) -> bool:
         """Verifica se há mais de uma instância configurada"""
         return len(self.instances) > 1
+    
+    async def get_next_available_instance(self) -> Optional[str]:
+        """
+        Retorna próxima instância ONLINE disponível (round-robin inteligente)
+        Verifica conexão de cada instância antes de retornar
+        
+        Returns:
+            Nome da instância online ou None se todas offline
+        """
+        if not self.instances:
+            logger.warning("❌ Nenhuma instância WhatsApp configurada")
+            return None
+        
+        # Verificar status de todas as instâncias
+        all_status = await self.check_all_instances_status()
+        online_instances = [inst for inst, is_online in all_status.items() if is_online]
+        
+        if not online_instances:
+            logger.error("❌ TODAS as instâncias estão offline!")
+            return None
+        
+        logger.info(f"📡 Instâncias online: {online_instances} (de {len(self.instances)} totais)")
+        
+        # Se só há uma instância online, retornar ela
+        if len(online_instances) == 1:
+            logger.info(f"✅ Única instância online: {online_instances[0]}")
+            return online_instances[0]
+        
+        # Round-robin entre as instâncias ONLINE
+        with self.lock:
+            # Encontrar índice atual no array de instâncias online
+            # Se não houver último usado ou ele estiver offline, começar do 0
+            last_used = getattr(self, '_last_used_online', None)
+            
+            if last_used and last_used in online_instances:
+                # Avançar para próxima instância online
+                current_idx = online_instances.index(last_used)
+                next_idx = (current_idx + 1) % len(online_instances)
+            else:
+                # Primeira vez ou última usada está offline
+                next_idx = 0
+            
+            selected = online_instances[next_idx]
+            self._last_used_online = selected
+            
+            logger.info(f"✅ Round-robin: {last_used} → {selected} (índice {next_idx}/{len(online_instances)-1})")
+            return selected
 
 
 # Instância global (singleton)

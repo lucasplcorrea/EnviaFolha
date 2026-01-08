@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import api from '../services/api';
 import toast from 'react-hot-toast';
@@ -21,6 +21,9 @@ const QueueManagement = () => {
   const [typeFilter, setTypeFilter] = useState('all');
   const [selectedQueue, setSelectedQueue] = useState(null);
   const [showDetails, setShowDetails] = useState(false);
+  
+  // Rastrear filas que já foram notificadas como concluídas
+  const notifiedQueuesRef = useRef(new Set());
 
   useEffect(() => {
     loadQueues();
@@ -36,7 +39,9 @@ const QueueManagement = () => {
       if (typeFilter !== 'all') params.type = typeFilter;
 
       const response = await api.get('/queue/list', { params });
-      setQueues(response.data.queues || []);
+      const loadedQueues = response.data.queues || [];
+      
+      setQueues(loadedQueues);
     } catch (error) {
       console.error('Erro ao carregar filas:', error);
     }
@@ -61,7 +66,15 @@ const QueueManagement = () => {
     try {
       setLoading(true);
       const response = await api.get(`/queue/${queueId}/details`);
-      setSelectedQueue(response.data);
+      // Backend retorna { queue: {...}, items: [...] }
+      // Mesclar para compatibilidade com o template
+      const queueData = {
+        ...response.data.queue,
+        items: response.data.items
+      };
+      console.log('📋 Detalhes da fila:', queueData);
+      console.log('📝 Status dos itens:', queueData.items?.map(i => ({ name: i.employee_name, status: i.status })));
+      setSelectedQueue(queueData);
       setShowDetails(true);
     } catch (error) {
       console.error('Erro ao carregar detalhes:', error);
@@ -75,6 +88,7 @@ const QueueManagement = () => {
     const statusConfig = {
       pending: { color: 'yellow', text: 'Pendente', icon: ClockIcon },
       processing: { color: 'blue', text: 'Processando', icon: ArrowPathIcon },
+      sent: { color: 'green', text: 'Enviado', icon: CheckCircleIcon },
       completed: { color: 'green', text: 'Concluído', icon: CheckCircleIcon },
       failed: { color: 'red', text: 'Falhou', icon: XCircleIcon },
       cancelled: { color: 'gray', text: 'Cancelado', icon: ExclamationTriangleIcon }

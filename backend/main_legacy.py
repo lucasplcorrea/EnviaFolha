@@ -8,6 +8,7 @@ import http.server
 import socketserver
 import json
 import os
+import shutil
 import urllib.parse
 import urllib.request
 from datetime import datetime
@@ -683,13 +684,13 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
         # Inicializar gerenciador de instâncias
         instance_manager = InstanceManager()
         
-        # Selecionar instância inicial (será randomizada a cada envio)
-        initial_instance = instance_manager.get_next_instance()
-        evolution_service = EvolutionAPIService(instance_name=initial_instance)
+        # Não criar evolution_service aqui - será criado a cada envio para round-robin efetivo
+        evolution_service = None  # Placeholder, será atribuído no loop
         queue_service = QueueManagerService(db)
         
-        # Verificar configuração
-        if not evolution_service.server_url or not evolution_service.api_key:
+        # Verificar configuração básica
+        from app.core.config import settings
+        if not settings.EVOLUTION_SERVER_URL or not settings.EVOLUTION_API_KEY:
             job.status = 'failed'
             job.error_message = 'Evolution API não está configurada. Verifique o arquivo .env'
             job.end_time = datetime.now()
@@ -700,16 +701,19 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
-        # Verificar se Evolution API está online antes de iniciar
-        print(f"🔍 [JOB {job_id[:8]}] Verificando status da Evolution API...")
-        is_online = loop.run_until_complete(check_evolution_status(evolution_service))
-        if not is_online:
+        # Verificar se há pelo menos UMA instância online antes de iniciar
+        print(f"🔍 [JOB {job_id[:8]}] Verificando instâncias disponíveis...")
+        all_instances_status = loop.run_until_complete(instance_manager.check_all_instances_status())
+        online_count = sum(1 for is_online in all_instances_status.values() if is_online)
+        
+        if online_count == 0:
             job.status = 'failed'
-            job.error_message = 'Evolution API está offline ou instância não conectada'
+            job.error_message = 'Nenhuma instância WhatsApp está conectada'
             job.end_time = datetime.now()
-            print(f"❌ [JOB {job_id[:8]}] Evolution API offline!")
+            print(f"❌ [JOB {job_id[:8]}] Nenhuma instância online!")
             return
-        print(f"✅ [JOB {job_id[:8]}] Evolution API online e pronta")
+        
+        print(f"✅ [JOB {job_id[:8]}] {online_count} instância(s) online disponível(is)")
         
         # 🎯 CRIAR FILA NO SISTEMA DE GESTÃO DE ENVIOS
         db = next(get_db())
@@ -735,25 +739,31 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
             )
             print(f"📋 [JOB {job_id[:8]}] Fila criada: {queue_id}")
             
-            # Adicionar itens à fila
+            # Adicionar itens à fila e mapear IDs
+            queue_item_map = {}  # filename -> item_id
             for file_info in selected_files:
                 employee = file_info.get('employee', {})
-                queue_service.add_queue_item(
+                filename = file_info.get('filename', '')
+                item = queue_service.add_queue_item(
                     queue_id=queue_id,
                     employee_id=employee.get('id'),
                     phone_number=employee.get('phone_number', ''),
-                    file_path=file_info.get('filename', ''),
+                    file_path=filename,
                     metadata={
                         'employee_name': employee.get('full_name', ''),
                         'month_year': file_info.get('month_year', '')
                     }
                 )
+                queue_item_map[filename] = item.id
+                print(f"🗺️ [JOB {job_id[:8]}] Mapeado: {filename} -> item_id={item.id}")
             db.commit()
             print(f"✅ [JOB {job_id[:8]}] {len(selected_files)} itens adicionados à fila")
+            print(f"📋 [JOB {job_id[:8]}] Mapa de itens: {list(queue_item_map.keys())}")
         except Exception as queue_error:
             print(f"⚠️ [JOB {job_id[:8]}] Erro ao criar fila: {queue_error}")
             # Continuar mesmo se fila falhar
             queue_id = None
+            queue_item_map = {}
         finally:
             db.close()
         
@@ -798,32 +808,16 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
             
             # ===== SISTEMA ANTI-SOFTBAN AVANÇADO COM OTIMIZAÇÃO MULTI-INSTÂNCIA =====
             if idx > 0:
-                # Selecionar próxima instância
-                next_instance = instance_manager.get_next_instance()
+                # 🎯 DELAY INTELIGENTE POR INSTÂNCIA
+                # Cada instância tem seu próprio cooldown, permitindo envios paralelos
                 
-                # �️ DELAY OBRIGATÓRIO: Sempre aguardar entre envios (independente de instância)
-                # Motivo: WhatsApp detecta mensagens rápidas mesmo de instâncias diferentes no mesmo IP
-                base_delay = random.uniform(30, 60)  # 30-60 segundos SEMPRE
+                # Descobrir qual será a próxima instância
+                next_instance = loop.run_until_complete(instance_manager.get_next_available_instance())
                 
-                # 🔄 DELAY ADICIONAL: Se reusar mesma instância, aguardar mais tempo
-                min_instance_delay = 120
-                
-                # Aplicar delay obrigatório SEMPRE
-                print(f"⏳ [JOB {job_id[:8]}] Aguardando delay obrigatório: {base_delay:.1f}s...")
-                print(f"⏰ Início do delay: {datetime.now().strftime('%H:%M:%S')}")
-                time.sleep(base_delay)
-                print(f"✅ Delay concluído: {datetime.now().strftime('%H:%M:%S')}")
-                
-                # Verificar se Evolution API ainda está online
-                print(f"🔍 [JOB {job_id[:8]}] Verificando Evolution API antes do envio #{idx+1}...")
-                # Criar serviço temporário para a próxima instância
-                temp_evolution = EvolutionAPIService(instance_name=next_instance)
-                is_online = loop.run_until_complete(check_evolution_status(temp_evolution))
-                
-                if not is_online:
-                    print(f"⚠️ [JOB {job_id[:8]}] Evolution API OFFLINE detectado! Pausando envios...")
+                if not next_instance:
+                    print(f"⚠️ [JOB {job_id[:8]}] TODAS as instâncias estão OFFLINE! Pausando envios...")
                     job.status = 'paused'
-                    job.error_message = 'Evolution API ficou offline durante o envio. Aguardando reconexão...'
+                    job.error_message = 'Todas as instâncias WhatsApp estão offline. Aguardando reconexão...'
                     
                     # Tentar reconectar a cada 2 minutos por até 30 minutos
                     max_wait_time = 30 * 60  # 30 minutos
@@ -835,21 +829,38 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                         time.sleep(wait_interval)
                         total_waited += wait_interval
                         
-                        is_online = loop.run_until_complete(check_evolution_status(temp_evolution))
-                        if is_online:
-                            print(f"✅ [JOB {job_id[:8]}] Evolution API voltou! Retomando envios...")
+                        all_status = loop.run_until_complete(instance_manager.check_all_instances_status())
+                        online_count = sum(1 for status in all_status.values() if status)
+                        
+                        if online_count > 0:
+                            print(f"✅ [JOB {job_id[:8]}] {online_count} instância(s) voltaram online! Retomando envios...")
                             job.status = 'running'
                             job.error_message = None
+                            next_instance = loop.run_until_complete(instance_manager.get_next_available_instance())
                             break
                         else:
-                            print(f"❌ [JOB {job_id[:8]}] Ainda offline. Tentando novamente em {wait_interval}s...")
+                            print(f"❌ [JOB {job_id[:8]}] Todas ainda offline. Tentando novamente em {wait_interval}s...")
                     
-                    if not is_online:
+                    if not next_instance:
                         job.status = 'failed'
-                        job.error_message = f'Evolution API permaneceu offline por mais de {max_wait_time/60} minutos'
+                        job.error_message = f'Todas as instâncias permaneceram offline por mais de {max_wait_time/60} minutos'
                         job.end_time = datetime.now()
-                        print(f"❌ [JOB {job_id[:8]}] Abortando job - Evolution API não reconectou")
+                        print(f"❌ [JOB {job_id[:8]}] Abortando job - Nenhuma instância reconectou")
                         return
+                
+                # Verificar quanto tempo passou desde último envio NESTA instância
+                instance_delay = instance_manager.get_instance_delay(next_instance)
+                min_delay_per_instance = 30  # Mínimo 30s entre envios da mesma instância
+                
+                if instance_delay < min_delay_per_instance:
+                    # Precisa aguardar para esta instância
+                    wait_time = min_delay_per_instance - instance_delay
+                    print(f"⏳ [JOB {job_id[:8]}] Instância {next_instance} precisa aguardar {wait_time:.1f}s (último envio há {instance_delay:.1f}s)")
+                    print(f"⏰ Início do delay: {datetime.now().strftime('%H:%M:%S')}")
+                    time.sleep(wait_time)
+                    print(f"✅ Delay concluído: {datetime.now().strftime('%H:%M:%S')}")
+                else:
+                    print(f"⚡ [JOB {job_id[:8]}] Instância {next_instance} pronta (último envio há {instance_delay:.1f}s) - SEM DELAY")
                 
                 # Pausa estratégica a cada 20 envios (independente de instância)
                 if idx % 20 == 0:
@@ -871,10 +882,8 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                     
                     print(f"✅ Pausa concluída: {datetime.now().strftime('%H:%M:%S')}\n")
             else:
-                # Primeiro envio - selecionar instância inicial (sem delay)
-                next_instance = instance_manager.get_next_instance()
+                # Primeiro envio - SEM DELAY
                 print(f"⚡ [JOB {job_id[:8]}] Primeiro envio - SEM DELAY")
-                print(f"📱 [JOB {job_id[:8]}] Instância inicial: {next_instance}")
             
             filename = file_info.get('filename')
             employee = file_info.get('employee', {})
@@ -947,20 +956,37 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
             
             # Enviar via Evolution API
             try:
-                # 🔄 CONFIGURAR SERVIÇO COM A INSTÂNCIA SELECIONADA
-                if next_instance != evolution_service.instance_name:
-                    print(f"🔄 [JOB {job_id[:8]}] Alternando para instância: {next_instance}")
-                    evolution_service = EvolutionAPIService(instance_name=next_instance)
-                else:
-                    print(f"📱 [JOB {job_id[:8]}] Mantendo instância: {next_instance}")
+                # 🔄 SELECIONAR PRÓXIMA INSTÂNCIA ONLINE (ROUND-ROBIN INTELIGENTE)
+                # Se já foi selecionada no delay check, usar a mesma; senão, selecionar nova
+                if idx == 0 or 'next_instance' not in locals():
+                    next_instance = loop.run_until_complete(instance_manager.get_next_available_instance())
+                # Senão, next_instance já foi definida no bloco de delay acima
                 
-                print(f"📋 [JOB {job_id[:8]}] Instância atual do service: {evolution_service.instance_name}")
+                if not next_instance:
+                    print(f"❌ [JOB {job_id[:8]}] Nenhuma instância online disponível")
+                    job.failed_sends += 1
+                    job.failed_employees.append({
+                        'filename': filename,
+                        'employee': employee_name,
+                        'reason': 'Nenhuma instância WhatsApp online'
+                    })
+                    job.processed_files += 1
+                    
+                    # Atualizar fila
+                    if queue_id:
+                        try:
+                            queue_service.update_queue_progress(queue_id=queue_id, failed=1)
+                        except Exception as e:
+                            print(f"⚠️ [JOB {job_id[:8]}] Erro ao atualizar fila: {e}")
+                    continue
                 
-                # 🎭 PRESENÇA REMOVIDA - Causava "Aguardando Mensagem" no iPhone
-                # Envio direto de documento é mais confiável e evita problemas de sincronização
+                print(f"📱 [JOB {job_id[:8]}] Usando instância: {next_instance}")
+                
+                # Criar serviço com a instância selecionada
+                evolution_service = EvolutionAPIService(instance_name=next_instance)
+                
                 print(f"📄 [JOB {job_id[:8]}] Enviando documento para {employee_name}...")
                 
-                # Enviar mensagem diretamente (sem presença prévia)
                 result = loop.run_until_complete(
                     evolution_service.send_payroll_message(
                         phone=phone_number,
@@ -971,15 +997,16 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                     )
                 )
                 
-                # Registrar envio na instância
+                # Registrar envio na instância (para tracking de delays)
                 instance_manager.register_send(next_instance)
                 print(f"✅ [JOB {job_id[:8]}] Envio registrado para instância: {next_instance}")
                 
+                # Verificar resultado
                 if result['success']:
-                    print(f"✅ [JOB {job_id[:8]}] Holerite enviado para {employee_name}")
+                    print(f"✅ [JOB {job_id[:8]}] ✨ SUCESSO com instância {next_instance}")
                     job.successful_sends += 1
                     
-                    # 📊 ATUALIZAR FILA DE ENVIOS
+                    # 📊 ATUALIZAR FILA DE ENVIOS E ITEM
                     if queue_id:
                         try:
                             queue_service.update_queue_progress(
@@ -987,6 +1014,14 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                                 processed=1,
                                 successful=1
                             )
+                            # Atualizar status do item individual
+                            item_id = queue_item_map.get(filename)
+                            print(f"🔍 [JOB {job_id[:8]}] Procurando item para {filename}: item_id={item_id}")
+                            if item_id:
+                                queue_service.update_item_status(item_id, 'sent')
+                                print(f"✅ [JOB {job_id[:8]}] Item {item_id} marcado como 'sent'")
+                            else:
+                                print(f"⚠️ [JOB {job_id[:8]}] Item não encontrado no mapa para {filename}")
                         except Exception as queue_update_error:
                             print(f"⚠️ [JOB {job_id[:8]}] Erro ao atualizar fila: {queue_update_error}")
                     
@@ -1033,20 +1068,87 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                             'enviados'
                         )
                         if not os.path.exists(enviados_dir):
-                            os.makedirs(enviados_dir, exist_ok=True)
+                            os.makedirs(enviados_dir)
                         
                         dest_path = os.path.join(enviados_dir, filename)
-                        import shutil
                         shutil.move(file_path, dest_path)
                         print(f"📦 [JOB {job_id[:8]}] Arquivo movido para enviados/")
                     except Exception as move_error:
                         print(f"⚠️ [JOB {job_id[:8]}] Erro ao mover arquivo: {move_error}")
+                
+                else:
+                    # Falha no envio
+                    error_msg = result.get('message', 'Erro desconhecido')
+                    print(f"❌ [JOB {job_id[:8]}] Falha ao enviar para {employee_name}: {error_msg}")
+                    job.failed_sends += 1
+                    job.failed_employees.append({
+                        'filename': filename,
+                        'employee': employee_name,
+                        'reason': error_msg
+                    })
+                    job.processed_files += 1
+                    
+                    # 📊 ATUALIZAR FILA - FALHA E ITEM
+                    if queue_id:
+                        try:
+                            queue_service.update_queue_progress(
+                                queue_id=queue_id,
+                                processed=1,
+                                failed=1
+                            )
+                            # Atualizar status do item individual
+                            item_id = queue_item_map.get(filename)
+                            print(f"🔍 [JOB {job_id[:8]}] Procurando item (falha) para {filename}: item_id={item_id}")
+                            if item_id:
+                                queue_service.update_item_status(item_id, 'failed', last_error)
+                                print(f"❌ [JOB {job_id[:8]}] Item {item_id} marcado como 'failed'")
+                            else:
+                                print(f"⚠️ [JOB {job_id[:8]}] Item não encontrado no mapa para {filename}")
+                        except Exception as queue_update_error:
+                            print(f"⚠️ [JOB {job_id[:8]}] Erro ao atualizar fila: {queue_update_error}")
+                    
+                    # Salvar falha no banco de dados
+                    try:
+                        from app.models.base import get_db
+                        from app.models.payroll_send import PayrollSend
+                        
+                        month_for_db = month_year
+                        if '_' in month_year:
+                            parts = month_year.split('_')
+                            month_name = parts[0]
+                            year = parts[1]
+                            month_map = {
+                                'janeiro': '01', 'fevereiro': '02', 'março': '03',
+                                'abril': '04', 'maio': '05', 'junho': '06',
+                                'julho': '07', 'agosto': '08', 'setembro': '09',
+                                'outubro': '10', 'novembro': '11', 'dezembro': '12'
+                            }
+                            month_num = month_map.get(month_name.lower(), '00')
+                            month_for_db = f"{year}-{month_num}"
+                        
+                        db = next(get_db())
+                        try:
+                            payroll_send = PayrollSend(
+                                employee_id=employee_id,
+                                month=month_for_db,
+                                file_path=filename,
+                                status='failed',
+                                error_message=last_error,
+                                user_id=user_id
+                            )
+                            db.add(payroll_send)
+                            db.commit()
+                            print(f"💾 [JOB {job_id[:8]}] Falha registrada no banco (employee_id={employee_id})")
+                        finally:
+                            db.close()
+                    except Exception as db_error:
+                        print(f"⚠️ [JOB {job_id[:8]}] Erro ao salvar falha no banco: {db_error}")
                     
                     # Registrar log do sistema
                     try:
                         log_system_event(
-                            event_type='payroll_sent',
-                            description=f"Holerite enviado para {employee_name}",
+                            event_type='payroll_sent_failed',
+                            description=f"Falha ao enviar holerite para {employee_name}",
                             details={
                                 'job_id': job_id,
                                 'filename': filename,
@@ -1059,62 +1161,6 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                         )
                     except Exception as log_error:
                         print(f"⚠️ [JOB {job_id[:8]}] Erro ao registrar log: {log_error}")
-                
-                else:
-                    print(f"❌ [JOB {job_id[:8]}] Falha ao enviar para {employee_name}: {result['message']}")
-                    job.failed_sends += 1
-                    job.failed_employees.append({
-                        'filename': filename,
-                        'employee': employee_name,
-                        'reason': result['message']
-                    })
-                    
-                    # 📊 ATUALIZAR FILA DE ENVIOS COM FALHA
-                    if queue_id:
-                        try:
-                            queue_service.update_queue_progress(
-                                queue_id=queue_id,
-                                processed=1,
-                                failed=1
-                            )
-                        except Exception as queue_update_error:
-                            print(f"⚠️ [JOB {job_id[:8]}] Erro ao atualizar fila: {queue_update_error}")
-                    
-                    # Registrar falha no banco
-                    try:
-                        from app.models.base import get_db
-                        from app.models.payroll_send import PayrollSend
-                        
-                        month_for_db = month_year
-                        if '_' in month_year:
-                            month_name, year = month_year.split('_')
-                            month_map = {
-                                'janeiro': '01', 'fevereiro': '02', 'março': '03', 'marco': '03',
-                                'abril': '04', 'maio': '05', 'junho': '06', 'julho': '07',
-                                'agosto': '08', 'setembro': '09', 'outubro': '10',
-                                'novembro': '11', 'dezembro': '12'
-                            }
-                            month_num = month_map.get(month_name.lower(), '00')
-                            month_for_db = f"{year}-{month_num}"
-                        
-                        db = next(get_db())
-                        try:
-                            payroll_send = PayrollSend(
-                                employee_id=employee_id,
-                                month=month_for_db,
-                                file_path=filename,
-                                status='failed',
-                                error_message=result['message'],
-                                sent_at=datetime.now(),
-                                user_id=user_id
-                            )
-                            db.add(payroll_send)
-                            db.commit()
-                            print(f"💾 [JOB {job_id[:8]}] Falha registrada no banco")
-                        finally:
-                            db.close()
-                    except Exception as db_error:
-                        print(f"⚠️ [JOB {job_id[:8]}] Erro ao salvar falha: {db_error}")
             
             except Exception as send_error:
                 print(f"❌ [JOB {job_id[:8]}] Erro no envio para {employee_name}: {send_error}")
@@ -1125,7 +1171,7 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                     'reason': f'Erro na API: {str(send_error)}'
                 })
                 
-                # 📊 ATUALIZAR FILA DE ENVIOS COM EXCEÇÃO
+                # 📊 ATUALIZAR FILA DE ENVIOS COM EXCEÇÃO E ITEM
                 if queue_id:
                     try:
                         queue_service.update_queue_progress(
@@ -1133,6 +1179,10 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                             processed=1,
                             failed=1
                         )
+                        # Atualizar status do item individual
+                        item_id = queue_item_map.get(filename)
+                        if item_id:
+                            queue_service.update_item_status(item_id, 'failed', str(send_error))
                     except Exception as queue_update_error:
                         print(f"⚠️ [JOB {job_id[:8]}] Erro ao atualizar fila: {queue_update_error}")
             
@@ -1191,6 +1241,32 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
             print(f"🔒 [JOB {job_id[:8]}] Sessão do banco fechada")
 
 class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
+    
+    # Rotas silenciosas (não aparecerão nos logs)
+    SILENT_ROUTES = [
+        '/api/v1/database/health',      # Healthcheck do banco (a cada 5s)
+        '/api/v1/queue/active',          # Polling de filas ativas (a cada 3s)
+        '/api/v1/queue/list',            # Listagem de todas as filas (a cada 5s)
+        '/api/v1/payrolls/bulk-send/',   # Polling de status de jobs (a cada 2s)
+        '/api/v1/evolution/instances',   # Polling de status WhatsApp (a cada 5s)
+        '/favicon.ico',                   # Navegador pedindo favicon
+    ]
+    
+    def log_message(self, format, *args):
+        """
+        Sobrescreve log_message para filtrar rotas de healthcheck/polling
+        Reduz ruído nos logs mantendo apenas requisições importantes
+        """
+        # Pegar a mensagem que seria logada
+        message = format % args
+        
+        # Verificar se é uma rota silenciosa
+        for route in self.SILENT_ROUTES:
+            if route in self.path:
+                return  # Não logar esta requisição
+        
+        # Logar normalmente para rotas importantes
+        super().log_message(format, *args)
     
     def do_OPTIONS(self):
         """Handle CORS preflight requests"""
@@ -3565,9 +3641,23 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     cadastro_match = re.search(r'Cadastro\s*Nome\s*do\s*Funcionário\s*CBO\s*Empresa\s*Local\s*Departamento\s*FL\s*\n\s*(\d+)', text)
                     cadastro_num = cadastro_match.group(1) if cadastro_match else 'UNKNOWN_CAD'
                     
-                    # Regex para encontrar o número da empresa
-                    empresa_field_match = re.search(r'(\d+)\s+[A-ZÀ-Ú\s]+\s+(\d+)\s+(\d+)\s+\d+\s+\d+\s+\d+', text)
-                    empresa_num = empresa_field_match.group(3) if empresa_field_match else 'UNKNOWN_EMP'
+                    # Regex MELHORADO para encontrar o número da empresa
+                    # Tenta primeiro o padrão completo com cabeçalho
+                    empresa_num = 'UNKNOWN_EMP'
+                    header_match = re.search(
+                        r'Cadastro\s+Nome\s+do\s+Funcionário\s+CBO\s+Empresa\s+Local\s+Departamento\s+FL\s*\n\s*'
+                        r'(\d+)\s+([A-ZÀ-Ú\s\d]+?)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)',
+                        text
+                    )
+                    
+                    if header_match:
+                        empresa_num = header_match.group(4)  # Quarto número é a empresa
+                    else:
+                        # Fallback: padrão mais genérico (linha com vários números após o nome)
+                        # Ex: "189 CRISTINA APARECIDA STOROZ WIL 421310 60 1 000101"
+                        generic_match = re.search(r'^\s*(\d+)\s+[\w\sÀ-Ú]+\s+(\d{4,6})\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)', text, re.MULTILINE)
+                        if generic_match:
+                            empresa_num = generic_match.group(3)  # Terceiro número = empresa
                     
                     # Formatação do identificador único: XXXXYYYYY
                     if empresa_num != 'UNKNOWN_EMP' and cadastro_num != 'UNKNOWN_CAD':
@@ -3853,8 +3943,34 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     import sys
                     sys.path.append(os.path.dirname(__file__))
                     from app.services.evolution_api import EvolutionAPIService
+                    from app.services.instance_manager import get_instance_manager
                     
-                    evolution_service = EvolutionAPIService()
+                    # Obter instance manager
+                    instance_manager = get_instance_manager()
+                    
+                    # Criar event loop se necessário
+                    try:
+                        loop = asyncio.get_event_loop()
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                    
+                    # 📱 SELECIONAR PRÓXIMA INSTÂNCIA ONLINE (ROUND-ROBIN)
+                    next_instance = loop.run_until_complete(instance_manager.get_next_available_instance())
+                    
+                    if not next_instance:
+                        print(f"❌ Nenhuma instância WhatsApp online disponível")
+                        failed_employees.append({
+                            'id': emp_id,
+                            'name': employee.get('full_name'),
+                            'reason': 'Nenhuma instância WhatsApp online'
+                        })
+                        continue
+                    
+                    print(f"📱 Usando instância: {next_instance}")
+                    
+                    # Criar serviço com a instância selecionada
+                    evolution_service = EvolutionAPIService(instance_name=next_instance)
                     
                     # Criar event loop se necessário
                     try:
@@ -3879,6 +3995,10 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     if result['success']:
                         print(f"✅ Comunicado enviado para {employee.get('full_name')}")
                         success_count += 1
+                        
+                        # Registrar envio na instância (para tracking de delays)
+                        instance_manager.register_send(next_instance)
+                        print(f"✅ Envio registrado para instância: {next_instance}")
                         
                         # Registrar recipient no banco (se temos comm_send_id)
                         if comm_send_id:
@@ -4596,7 +4716,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     def handle_get_active_queues(self):
         """Retorna lista de filas ativas"""
         try:
-            print("📋 Carregando filas ativas...")
+            # Removido log repetitivo - rota é chamada a cada 3 segundos pelo frontend
             
             db = SessionLocal()
             user = self.get_authenticated_user(db)
@@ -4627,7 +4747,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     def handle_get_all_queues(self):
         """Retorna lista de todas as filas com filtros"""
         try:
-            print("📋 Carregando todas as filas...")
+            # Removido log repetitivo - rota é chamada a cada 5 segundos pelo frontend
             
             db = SessionLocal()
             user = self.get_authenticated_user(db)
@@ -5162,6 +5282,13 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     import time
     start_time = time.time()  # Para calcular uptime
+    
+    # 🔇 ATIVAR FILTRO DE LOGGING SILENCIOSO
+    try:
+        from app.core.logging_config import setup_quiet_logging
+        setup_quiet_logging()
+    except ImportError:
+        print("⚠️ Filtro de logging não disponível - usando logging padrão")
     
     PORT = int(os.getenv('PORT', 8002))  # Usar porta 8002 como padrão
     

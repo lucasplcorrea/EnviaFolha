@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { toast } from 'react-hot-toast';
 import api from '../services/api';
 import { useTheme } from '../contexts/ThemeContext';
@@ -24,12 +24,25 @@ const PayrollSender = () => {
   // Estados para job em background
   const [activeJobId, setActiveJobId] = useState(null);
   const [jobStatus, setJobStatus] = useState(null);
-  const [pollingInterval, setPollingInterval] = useState(null);
   const [showProgressModal, setShowProgressModal] = useState(false);
   
   // Estados para filas ativas do sistema
   const [activeQueues, setActiveQueues] = useState([]);
-  const [queuesPollingInterval, setQueuesPollingInterval] = useState(null);
+  
+  // Refs para rastrear intervalos (evita problemas com closures)
+  const pollingIntervalRef = useRef(null);
+  const queuesIntervalRef = useRef(null);
+  
+  // Rastrear jobs que já foram notificados (persiste no localStorage)
+  const getInitialNotifiedJobs = () => {
+    try {
+      const saved = localStorage.getItem('notifiedJobs');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch (error) {
+      return new Set();
+    }
+  };
+  const notifiedJobsRef = useRef(getInitialNotifiedJobs());
   
   // Múltiplos templates de mensagem para randomização (8 templates)
   const [messageTemplate1, setMessageTemplate1] = useState(
@@ -73,33 +86,34 @@ const PayrollSender = () => {
     
     // Verificar se há job ativo ao carregar página
     const savedJobId = localStorage.getItem('activeJobId');
-    if (savedJobId) {
+    if (savedJobId && !notifiedJobsRef.current.has(savedJobId)) {
       setActiveJobId(savedJobId);
+      setShowProgressModal(true);
       // Iniciar polling
-      const interval = setInterval(() => {
+      pollingIntervalRef.current = setInterval(() => {
         pollJobStatus(savedJobId);
       }, 2000);
-      setPollingInterval(interval);
       pollJobStatus(savedJobId);
+    } else if (savedJobId && notifiedJobsRef.current.has(savedJobId)) {
+      // Job já foi concluído e notificado, limpar localStorage
+      localStorage.removeItem('activeJobId');
     }
     
     // Polling de filas ativas a cada 5 segundos
-    const queuesInterval = setInterval(loadActiveQueues, 5000);
-    setQueuesPollingInterval(queuesInterval);
+    queuesIntervalRef.current = setInterval(loadActiveQueues, 5000);
     
     return () => {
-      if (queuesInterval) clearInterval(queuesInterval);
-    };
-  }, [monthFilter]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Cleanup do polling quando componente é desmontado
-  useEffect(() => {
-    return () => {
-      if (pollingInterval) {
-        clearInterval(pollingInterval);
+      // Cleanup: limpar ambos os intervalos ao desmontar
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      if (queuesIntervalRef.current) {
+        clearInterval(queuesIntervalRef.current);
+        queuesIntervalRef.current = null;
       }
     };
-  }, [pollingInterval]);
+  }, [monthFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Função para fazer polling do status do job
   const pollJobStatus = async (jobId) => {
@@ -110,27 +124,40 @@ const PayrollSender = () => {
 
       // Se job completou ou falhou, parar polling
       if (status.status === 'completed' || status.status === 'failed') {
-        if (pollingInterval) {
-          clearInterval(pollingInterval);
-          setPollingInterval(null);
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
         }
         
         // Remover do localStorage
         localStorage.removeItem('activeJobId');
         
-        // Mostrar resultado final
-        if (status.status === 'completed') {
-          const failedCount = status.failed_sends || 0;
-          if (failedCount === 0) {
-            toast.success(`✅ Todos os ${status.successful_sends} holerites foram enviados!`);
-          } else {
-            toast.success(`${status.successful_sends}/${status.total_files} holerites enviados`);
-            if (failedCount > 0) {
-              toast.error(`${failedCount} envios falharam`);
-            }
+        // Mostrar resultado final APENAS UMA VEZ
+        const wasNotified = notifiedJobsRef.current.has(jobId);
+        if (!wasNotified) {
+          notifiedJobsRef.current.add(jobId);
+          
+          // Salvar no localStorage para persistir entre recarregamentos
+          try {
+            const notifiedArray = Array.from(notifiedJobsRef.current);
+            localStorage.setItem('notifiedJobs', JSON.stringify(notifiedArray));
+          } catch (error) {
+            console.error('Erro ao salvar jobs notificados:', error);
           }
-        } else if (status.status === 'failed') {
-          toast.error(`Erro no envio: ${status.error_message}`);
+          
+          if (status.status === 'completed') {
+            const failedCount = status.failed_sends || 0;
+            if (failedCount === 0) {
+              toast.success(`✅ Todos os ${status.successful_sends} holerites foram enviados!`);
+            } else {
+              toast.success(`${status.successful_sends}/${status.total_files} holerites enviados`);
+              if (failedCount > 0) {
+                toast.error(`${failedCount} envios falharam`);
+              }
+            }
+          } else if (status.status === 'failed') {
+            toast.error(`Erro no envio: ${status.error_message}`);
+          }
         }
 
         // Limpar estados
@@ -363,12 +390,15 @@ const PayrollSender = () => {
         // Salvar no localStorage para persistir entre páginas
         localStorage.setItem('activeJobId', job_id);
         
+        // Limpar intervalo anterior se existir
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+        }
+        
         // Iniciar polling a cada 2 segundos
-        const interval = setInterval(() => {
+        pollingIntervalRef.current = setInterval(() => {
           pollJobStatus(job_id);
         }, 2000);
-        
-        setPollingInterval(interval);
         
         // Fazer primeira checagem imediatamente
         pollJobStatus(job_id);
