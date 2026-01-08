@@ -14,17 +14,23 @@ logger = logging.getLogger(__name__)
 class EvolutionAPIService:
     """Serviço para comunicação com a Evolution API"""
     
-    def __init__(self):
+    def __init__(self, instance_name: str = None):
+        """
+        Inicializa serviço para uma instância específica
+        
+        Args:
+            instance_name: Nome da instância. Se None, usa settings.EVOLUTION_INSTANCE_NAME
+        """
         self.server_url = settings.EVOLUTION_SERVER_URL.rstrip('/') if settings.EVOLUTION_SERVER_URL else None
         self.api_key = settings.EVOLUTION_API_KEY
-        self.instance_name = settings.EVOLUTION_INSTANCE_NAME
+        self.instance_name = instance_name or settings.EVOLUTION_INSTANCE_NAME
         self.headers = {
             "Content-Type": "application/json",
             "apikey": self.api_key
         } if self.api_key else None
         
         if not all([self.server_url, self.api_key, self.instance_name]):
-            logger.warning("Configurações da Evolution API incompletas")
+            logger.warning(f"Configurações da Evolution API incompletas para instância {self.instance_name}")
     
     def _add_random_delay(self, base_delay: int = 30, variation: int = 10):
         """Adiciona delay aleatório entre envios"""
@@ -44,24 +50,95 @@ class EvolutionAPIService:
     async def check_instance_status(self) -> bool:
         """Verifica se a instância está conectada"""
         if not self.headers:
+            logger.warning("Headers da Evolution API não configurados")
             return False
             
         try:
             url = f"{self.server_url}/instance/connectionState/{self.instance_name}"
+            logger.info(f"Verificando status da instância: {url}")
+            
             response = requests.get(url, headers=self.headers, timeout=10)
             response.raise_for_status()
             
             result = response.json()
-            status = result.get('instance', {}).get('state', 'unknown')
+            logger.info(f"Resposta da API: {result}")
             
-            return status in ['open', 'connected']
+            status = result.get('instance', {}).get('state', 'unknown')
+            logger.info(f"Status da instância: {status}")
+            
+            is_connected = status in ['open', 'connected']
+            logger.info(f"Instância conectada: {is_connected}")
+            
+            return is_connected
             
         except Exception as e:
             logger.error(f"Erro ao verificar status da instância: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
+    async def send_presence(self, phone: str, presence_type: str = "composing", delay: int = 5000) -> Dict[str, Any]:
+        """
+        Envia presença (digitando/gravando) para simular comportamento humano
+        
+        Args:
+            phone: Número do telefone no formato internacional
+            presence_type: Tipo de presença - "composing" (digitando), "recording" (gravando áudio), 
+                          "paused" (pausado), "available" (disponível)
+            delay: Tempo em milissegundos que a presença ficará ativa (padrão: 5000ms = 5s)
+        
+        Returns:
+            Dict com success (bool) e message (str)
+        """
+        if not self.headers:
+            logger.warning("Headers da Evolution API não configurados")
+            return {"success": False, "message": "API não configurada"}
+        
+        try:
+            url = f"{self.server_url}/chat/sendPresence/{self.instance_name}"
+            
+            # Formatar número no padrão WhatsApp se necessário
+            formatted_phone = phone
+            if '@' not in phone:
+                # Remover caracteres não numéricos
+                clean_phone = ''.join(filter(str.isdigit, phone))
+                # Adicionar @s.whatsapp.net
+                formatted_phone = f"{clean_phone}@s.whatsapp.net"
+            
+            payload = {
+                "number": formatted_phone,
+                "options": {
+                    "delay": delay,
+                    "presence": presence_type
+                }
+            }
+            
+            logger.info(f"Enviando presença '{presence_type}' para {formatted_phone} ({delay}ms)")
+            
+            response = requests.post(url, headers=self.headers, json=payload, timeout=15)
+            response.raise_for_status()
+            
+            return {
+                "success": True,
+                "message": f"Presença '{presence_type}' enviada com sucesso"
+            }
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Erro ao enviar presença: {e}")
+            return {
+                "success": False,
+                "message": f"Erro ao enviar presença: {str(e)}"
+            }
+        except Exception as e:
+            logger.error(f"Erro inesperado ao enviar presença: {e}")
+            return {
+                "success": False,
+                "message": f"Erro inesperado: {str(e)}"
+            }
+    
     async def send_payroll_message(self, phone: str, employee_name: str, 
-                                 file_path: str, month_year: str) -> Dict[str, Any]:
+                                 file_path: str, month_year: str, 
+                                 message_template: str = None) -> Dict[str, Any]:
         """
         Envia holerite em uma única mensagem (otimizado)
         
@@ -69,6 +146,16 @@ class EvolutionAPIService:
             Dict com success (bool) e message (str)
         """
         try:
+            # 🔍 VERIFICAR CONEXÃO ANTES DE ENVIAR
+            logger.info(f"🔍 Verificando conexão da instância {self.instance_name}...")
+            is_connected = await self.check_instance_status()
+            if not is_connected:
+                error_msg = f"❌ Instância {self.instance_name} não está conectada ao WhatsApp"
+                logger.error(error_msg)
+                return {"success": False, "message": error_msg}
+            
+            logger.info(f"✅ Instância {self.instance_name} conectada e pronta")
+            
             if not os.path.exists(file_path):
                 return {"success": False, "message": "Arquivo não encontrado"}
             
@@ -77,10 +164,42 @@ class EvolutionAPIService:
             if not base64_content:
                 return {"success": False, "message": "Erro ao processar arquivo"}
             
-            # Mensagem combinada (saudação + instruções)
-            caption = (f"Olá {employee_name}, segue seu holerite referente a {month_year.replace('_', ' ')}. "
-                      f"A senha para abrir o arquivo são os 4 primeiros dígitos do seu CPF. "
-                      f"Esta é uma mensagem automática, em caso de dúvidas contate o RH.")
+            # Mensagem: usar template customizada ou padrão
+            if message_template:
+                # Substituir placeholders na mensagem customizada
+                first_name = employee_name.split()[0] if employee_name else "Colaborador"
+                
+                # Formatar mês/ano para exibição humanizada
+                # Pode vir em dois formatos:
+                # 1. "outubro_2025" (formato original do processamento)
+                # 2. "2025-10" (formato do banco de dados)
+                if '_' in month_year:
+                    # Formato: outubro_2025 -> "outubro de 2025"
+                    month_formatted = month_year.replace('_', ' de ')
+                elif '-' in month_year and len(month_year) == 7:
+                    # Formato: 2025-10 -> "outubro de 2025"
+                    year, month_num = month_year.split('-')
+                    month_names = {
+                        '01': 'janeiro', '02': 'fevereiro', '03': 'março', '04': 'abril',
+                        '05': 'maio', '06': 'junho', '07': 'julho', '08': 'agosto',
+                        '09': 'setembro', '10': 'outubro', '11': 'novembro', '12': 'dezembro'
+                    }
+                    month_name = month_names.get(month_num, f'mês {month_num}')
+                    month_formatted = f"{month_name} de {year}"
+                else:
+                    # Formato desconhecido, usar como está
+                    month_formatted = month_year
+                
+                caption = (message_template
+                          .replace('{nome}', employee_name)
+                          .replace('{primeiro_nome}', first_name)
+                          .replace('{mes_anterior}', month_formatted))
+            else:
+                # Mensagem padrão simples (caso nenhum template seja fornecido)
+                caption = (f"Olá {employee_name}, segue seu holerite referente a {month_year.replace('_', ' ')}. "
+                          f"A senha para abrir o arquivo são os 4 primeiros dígitos do seu CPF. "
+                          f"Esta é uma mensagem automática, em caso de dúvidas contate o RH. "
+                          f"Por favor, confirme o recebimento com um 👍")
             
             url = f"{self.server_url}/message/sendMedia/{self.instance_name}"
             
@@ -95,45 +214,70 @@ class EvolutionAPIService:
             }
             
             # Tentar envio com retry
-            for attempt in range(3):
+            max_retries = 3
+            for attempt in range(max_retries):
                 try:
+                    logger.info(f"📤 Tentativa {attempt + 1}/{max_retries} de envio para {phone}")
+                    
                     response = requests.post(url, headers=self.headers, json=payload, timeout=60)
                     response.raise_for_status()
                     
                     result = response.json()
                     message_id = result.get('key', {}).get('id', 'N/A')
                     
+                    # Log detalhado do sucesso
+                    logger.info(f"✅ Holerite enviado com sucesso!")
+                    logger.info(f"   📱 Telefone: {phone}")
+                    logger.info(f"   🆔 Message ID: {message_id}")
+                    logger.info(f"   📄 Arquivo: {os.path.basename(file_path)}")
+                    logger.info(f"   ⏱️  Tentativa: {attempt + 1}")
+                    
                     return {
                         "success": True, 
-                        "message": f"Holerite enviado com sucesso. ID: {message_id}"
+                        "message": f"Holerite enviado com sucesso. ID: {message_id}",
+                        "message_id": message_id
                     }
                     
                 except requests.exceptions.HTTPError as e:
-                    if e.response.status_code == 429:  # Rate limit
-                        logger.warning(f"Rate limit atingido. Aguardando...")
+                    status_code = e.response.status_code
+                    logger.error(f"❌ Erro HTTP {status_code} na tentativa {attempt + 1}")
+                    
+                    if status_code == 429:  # Rate limit
+                        logger.warning(f"⚠️  Rate limit atingido. Aguardando 60s...")
                         time.sleep(60)
                         continue
-                    elif e.response.status_code in [401, 404]:
-                        return {"success": False, "message": f"Erro de API: {e.response.status_code}"}
+                    elif status_code in [401, 403]:
+                        error_msg = f"Erro de autenticação ({status_code}). Verifique API key"
+                        logger.error(f"❌ {error_msg}")
+                        return {"success": False, "message": error_msg}
+                    elif status_code == 404:
+                        error_msg = f"Instância {self.instance_name} não encontrada"
+                        logger.error(f"❌ {error_msg}")
+                        return {"success": False, "message": error_msg}
                     else:
-                        if attempt < 2:
+                        if attempt < max_retries - 1:
+                            logger.warning(f"⏳ Aguardando 30s antes de tentar novamente...")
                             time.sleep(30)
                             continue
-                        return {"success": False, "message": f"Erro HTTP: {e.response.status_code}"}
+                        return {"success": False, "message": f"Erro HTTP: {status_code}"}
                         
                 except requests.exceptions.Timeout:
-                    if attempt < 2:
+                    logger.error(f"⏱️  Timeout na tentativa {attempt + 1}")
+                    if attempt < max_retries - 1:
+                        logger.warning(f"⏳ Aguardando 20s antes de tentar novamente...")
                         time.sleep(20)
                         continue
-                    return {"success": False, "message": "Timeout na requisição"}
+                    return {"success": False, "message": "Timeout: servidor não respondeu a tempo"}
                     
                 except Exception as e:
-                    if attempt < 2:
+                    logger.error(f"❌ Erro inesperado na tentativa {attempt + 1}: {str(e)}")
+                    if attempt < max_retries - 1:
+                        logger.warning(f"⏳ Aguardando 30s antes de tentar novamente...")
                         time.sleep(30)
                         continue
                     return {"success": False, "message": f"Erro inesperado: {str(e)}"}
             
-            return {"success": False, "message": "Falha após 3 tentativas"}
+            return {"success": False, "message": f"Falha após {max_retries} tentativas"}
             
         except Exception as e:
             logger.error(f"Erro ao enviar holerite: {e}")
@@ -143,38 +287,40 @@ class EvolutionAPIService:
                                        file_path: str = None) -> Dict[str, Any]:
         """
         Envia comunicado (texto e/ou arquivo)
+        Se houver arquivo + texto, envia TUDO EM UMA ÚNICA MENSAGEM (arquivo com legenda)
         
         Returns:
             Dict com success (bool) e message (str)
         """
         try:
-            results = []
+            # 🔍 VERIFICAR CONEXÃO ANTES DE ENVIAR
+            logger.info(f"🔍 Verificando conexão da instância {self.instance_name}...")
+            is_connected = await self.check_instance_status()
+            if not is_connected:
+                error_msg = f"❌ Instância {self.instance_name} não está conectada ao WhatsApp"
+                logger.error(error_msg)
+                return {"success": False, "message": error_msg}
             
-            # Enviar mensagem de texto se fornecida
-            if message_text and message_text.strip():
-                text_result = await self._send_text_message(phone, message_text.strip())
-                results.append(text_result)
-                
-                # Delay entre mensagem e arquivo
-                if file_path and os.path.exists(file_path):
-                    time.sleep(10)
+            logger.info(f"✅ Instância {self.instance_name} conectada e pronta")
             
-            # Enviar arquivo se fornecido
-            if file_path and os.path.exists(file_path):
-                file_result = await self._send_media_message(phone, file_path, message_text)
-                results.append(file_result)
+            # Caso 1: Arquivo + Texto → enviar arquivo com legenda
+            if file_path and os.path.exists(file_path) and message_text and message_text.strip():
+                logger.info(f"📎 Enviando arquivo com legenda (texto + anexo em 1 mensagem)")
+                return await self._send_media_message(phone, file_path, caption=message_text.strip())
             
-            # Verificar se pelo menos um envio foi bem-sucedido
-            if not results:
+            # Caso 2: Apenas arquivo → enviar arquivo sem legenda
+            elif file_path and os.path.exists(file_path):
+                logger.info(f"📎 Enviando apenas arquivo")
+                return await self._send_media_message(phone, file_path, caption=None)
+            
+            # Caso 3: Apenas texto → enviar mensagem simples
+            elif message_text and message_text.strip():
+                logger.info(f"💬 Enviando apenas mensagem de texto")
+                return await self._send_text_message(phone, message_text.strip())
+            
+            # Caso 4: Nada fornecido
+            else:
                 return {"success": False, "message": "Nenhum conteúdo para enviar"}
-            
-            successful = any(r["success"] for r in results)
-            messages = [r["message"] for r in results]
-            
-            return {
-                "success": successful,
-                "message": "; ".join(messages)
-            }
             
         except Exception as e:
             logger.error(f"Erro ao enviar comunicado: {e}")

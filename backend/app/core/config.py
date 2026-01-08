@@ -28,6 +28,16 @@ class Settings(BaseSettings):
     EVOLUTION_SERVER_URL: Optional[str] = None
     EVOLUTION_API_KEY: Optional[str] = None
     EVOLUTION_INSTANCE_NAME: Optional[str] = None
+    EVOLUTION_INSTANCE_NAME2: Optional[str] = None  # Segunda instância (opcional)
+    EVOLUTION_INSTANCE_NAME3: Optional[str] = None  # Terceira instância (opcional)
+    
+    # Configurações de Email SMTP
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USER: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_FROM: str = "Sistema RH <rh@empresa.com>"
+    SMTP_USE_TLS: bool = True
     
     # Configurações de upload
     UPLOAD_FOLDER: str = "uploads"
@@ -41,6 +51,21 @@ class Settings(BaseSettings):
         env_file_encoding = "utf-8"
         extra = "allow"  # Permite campos extras
         case_sensitive = True
+
+    def get_evolution_instances(self) -> list:
+        """Retorna lista de instâncias WhatsApp configuradas"""
+        instances = []
+        if self.EVOLUTION_INSTANCE_NAME:
+            instances.append(self.EVOLUTION_INSTANCE_NAME)
+        if self.EVOLUTION_INSTANCE_NAME2:
+            instances.append(self.EVOLUTION_INSTANCE_NAME2)
+        if self.EVOLUTION_INSTANCE_NAME3:
+            instances.append(self.EVOLUTION_INSTANCE_NAME3)
+        return instances
+    
+    def has_smtp_configured(self) -> bool:
+        """Verifica se SMTP está configurado"""
+        return all([self.SMTP_HOST, self.SMTP_USER, self.SMTP_PASSWORD])
 
 settings = Settings()
 

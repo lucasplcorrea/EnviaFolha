@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
 from fastapi import HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -9,19 +9,39 @@ from ..models.base import get_db
 from ..models.user import User
 from .config import settings
 
-# Configuração de hash de senha
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 # Configuração do bearer token
 security = HTTPBearer()
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verifica se a senha está correta"""
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        # Truncar senha para 72 bytes (limite do bcrypt)
+        password_bytes = plain_password.encode('utf-8')
+        if len(password_bytes) > 72:
+            password_bytes = password_bytes[:72]
+        
+        # bcrypt.checkpw espera bytes
+        hash_bytes = hashed_password.encode('utf-8') if isinstance(hashed_password, str) else hashed_password
+        return bcrypt.checkpw(password_bytes, hash_bytes)
+    except Exception as e:
+        print(f"⚠️ Erro ao verificar senha: {e}")
+        return False
 
 def get_password_hash(password: str) -> str:
-    """Gera hash da senha"""
-    return pwd_context.hash(password)
+    """Gera hash da senha (trunca para 72 bytes se necessário)"""
+    try:
+        # Truncar senha para 72 bytes (limite do bcrypt)
+        password_bytes = password.encode('utf-8')
+        if len(password_bytes) > 72:
+            password_bytes = password_bytes[:72]
+        
+        # Gerar hash com bcrypt
+        salt = bcrypt.gensalt()
+        hashed = bcrypt.hashpw(password_bytes, salt)
+        return hashed.decode('utf-8')
+    except Exception as e:
+        print(f"⚠️ Erro ao gerar hash: {e}")
+        raise ValueError(f"Erro ao gerar hash da senha: {str(e)}")
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     """Cria token JWT"""
@@ -42,6 +62,17 @@ def verify_token(token: str) -> Optional[dict]:
         return payload
     except JWTError:
         return None
+
+def decode_token(token: str) -> dict:
+    """
+    Decodifica token JWT e retorna payload
+    Alias para verify_token mas lança exceção se inválido
+    """
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        return payload
+    except JWTError as e:
+        raise ValueError(f"Token JWT inválido: {str(e)}")
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),

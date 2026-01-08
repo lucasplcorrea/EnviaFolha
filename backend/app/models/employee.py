@@ -9,8 +9,8 @@ class Employee(Base, TimestampMixin):
     id = Column(Integer, primary_key=True, index=True)
     unique_id = Column(String(50), unique=True, index=True, nullable=False)
     name = Column(String(255), nullable=False)
-    cpf = Column(String(11), unique=True, index=True, nullable=False)
-    phone = Column(String(20), nullable=True)
+    cpf = Column(String(14), unique=True, index=True, nullable=False)  # Suporta formato: 000.000.000-00
+    phone = Column(String(20), nullable=True)  # Suporta telefones internacionais
     email = Column(String(255), nullable=True)
     department = Column(String(100), nullable=True)
     position = Column(String(100), nullable=True)
@@ -42,6 +42,8 @@ class Employee(Base, TimestampMixin):
     benefits = relationship("BenefitRecord", back_populates="employee")
     movements = relationship("MovementRecord", back_populates="employee")
     leaves = relationship("LeaveRecord", back_populates="employee")
+    payroll_sends = relationship("PayrollSend", back_populates="employee", overlaps="payrolls")
+    communication_recipients = relationship("CommunicationRecipient", back_populates="employee")
     # Backwards-compatible relationship name used by legacy code
     # Some existing modules expect Employee.payroll_data (PayrollData model).
     # Keep it here as an alias to the legacy PayrollData relationship so both

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PlusIcon, DocumentArrowUpIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import api from '../services/api';
@@ -8,6 +8,7 @@ import { useTheme } from '../contexts/ThemeContext';
 const Employees = () => {
   const navigate = useNavigate();
   const { config } = useTheme();
+  const [searchParams] = useSearchParams();
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -15,6 +16,12 @@ const Employees = () => {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
   const [editingEmployee, setEditingEmployee] = useState(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  
+  // Estados de filtros
+  const [searchTerm, setSearchTerm] = useState('');
+  const [departmentFilter, setDepartmentFilter] = useState('');
+  const [positionFilter, setPositionFilter] = useState('');
   
   // Estados para seleção múltipla
   const [selectedEmployees, setSelectedEmployees] = useState([]);
@@ -41,7 +48,12 @@ const Employees = () => {
 
   useEffect(() => {
     loadEmployees();
-  }, []);
+    // Check if coming from import page with refresh parameter
+    const refresh = searchParams.get('refresh');
+    if (refresh) {
+      toast.success('Lista de colaboradores atualizada!');
+    }
+  }, [searchParams]);
 
   const loadEmployees = async () => {
     try {
@@ -92,6 +104,7 @@ const Employees = () => {
         status_reason: ''
       });
       setShowForm(false);
+      setShowEditModal(false);
       setEditingEmployee(null);
       loadEmployees();
       
@@ -103,9 +116,9 @@ const Employees = () => {
   const handleEdit = (employee) => {
     setEditingEmployee(employee);
     setFormData({
-      unique_id: employee.unique_id,
-      full_name: employee.full_name,
-      phone_number: employee.phone_number,
+      unique_id: employee.unique_id || '',
+      full_name: employee.full_name || '',
+      phone_number: employee.phone_number || '',
       email: employee.email || '',
       department: employee.department || '',
       position: employee.position || '',
@@ -116,11 +129,12 @@ const Employees = () => {
       contract_type: employee.contract_type || '',
       status_reason: employee.status_reason || ''
     });
-    setShowForm(true);
+    setShowEditModal(true);
   };
 
   const handleCancel = () => {
     setShowForm(false);
+    setShowEditModal(false);
     setEditingEmployee(null);
     setFormData({
       unique_id: '',
@@ -205,9 +219,21 @@ const Employees = () => {
       
       // FORÇAR RELOAD após importação bem-sucedida
       if (imported_count > 0 || updated_count > 0) {
+        // Invalidar cache no backend primeiro
+        try {
+          console.log('🔄 Invalidando cache no backend...');
+          await api.post('/employees/cache/invalidate');
+          console.log('✅ Cache invalidado com sucesso!');
+        } catch (cacheError) {
+          console.warn('⚠️ Erro ao invalidar cache:', cacheError);
+        }
+        
+        // Aumentar delay para 1 segundo para garantir que cache foi invalidado
+        console.log('🔄 Aguardando 1s antes de recarregar lista de colaboradores...');
         setTimeout(() => {
+          console.log('📊 Recarregando lista de colaboradores...');
           loadEmployees();
-        }, 500);
+        }, 1000);
       }
       
     } catch (error) {
@@ -311,6 +337,26 @@ const Employees = () => {
       toast.error(error.response?.data?.detail || error.response?.data?.error || 'Erro ao atualizar colaboradores');
     }
   };
+
+  // Filtrar colaboradores
+  const filteredEmployees = employees.filter(employee => {
+    const matchesSearch = searchTerm === '' || 
+      employee.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      employee.unique_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      employee.phone_number?.includes(searchTerm);
+    
+    const matchesDepartment = departmentFilter === '' || 
+      employee.department?.toLowerCase().includes(departmentFilter.toLowerCase());
+    
+    const matchesPosition = positionFilter === '' || 
+      employee.position?.toLowerCase().includes(positionFilter.toLowerCase());
+    
+    return matchesSearch && matchesDepartment && matchesPosition;
+  });
+
+  // Obter listas únicas para filtros
+  const uniqueDepartments = [...new Set(employees.map(e => e.department).filter(Boolean))];
+  const uniquePositions = [...new Set(employees.map(e => e.position).filter(Boolean))];
 
   if (loading) {
     return (
@@ -782,14 +828,81 @@ const Employees = () => {
       {/* Lista de colaboradores */}
       <div className={`${config.classes.card} shadow rounded-lg ${config.classes.border}`}>
         <div className={`px-6 py-4 border-b ${config.classes.border}`}>
-          <h3 className={`text-lg font-medium ${config.classes.text}`}>
-            Lista de Colaboradores ({employees.length})
+          <h3 className={`text-lg font-medium ${config.classes.text} mb-4`}>
+            Lista de Colaboradores ({filteredEmployees.length} de {employees.length})
           </h3>
+          
+          {/* Filtros de Busca */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                🔍 Buscar por Nome, ID ou Telefone
+              </label>
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Digite para buscar..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                🏢 Filtrar por Departamento
+              </label>
+              <select
+                value={departmentFilter}
+                onChange={(e) => setDepartmentFilter(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="">Todos os departamentos</option>
+                {uniqueDepartments.sort().map(dept => (
+                  <option key={dept} value={dept}>{dept}</option>
+                ))}
+              </select>
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                💼 Filtrar por Cargo
+              </label>
+              <select
+                value={positionFilter}
+                onChange={(e) => setPositionFilter(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="">Todos os cargos</option>
+                {uniquePositions.sort().map(pos => (
+                  <option key={pos} value={pos}>{pos}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          
+          {/* Botão para limpar filtros */}
+          {(searchTerm || departmentFilter || positionFilter) && (
+            <div className="mt-3">
+              <button
+                onClick={() => {
+                  setSearchTerm('');
+                  setDepartmentFilter('');
+                  setPositionFilter('');
+                }}
+                className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+              >
+                ✕ Limpar todos os filtros
+              </button>
+            </div>
+          )}
         </div>
         
-        {employees.length === 0 ? (
+        {filteredEmployees.length === 0 ? (
           <div className={`p-6 text-center ${config.classes.textSecondary}`}>
-            Nenhum colaborador cadastrado ainda.
+            {employees.length === 0 ? 
+              'Nenhum colaborador cadastrado ainda.' :
+              'Nenhum colaborador encontrado com os filtros aplicados.'
+            }
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -822,7 +935,7 @@ const Employees = () => {
                 </tr>
               </thead>
               <tbody className={`${config.classes.card} divide-y ${config.classes.border}`}>
-                {employees.map((employee) => (
+                {filteredEmployees.map((employee) => (
                   <tr key={employee.id}>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <input
@@ -873,8 +986,149 @@ const Employees = () => {
           </div>
         )}
       </div>
+
+      {/* Modal de Edição Rápida */}
+      {showEditModal && editingEmployee && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+          <div className={`relative mx-auto p-6 border w-full max-w-3xl shadow-xl rounded-lg ${config.classes.card} ${config.classes.border}`}>
+            {/* Header do Modal */}
+            <div className="flex justify-between items-center mb-4 pb-3 border-b">
+              <div>
+                <h3 className={`text-xl font-semibold ${config.classes.text}`}>
+                  ✏️ Editar Colaborador
+                </h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  {editingEmployee.full_name} - ID: {editingEmployee.unique_id}
+                </p>
+              </div>
+              <button
+                onClick={handleCancel}
+                className="text-gray-400 hover:text-gray-600 text-2xl font-bold"
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Formulário */}
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">ID / Matrícula*</label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.unique_id}
+                    onChange={(e) => setFormData({...formData, unique_id: e.target.value})}
+                    className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Nome Completo*</label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.full_name}
+                    onChange={(e) => setFormData({...formData, full_name: e.target.value})}
+                    className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Telefone*</label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.phone_number}
+                    onChange={(e) => setFormData({...formData, phone_number: e.target.value})}
+                    className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Email</label>
+                  <input
+                    type="email"
+                    value={formData.email}
+                    onChange={(e) => setFormData({...formData, email: e.target.value})}
+                    className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Departamento</label>
+                  <input
+                    type="text"
+                    value={formData.department}
+                    onChange={(e) => setFormData({...formData, department: e.target.value})}
+                    className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Cargo</label>
+                  <input
+                    type="text"
+                    value={formData.position}
+                    onChange={(e) => setFormData({...formData, position: e.target.value})}
+                    className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Tipo de Contrato</label>
+                  <select
+                    value={formData.contract_type}
+                    onChange={(e) => setFormData({...formData, contract_type: e.target.value})}
+                    className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+                  >
+                    <option value="">Selecione...</option>
+                    <option value="CLT">CLT</option>
+                    <option value="PJ">PJ</option>
+                    <option value="Estágio">Estágio</option>
+                    <option value="Temporário">Temporário</option>
+                    <option value="Terceirizado">Terceirizado</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Sexo</label>
+                  <select
+                    value={formData.sex}
+                    onChange={(e) => setFormData({...formData, sex: e.target.value})}
+                    className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+                  >
+                    <option value="">Selecione...</option>
+                    <option value="M">Masculino</option>
+                    <option value="F">Feminino</option>
+                    <option value="Outro">Outro</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Botões de Ação */}
+              <div className="flex justify-end space-x-3 pt-4 border-t">
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  💾 Salvar Alterações
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 export default Employees;
+

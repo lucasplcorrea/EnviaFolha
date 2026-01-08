@@ -19,6 +19,9 @@ import PayrollDataProcessor from './pages/PayrollDataProcessor.jsx';
 import DataImport from './pages/DataImport.jsx';
 import EmployeeDetail from './pages/EmployeeDetail.jsx';
 import SystemLogs from './pages/SystemLogs.jsx';
+import Endomarketing from './pages/Endomarketing.jsx';
+import RHIndicators from './pages/RHIndicators.jsx';
+import QueueManagement from './pages/QueueManagement.jsx';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -63,11 +66,14 @@ function AppContent() {
                     <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
                     <Route path="employees/:id" element={<ProtectedRoute><EmployeeDetail /></ProtectedRoute>} />
                     <Route path="employees" element={<ProtectedRoute><Employees /></ProtectedRoute>} />
-                    <Route path="data-import" element={<ProtectedRoute><DataImport /></ProtectedRoute>} />
+                    {/* Rota removida: importação agora é feita em /employees */}
                     <Route path="payroll-processor" element={<ProtectedRoute><PayrollProcessor /></ProtectedRoute>} />
                     <Route path="payroll-sender" element={<ProtectedRoute><PayrollSender /></ProtectedRoute>} />
                     <Route path="payroll" element={<ProtectedRoute><PayrollSender /></ProtectedRoute>} />
                     <Route path="communications" element={<ProtectedRoute><CommunicationSender /></ProtectedRoute>} />
+                    <Route path="endomarketing" element={<ProtectedRoute><Endomarketing /></ProtectedRoute>} />
+                    <Route path="rh-indicators" element={<ProtectedRoute><RHIndicators /></ProtectedRoute>} />
+                    <Route path="queue-management" element={<ProtectedRoute><QueueManagement /></ProtectedRoute>} />
                     <Route path="reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
                     <Route path="users" element={<ProtectedRoute><Users /></ProtectedRoute>} />
                     <Route path="settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
