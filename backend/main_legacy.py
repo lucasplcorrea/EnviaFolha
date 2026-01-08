@@ -801,21 +801,18 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                 # Selecionar próxima instância
                 next_instance = instance_manager.get_next_instance()
                 
-                # 🚀 OTIMIZAÇÃO: Verificar se instância precisa de delay
-                # Se a instância nunca foi usada ou já passou tempo suficiente, não precisa delay
-                min_delay_seconds = 120  # 2 minutos mínimo entre envios da mesma instância
-                needs_delay = instance_manager.should_wait(next_instance, min_delay=min_delay_seconds)
+                # �️ DELAY OBRIGATÓRIO: Sempre aguardar entre envios (independente de instância)
+                # Motivo: WhatsApp detecta mensagens rápidas mesmo de instâncias diferentes no mesmo IP
+                base_delay = random.uniform(30, 60)  # 30-60 segundos SEMPRE
                 
-                if needs_delay:
-                    # Esta instância foi usada recentemente, calcular delay necessário
-                    elapsed = instance_manager.get_instance_delay(next_instance)
-                    remaining_delay = min_delay_seconds - elapsed
-                    
-                    print(f"⏱️  [JOB {job_id[:8]}] Instância {next_instance} usada há {elapsed:.1f}s")
-                    print(f"⏳ [JOB {job_id[:8]}] Aguardando {remaining_delay:.1f}s antes de reusar...")
-                    time.sleep(remaining_delay)
-                else:
-                    print(f"🚀 [JOB {job_id[:8]}] Instância {next_instance} disponível - SEM DELAY necessário")
+                # 🔄 DELAY ADICIONAL: Se reusar mesma instância, aguardar mais tempo
+                min_instance_delay = 120
+                
+                # Aplicar delay obrigatório SEMPRE
+                print(f"⏳ [JOB {job_id[:8]}] Aguardando delay obrigatório: {base_delay:.1f}s...")
+                print(f"⏰ Início do delay: {datetime.now().strftime('%H:%M:%S')}")
+                time.sleep(base_delay)
+                print(f"✅ Delay concluído: {datetime.now().strftime('%H:%M:%S')}")
                 
                 # Verificar se Evolution API ainda está online
                 print(f"🔍 [JOB {job_id[:8]}] Verificando Evolution API antes do envio #{idx+1}...")
@@ -874,7 +871,10 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                     
                     print(f"✅ Pausa concluída: {datetime.now().strftime('%H:%M:%S')}\n")
             else:
+                # Primeiro envio - selecionar instância inicial (sem delay)
+                next_instance = instance_manager.get_next_instance()
                 print(f"⚡ [JOB {job_id[:8]}] Primeiro envio - SEM DELAY")
+                print(f"📱 [JOB {job_id[:8]}] Instância inicial: {next_instance}")
             
             filename = file_info.get('filename')
             employee = file_info.get('employee', {})
@@ -947,13 +947,14 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
             
             # Enviar via Evolution API
             try:
-                # 🔄 RANDOMIZAR INSTÂNCIA WHATSAPP (Round-Robin)
-                next_instance = instance_manager.get_next_instance()
+                # 🔄 CONFIGURAR SERVIÇO COM A INSTÂNCIA SELECIONADA
                 if next_instance != evolution_service.instance_name:
                     print(f"🔄 [JOB {job_id[:8]}] Alternando para instância: {next_instance}")
                     evolution_service = EvolutionAPIService(instance_name=next_instance)
                 else:
-                    print(f"📱 [JOB {job_id[:8]}] Usando instância: {next_instance}")
+                    print(f"📱 [JOB {job_id[:8]}] Mantendo instância: {next_instance}")
+                
+                print(f"📋 [JOB {job_id[:8]}] Instância atual do service: {evolution_service.instance_name}")
                 
                 # 🎭 PRESENÇA REMOVIDA - Causava "Aguardando Mensagem" no iPhone
                 # Envio direto de documento é mais confiável e evita problemas de sincronização
@@ -972,6 +973,7 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                 
                 # Registrar envio na instância
                 instance_manager.register_send(next_instance)
+                print(f"✅ [JOB {job_id[:8]}] Envio registrado para instância: {next_instance}")
                 
                 if result['success']:
                     print(f"✅ [JOB {job_id[:8]}] Holerite enviado para {employee_name}")

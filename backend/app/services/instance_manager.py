@@ -34,12 +34,20 @@ class InstanceManager:
                 logger.warning("Nenhuma instância WhatsApp configurada")
                 return None
             
+            # Log estado atual
+            logger.info(f"📊 Estado antes: current_index={self.current_index}, total_instances={len(self.instances)}")
+            logger.info(f"📊 Instâncias disponíveis: {self.instances}")
+            
             instance_name = self.instances[self.current_index]
             
             # Avançar para próxima (circular)
+            old_index = self.current_index
             self.current_index = (self.current_index + 1) % len(self.instances)
             
-            logger.debug(f"Próxima instância selecionada: {instance_name} (índice: {self.current_index})")
+            logger.info(f"✅ Instância selecionada: {instance_name}")
+            logger.info(f"📊 Índice avançado: {old_index} → {self.current_index}")
+            logger.info(f"📊 Próxima será: {self.instances[self.current_index] if self.instances else 'N/A'}")
+            
             return instance_name
     
     def get_instance_delay(self, instance_name: str) -> float:

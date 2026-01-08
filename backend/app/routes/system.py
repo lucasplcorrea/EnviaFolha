@@ -233,10 +233,13 @@ class SystemRouter(BaseRouter):
                 
                 inst_stats = stats.get(inst_name, {})
                 
+                # Instância só está pronta se estiver conectada E não precisar aguardar delay
+                is_ready = is_connected and inst_stats.get("ready", False)
+                
                 instances.append({
                     "name": inst_name,
                     "status": "connected" if is_connected else ("timeout" if status_dict.get(inst_name) == "timeout" else "disconnected"),
-                    "ready": inst_stats.get("ready", True),
+                    "ready": is_ready,
                     "seconds_since_last_send": inst_stats.get("seconds_since_last_send"),
                     "last_check": datetime.now().isoformat()
                 })
