@@ -4189,58 +4189,83 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             
             print(f"🗑️ Arquivo solicitado para exclusão: {filename}")
             
-            # Caminho do arquivo na pasta processed (onde ficam os holerites segmentados)
-            # Usar caminho absoluto a partir do diretório do script (funciona em Windows e Linux)
+            # Os holerites segmentados ficam em subpastas dentro de processed/ (ex: processed/Mensal_11_2025/)
+            # Após envio, são movidos para enviados/
+            # Precisamos procurar em ambos os locais
             import os
+            import glob
             
             # Obter diretório backend (onde está o main_legacy.py)
             backend_dir = os.path.dirname(os.path.abspath(__file__))
-            # O diretório processed fica dentro do backend/
-            processed_dir = os.path.join(backend_dir, 'processed')
             
-            # Normalizar o caminho (resolve .., /, \, etc)
-            processed_dir = os.path.normpath(processed_dir)
-            file_path = os.path.join(processed_dir, filename)
-            file_path = os.path.normpath(file_path)
+            # Possíveis diretórios onde o arquivo pode estar
+            possible_dirs = [
+                os.path.join(backend_dir, 'enviados'),  # Arquivos já enviados
+                os.path.join(backend_dir, 'processed')  # Arquivos em subpastas
+            ]
             
-            print(f"🔍 Procurando em: {processed_dir}")
-            print(f"🔍 Caminho completo: {file_path}")
+            file_path = None
+            found_in_dir = None
             
-            # Verificar se o diretório existe
-            if not os.path.exists(processed_dir):
-                print(f"❌ Diretório não encontrado: {processed_dir}")
-                self.send_json_response({"error": f"Diretório de holerites não encontrado"}, 500)
+            # 1. Procurar primeiro em enviados/ (mais comum)
+            enviados_dir = possible_dirs[0]
+            if os.path.exists(enviados_dir):
+                test_path = os.path.join(enviados_dir, filename)
+                if os.path.exists(test_path):
+                    file_path = test_path
+                    found_in_dir = enviados_dir
+                    print(f"✅ Arquivo encontrado em: enviados/")
+            
+            # 2. Se não encontrou, procurar nas subpastas de processed/
+            if not file_path:
+                processed_dir = possible_dirs[1]
+                if os.path.exists(processed_dir):
+                    print(f"🔍 Procurando em subpastas de processed/...")
+                    # Procurar em todas as subpastas
+                    for folder_name in os.listdir(processed_dir):
+                        folder_path = os.path.join(processed_dir, folder_name)
+                        if os.path.isdir(folder_path):
+                            test_path = os.path.join(folder_path, filename)
+                            if os.path.exists(test_path):
+                                file_path = test_path
+                                found_in_dir = folder_path
+                                print(f"✅ Arquivo encontrado em: processed/{folder_name}/")
+                                break
+            
+            # 3. Se ainda não encontrou, tentar com underscore duplo (bug antigo)
+            if not file_path:
+                alt_filename = filename.replace('_holerite_', '_holerite__')
+                
+                # Tentar em enviados/
+                if os.path.exists(enviados_dir):
+                    test_path = os.path.join(enviados_dir, alt_filename)
+                    if os.path.exists(test_path):
+                        file_path = test_path
+                        found_in_dir = enviados_dir
+                        filename = alt_filename
+                        print(f"✅ Arquivo encontrado com underscore duplo em: enviados/")
+                
+                # Tentar em subpastas de processed/
+                if not file_path and os.path.exists(processed_dir):
+                    for folder_name in os.listdir(processed_dir):
+                        folder_path = os.path.join(processed_dir, folder_name)
+                        if os.path.isdir(folder_path):
+                            test_path = os.path.join(folder_path, alt_filename)
+                            if os.path.exists(test_path):
+                                file_path = test_path
+                                found_in_dir = folder_path
+                                filename = alt_filename
+                                print(f"✅ Arquivo encontrado com underscore duplo em: processed/{folder_name}/")
+                                break
+            
+            # Verificar se arquivo foi encontrado
+            if not file_path:
+                print(f"❌ Arquivo não encontrado: {filename}")
+                print(f"   Procurado em: enviados/ e todas as subpastas de processed/")
+                self.send_json_response({"error": f"Arquivo não encontrado: {filename}"}, 404)
                 return
             
-            # Listar arquivos no diretório para debug
-            print(f"📂 Arquivos no diretório:")
-            try:
-                files_in_dir = os.listdir(processed_dir)
-                # Procurar arquivo com nome similar (pode ter _ duplo ou simples)
-                matching_files = [f for f in files_in_dir if filename in f or f in filename]
-                if matching_files:
-                    print(f"   Arquivos similares encontrados: {matching_files}")
-                else:
-                    print(f"   Nenhum arquivo similar a '{filename}' encontrado")
-                    print(f"   Total de arquivos no diretório: {len(files_in_dir)}")
-            except Exception as list_error:
-                print(f"⚠️ Erro ao listar diretório: {list_error}")
-            
-            # Verificar se arquivo existe
-            if not os.path.exists(file_path):
-                print(f"⚠️ Arquivo não encontrado: {file_path}")
-                
-                # Tentar encontrar com underscore duplo (bug comum)
-                alt_filename = filename.replace('_holerite_', '_holerite__')
-                alt_file_path = os.path.join(processed_dir, alt_filename)
-                
-                if os.path.exists(alt_file_path):
-                    print(f"✅ Arquivo encontrado com underscore duplo: {alt_filename}")
-                    file_path = alt_file_path
-                    filename = alt_filename
-                else:
-                    self.send_json_response({"error": "Arquivo não encontrado"}, 404)
-                    return
+            print(f"🔍 Caminho completo: {file_path}")
             
             # Excluir o arquivo
             try:
