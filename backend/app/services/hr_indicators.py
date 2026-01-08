@@ -374,9 +374,13 @@ class HRIndicatorsService:
             Employee.birth_date.isnot(None)
         ).scalar()
         
+        # Ordenar faixas etárias na ordem correta
+        age_range_order = {'18-24': 1, '25-34': 2, '35-44': 3, '45-54': 4, '55+': 5}
+        sorted_age_ranges = sorted(age_ranges, key=lambda x: age_range_order.get(x[0], 99))
+        
         metrics = {
             'by_sex': [{'sex': s or 'Não informado', 'count': c} for s, c in by_sex],
-            'age_ranges': [{'range': r, 'count': c} for r, c in age_ranges],
+            'age_ranges': [{'range': r, 'count': c} for r, c in sorted_age_ranges],
             'average_age': int(round(float(avg_age))) if avg_age else None
         }
         

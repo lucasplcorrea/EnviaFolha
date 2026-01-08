@@ -146,6 +146,16 @@ class EvolutionAPIService:
             Dict com success (bool) e message (str)
         """
         try:
+            # 🔍 VERIFICAR CONEXÃO ANTES DE ENVIAR
+            logger.info(f"🔍 Verificando conexão da instância {self.instance_name}...")
+            is_connected = await self.check_instance_status()
+            if not is_connected:
+                error_msg = f"❌ Instância {self.instance_name} não está conectada ao WhatsApp"
+                logger.error(error_msg)
+                return {"success": False, "message": error_msg}
+            
+            logger.info(f"✅ Instância {self.instance_name} conectada e pronta")
+            
             if not os.path.exists(file_path):
                 return {"success": False, "message": "Arquivo não encontrado"}
             
@@ -204,45 +214,70 @@ class EvolutionAPIService:
             }
             
             # Tentar envio com retry
-            for attempt in range(3):
+            max_retries = 3
+            for attempt in range(max_retries):
                 try:
+                    logger.info(f"📤 Tentativa {attempt + 1}/{max_retries} de envio para {phone}")
+                    
                     response = requests.post(url, headers=self.headers, json=payload, timeout=60)
                     response.raise_for_status()
                     
                     result = response.json()
                     message_id = result.get('key', {}).get('id', 'N/A')
                     
+                    # Log detalhado do sucesso
+                    logger.info(f"✅ Holerite enviado com sucesso!")
+                    logger.info(f"   📱 Telefone: {phone}")
+                    logger.info(f"   🆔 Message ID: {message_id}")
+                    logger.info(f"   📄 Arquivo: {os.path.basename(file_path)}")
+                    logger.info(f"   ⏱️  Tentativa: {attempt + 1}")
+                    
                     return {
                         "success": True, 
-                        "message": f"Holerite enviado com sucesso. ID: {message_id}"
+                        "message": f"Holerite enviado com sucesso. ID: {message_id}",
+                        "message_id": message_id
                     }
                     
                 except requests.exceptions.HTTPError as e:
-                    if e.response.status_code == 429:  # Rate limit
-                        logger.warning(f"Rate limit atingido. Aguardando...")
+                    status_code = e.response.status_code
+                    logger.error(f"❌ Erro HTTP {status_code} na tentativa {attempt + 1}")
+                    
+                    if status_code == 429:  # Rate limit
+                        logger.warning(f"⚠️  Rate limit atingido. Aguardando 60s...")
                         time.sleep(60)
                         continue
-                    elif e.response.status_code in [401, 404]:
-                        return {"success": False, "message": f"Erro de API: {e.response.status_code}"}
+                    elif status_code in [401, 403]:
+                        error_msg = f"Erro de autenticação ({status_code}). Verifique API key"
+                        logger.error(f"❌ {error_msg}")
+                        return {"success": False, "message": error_msg}
+                    elif status_code == 404:
+                        error_msg = f"Instância {self.instance_name} não encontrada"
+                        logger.error(f"❌ {error_msg}")
+                        return {"success": False, "message": error_msg}
                     else:
-                        if attempt < 2:
+                        if attempt < max_retries - 1:
+                            logger.warning(f"⏳ Aguardando 30s antes de tentar novamente...")
                             time.sleep(30)
                             continue
-                        return {"success": False, "message": f"Erro HTTP: {e.response.status_code}"}
+                        return {"success": False, "message": f"Erro HTTP: {status_code}"}
                         
                 except requests.exceptions.Timeout:
-                    if attempt < 2:
+                    logger.error(f"⏱️  Timeout na tentativa {attempt + 1}")
+                    if attempt < max_retries - 1:
+                        logger.warning(f"⏳ Aguardando 20s antes de tentar novamente...")
                         time.sleep(20)
                         continue
-                    return {"success": False, "message": "Timeout na requisição"}
+                    return {"success": False, "message": "Timeout: servidor não respondeu a tempo"}
                     
                 except Exception as e:
-                    if attempt < 2:
+                    logger.error(f"❌ Erro inesperado na tentativa {attempt + 1}: {str(e)}")
+                    if attempt < max_retries - 1:
+                        logger.warning(f"⏳ Aguardando 30s antes de tentar novamente...")
                         time.sleep(30)
                         continue
                     return {"success": False, "message": f"Erro inesperado: {str(e)}"}
             
-            return {"success": False, "message": "Falha após 3 tentativas"}
+            return {"success": False, "message": f"Falha após {max_retries} tentativas"}
             
         except Exception as e:
             logger.error(f"Erro ao enviar holerite: {e}")
@@ -258,6 +293,16 @@ class EvolutionAPIService:
             Dict com success (bool) e message (str)
         """
         try:
+            # 🔍 VERIFICAR CONEXÃO ANTES DE ENVIAR
+            logger.info(f"🔍 Verificando conexão da instância {self.instance_name}...")
+            is_connected = await self.check_instance_status()
+            if not is_connected:
+                error_msg = f"❌ Instância {self.instance_name} não está conectada ao WhatsApp"
+                logger.error(error_msg)
+                return {"success": False, "message": error_msg}
+            
+            logger.info(f"✅ Instância {self.instance_name} conectada e pronta")
+            
             # Caso 1: Arquivo + Texto → enviar arquivo com legenda
             if file_path and os.path.exists(file_path) and message_text and message_text.strip():
                 logger.info(f"📎 Enviando arquivo com legenda (texto + anexo em 1 mensagem)")

@@ -130,7 +130,12 @@ const RHIndicators = () => {
       'leave_reason': 'Motivo de Afastamento'
     };
     
-    return translations[key] || key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    // Função auxiliar para capitalizar corretamente (sem afetar após caracteres especiais)
+    const capitalizeProper = (str) => {
+      return str.toLowerCase().replace(/^\w|\s\w/g, l => l.toUpperCase());
+    };
+    
+    return translations[key] || capitalizeProper(key.replace(/_/g, ' '));
   };
 
   // Função para formatar tempo (anos/meses)
