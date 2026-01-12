@@ -1363,7 +1363,23 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             period_id = path.split('/')[-1]
             self.handle_payroll_period_summary(period_id)
         elif path.startswith('/api/v1/employees/'):
-            # IMPORTANTE: Esta rota deve vir ANTES de '/api/v1/employees'
+            # IMPORTANTE: Verificar PRIMEIRO se é rota de leaves
+            parts = path.split('/')
+            print(f"🔍 DEBUG: parts = {parts}, len = {len(parts)}")
+            
+            if len(parts) >= 6 and parts[5] == 'leaves':
+                employee_id = parts[4]
+                print(f"✅ Rota de leaves detectada para employee_id: {employee_id}")
+                if len(parts) == 6:
+                    # GET /api/v1/employees/{id}/leaves - lista todos os afastamentos
+                    self.handle_get_employee_leaves(employee_id)
+                else:
+                    # GET /api/v1/employees/{id}/leaves/{leave_id} - detalhes de um afastamento
+                    leave_id = parts[6]
+                    self.handle_get_employee_leave_detail(employee_id, leave_id)
+                return  # IMPORTANTE: Return aqui para não cair na rota padrão
+            
+            # Rota padrão de detalhes do employee
             employee_id = path.split('/')[-1]
             print(f"🔍 Rota de detalhes capturada para employee_id: {employee_id}")
             self.send_employee_detail(employee_id)
@@ -1483,7 +1499,17 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         
         if path == '/api/v1/employees':
             self.handle_create_employee()
-        elif path == '/api/v1/employees/import' or path == '/api/v1/import/employees':
+        elif path.startswith('/api/v1/employees/'):
+            # Verificar se é rota de leaves
+            parts = path.split('/')
+            if len(parts) >= 6 and parts[5] == 'leaves':
+                employee_id = parts[4]
+                print(f"✅ POST para leaves do employee_id: {employee_id}")
+                self.handle_create_employee_leave(employee_id)
+                return
+            # Se não for leaves, continuar verificando outras rotas
+        
+        if path == '/api/v1/employees/import' or path == '/api/v1/import/employees':
             self.handle_import_employees()
         elif path == '/api/v1/employees/cache/invalidate':
             self.handle_cache_invalidate()
@@ -1534,6 +1560,16 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         print(f"🔄 PUT recebido: {path}")
         
         if path.startswith('/api/v1/employees/'):
+            # Verificar primeiro se é rota de leaves
+            parts = path.split('/')
+            if len(parts) >= 7 and parts[5] == 'leaves':
+                employee_id = parts[4]
+                leave_id = parts[6]
+                print(f"✅ PUT para leaves/{leave_id} do employee_id: {employee_id}")
+                self.handle_update_employee_leave(employee_id, leave_id)
+                return
+            
+            # Senão, é update de employee
             employee_id = path.split('/')[-1]
             self.handle_update_employee(employee_id)
         elif path.startswith('/api/v1/users/'):
@@ -1548,6 +1584,16 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         print(f"🗑️ DELETE recebido: {path}")
         
         if path.startswith('/api/v1/employees/'):
+            # Verificar primeiro se é rota de leaves
+            parts = path.split('/')
+            if len(parts) >= 7 and parts[5] == 'leaves':
+                employee_id = parts[4]
+                leave_id = parts[6]
+                print(f"✅ DELETE para leaves/{leave_id} do employee_id: {employee_id}")
+                self.handle_delete_employee_leave(employee_id, leave_id)
+                return
+            
+            # Senão, é delete de employee
             employee_id = path.split('/')[-1]
             self.handle_delete_employee(employee_id)
         elif path.startswith('/api/v1/users/'):
@@ -2240,6 +2286,289 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"❌ Erro ao deletar funcionário: {e}")
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    # ===== HANDLERS DE AFASTAMENTOS (LEAVES) =====
+    
+    def handle_get_employee_leaves(self, employee_id):
+        """Listar todos os afastamentos de um funcionário"""
+        try:
+            print(f"📋 Buscando afastamentos do funcionário ID {employee_id}")
+            
+            if SessionLocal:
+                from app.models import LeaveRecord, Employee
+                
+                db = SessionLocal()
+                
+                # Buscar funcionário
+                employee = db.query(Employee).filter(
+                    (Employee.id == employee_id) | (Employee.unique_id == employee_id)
+                ).first()
+                
+                if not employee:
+                    db.close()
+                    self.send_json_response({"error": "Funcionário não encontrado"}, 404)
+                    return
+                
+                # Buscar afastamentos
+                leaves = db.query(LeaveRecord).filter(
+                    LeaveRecord.employee_id == employee.id
+                ).order_by(LeaveRecord.start_date.desc()).all()
+                
+                leaves_data = [{
+                    'id': leave.id,
+                    'leave_type': leave.leave_type,
+                    'start_date': leave.start_date.isoformat() if leave.start_date else None,
+                    'end_date': leave.end_date.isoformat() if leave.end_date else None,
+                    'days': leave.days,
+                    'notes': leave.notes,
+                    'created_at': leave.created_at.isoformat() if leave.created_at else None
+                } for leave in leaves]
+                
+                db.close()
+                
+                self.send_json_response(leaves_data, 200)
+                print(f"✅ Retornados {len(leaves_data)} afastamentos")
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar afastamentos: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_get_employee_leave_detail(self, employee_id, leave_id):
+        """Buscar detalhes de um afastamento específico"""
+        try:
+            print(f"📄 Buscando afastamento ID {leave_id} do funcionário {employee_id}")
+            
+            if SessionLocal:
+                from app.models import LeaveRecord, Employee
+                
+                db = SessionLocal()
+                
+                # Buscar funcionário
+                employee = db.query(Employee).filter(
+                    (Employee.id == employee_id) | (Employee.unique_id == employee_id)
+                ).first()
+                
+                if not employee:
+                    db.close()
+                    self.send_json_response({"error": "Funcionário não encontrado"}, 404)
+                    return
+                
+                # Buscar afastamento
+                leave = db.query(LeaveRecord).filter(
+                    LeaveRecord.id == leave_id,
+                    LeaveRecord.employee_id == employee.id
+                ).first()
+                
+                if not leave:
+                    db.close()
+                    self.send_json_response({"error": "Afastamento não encontrado"}, 404)
+                    return
+                
+                leave_data = {
+                    'id': leave.id,
+                    'leave_type': leave.leave_type,
+                    'start_date': leave.start_date.isoformat() if leave.start_date else None,
+                    'end_date': leave.end_date.isoformat() if leave.end_date else None,
+                    'days': leave.days,
+                    'notes': leave.notes,
+                    'created_at': leave.created_at.isoformat() if leave.created_at else None
+                }
+                
+                db.close()
+                
+                self.send_json_response(leave_data, 200)
+                print(f"✅ Afastamento encontrado")
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar afastamento: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_create_employee_leave(self, employee_id):
+        """Criar novo afastamento para um funcionário"""
+        try:
+            data = self.get_request_data()
+            print(f"➕ Criando afastamento para funcionário ID {employee_id}: {data}")
+            
+            if SessionLocal:
+                from app.models import LeaveRecord, Employee
+                from datetime import datetime
+                
+                db = SessionLocal()
+                
+                # Buscar funcionário
+                employee = db.query(Employee).filter(
+                    (Employee.id == employee_id) | (Employee.unique_id == employee_id)
+                ).first()
+                
+                if not employee:
+                    db.close()
+                    self.send_json_response({"error": "Funcionário não encontrado"}, 404)
+                    return
+                
+                # Validar campos obrigatórios
+                if not data.get('leave_type') or not data.get('start_date') or not data.get('end_date'):
+                    db.close()
+                    self.send_json_response({
+                        "error": "Campos obrigatórios: leave_type, start_date, end_date"
+                    }, 400)
+                    return
+                
+                # Criar afastamento
+                leave = LeaveRecord(
+                    employee_id=employee.id,
+                    unified_code=employee.unique_id,
+                    leave_type=data['leave_type'],
+                    start_date=datetime.strptime(data['start_date'], '%Y-%m-%d').date(),
+                    end_date=datetime.strptime(data['end_date'], '%Y-%m-%d').date(),
+                    days=float(data.get('days', 0)) if data.get('days') else None,
+                    notes=data.get('notes'),
+                    created_at=datetime.now()
+                )
+                
+                db.add(leave)
+                db.commit()
+                db.refresh(leave)
+                
+                leave_data = {
+                    'id': leave.id,
+                    'leave_type': leave.leave_type,
+                    'start_date': leave.start_date.isoformat(),
+                    'end_date': leave.end_date.isoformat(),
+                    'days': leave.days,
+                    'notes': leave.notes
+                }
+                
+                db.close()
+                
+                self.send_json_response(leave_data, 201)
+                print(f"✅ Afastamento criado com sucesso ID {leave.id}")
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao criar afastamento: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_update_employee_leave(self, employee_id, leave_id):
+        """Atualizar afastamento existente"""
+        try:
+            data = self.get_request_data()
+            print(f"🔄 Atualizando afastamento ID {leave_id} do funcionário {employee_id}: {data}")
+            
+            if SessionLocal:
+                from app.models import LeaveRecord, Employee
+                from datetime import datetime
+                
+                db = SessionLocal()
+                
+                # Buscar funcionário
+                employee = db.query(Employee).filter(
+                    (Employee.id == employee_id) | (Employee.unique_id == employee_id)
+                ).first()
+                
+                if not employee:
+                    db.close()
+                    self.send_json_response({"error": "Funcionário não encontrado"}, 404)
+                    return
+                
+                # Buscar afastamento
+                leave = db.query(LeaveRecord).filter(
+                    LeaveRecord.id == leave_id,
+                    LeaveRecord.employee_id == employee.id
+                ).first()
+                
+                if not leave:
+                    db.close()
+                    self.send_json_response({"error": "Afastamento não encontrado"}, 404)
+                    return
+                
+                # Atualizar campos
+                if 'leave_type' in data:
+                    leave.leave_type = data['leave_type']
+                if 'start_date' in data:
+                    leave.start_date = datetime.strptime(data['start_date'], '%Y-%m-%d').date()
+                if 'end_date' in data:
+                    leave.end_date = datetime.strptime(data['end_date'], '%Y-%m-%d').date()
+                if 'days' in data:
+                    leave.days = float(data['days']) if data['days'] else None
+                if 'notes' in data:
+                    leave.notes = data['notes']
+                
+                db.commit()
+                db.refresh(leave)
+                
+                leave_data = {
+                    'id': leave.id,
+                    'leave_type': leave.leave_type,
+                    'start_date': leave.start_date.isoformat(),
+                    'end_date': leave.end_date.isoformat(),
+                    'days': leave.days,
+                    'notes': leave.notes
+                }
+                
+                db.close()
+                
+                self.send_json_response(leave_data, 200)
+                print(f"✅ Afastamento atualizado com sucesso")
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao atualizar afastamento: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_delete_employee_leave(self, employee_id, leave_id):
+        """Deletar afastamento"""
+        try:
+            print(f"🗑️ Deletando afastamento ID {leave_id} do funcionário {employee_id}")
+            
+            if SessionLocal:
+                from app.models import LeaveRecord, Employee
+                
+                db = SessionLocal()
+                
+                # Buscar funcionário
+                employee = db.query(Employee).filter(
+                    (Employee.id == employee_id) | (Employee.unique_id == employee_id)
+                ).first()
+                
+                if not employee:
+                    db.close()
+                    self.send_json_response({"error": "Funcionário não encontrado"}, 404)
+                    return
+                
+                # Buscar afastamento
+                leave = db.query(LeaveRecord).filter(
+                    LeaveRecord.id == leave_id,
+                    LeaveRecord.employee_id == employee.id
+                ).first()
+                
+                if not leave:
+                    db.close()
+                    self.send_json_response({"error": "Afastamento não encontrado"}, 404)
+                    return
+                
+                # Deletar
+                db.delete(leave)
+                db.commit()
+                db.close()
+                
+                self.send_json_response({"message": "Afastamento excluído com sucesso"}, 200)
+                print(f"✅ Afastamento deletado com sucesso")
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao deletar afastamento: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    # ===== FIM DOS HANDLERS DE AFASTAMENTOS =====
 
     def parse_multipart_data(self, body, boundary):
         """Parse multipart form data to extract file and filename"""

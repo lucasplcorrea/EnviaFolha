@@ -9,7 +9,15 @@ import {
   CurrencyDollarIcon,
   HeartIcon,
   ArrowLeftIcon,
-  PencilIcon
+  PencilIcon,
+  PlusIcon,
+  TrashIcon,
+  PhoneIcon,
+  EnvelopeIcon,
+  BuildingOfficeIcon,
+  IdentificationIcon,
+  CakeIcon,
+  UserIcon
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import api from '../services/api';
@@ -24,6 +32,19 @@ const EmployeeDetail = () => {
   const [activeTab, setActiveTab] = useState('info');
   const [editingStatus, setEditingStatus] = useState(false);
   const [editingInfo, setEditingInfo] = useState(false);
+  
+  // Estados para Afastamentos
+  const [leaves, setLeaves] = useState([]);
+  const [loadingLeaves, setLoadingLeaves] = useState(false);
+  const [showLeaveForm, setShowLeaveForm] = useState(false);
+  const [editingLeave, setEditingLeave] = useState(null);
+  const [leaveForm, setLeaveForm] = useState({
+    leave_type: '',
+    start_date: '',
+    end_date: '',
+    days: '',
+    notes: ''
+  });
   
   console.log('🔍 EmployeeDetail montado! ID da URL:', id);
   
@@ -95,6 +116,87 @@ const EmployeeDetail = () => {
     loadEmployee();
   }, [id, loadEmployee]);
 
+  useEffect(() => {
+    if (activeTab === 'leaves') {
+      loadLeaves();
+    }
+  }, [activeTab]);
+
+  const loadLeaves = async () => {
+    setLoadingLeaves(true);
+    try {
+      const response = await api.get(`/employees/${id}/leaves`);
+      setLeaves(response.data || []);
+    } catch (error) {
+      console.error('Erro ao carregar afastamentos:', error);
+      if (error.response?.status !== 404) {
+        toast.error('Erro ao carregar afastamentos');
+      }
+      setLeaves([]);
+    } finally {
+      setLoadingLeaves(false);
+    }
+  };
+
+  const handleLeaveSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      if (editingLeave) {
+        await api.put(`/employees/${id}/leaves/${editingLeave.id}`, leaveForm);
+        toast.success('Afastamento atualizado com sucesso!');
+      } else {
+        await api.post(`/employees/${id}/leaves`, leaveForm);
+        toast.success('Afastamento registrado com sucesso!');
+      }
+      setShowLeaveForm(false);
+      setEditingLeave(null);
+      setLeaveForm({ leave_type: '', start_date: '', end_date: '', days: '', notes: '' });
+      loadLeaves();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Erro ao salvar afastamento');
+    }
+  };
+
+  const handleDeleteLeave = async (leaveId) => {
+    if (!window.confirm('Tem certeza que deseja excluir este afastamento?')) return;
+    
+    try {
+      await api.delete(`/employees/${id}/leaves/${leaveId}`);
+      toast.success('Afastamento excluído com sucesso!');
+      loadLeaves();
+    } catch (error) {
+      toast.error('Erro ao excluir afastamento');
+    }
+  };
+
+  const handleEditLeave = (leave) => {
+    setEditingLeave(leave);
+    setLeaveForm({
+      leave_type: leave.leave_type || '',
+      start_date: leave.start_date || '',
+      end_date: leave.end_date || '',
+      days: leave.days || '',
+      notes: leave.notes || ''
+    });
+    setShowLeaveForm(true);
+  };
+
+  const calculateDays = (startDate, endDate) => {
+    if (!startDate || !endDate) return '';
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const diffTime = Math.abs(end - start);
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // +1 para incluir ambos os dias
+    return diffDays;
+  };
+
+  useEffect(() => {
+    if (leaveForm.start_date && leaveForm.end_date) {
+      const days = calculateDays(leaveForm.start_date, leaveForm.end_date);
+      setLeaveForm(prev => ({ ...prev, days: days.toString() }));
+    }
+  }, [leaveForm.start_date, leaveForm.end_date]);
+
   const handleStatusUpdate = async (e) => {
     e.preventDefault();
     try {
@@ -156,54 +258,76 @@ const EmployeeDetail = () => {
 
   return (
     <div className="max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
-        <div className="flex items-center">
-          <button
-            onClick={() => navigate('/employees')}
-            className="mr-4 p-2 hover:bg-gray-100 rounded-full"
-          >
-            <ArrowLeftIcon className="h-6 w-6 text-gray-600" />
-          </button>
-          <div>
-            <h1 className={`text-2xl font-semibold ${config.classes.text}`}>
-              {employee.full_name}
-            </h1>
-            <p className="text-sm text-gray-500">ID: {employee.unique_id}</p>
-          </div>
-        </div>
-        <div className="flex items-center space-x-3">
-          <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusBadge(statusForm.employment_status)}`}>
-            {statusForm.employment_status || 'Ativo'}
-          </span>
-          {!editingInfo && (
-            <button
-              onClick={() => setEditingInfo(true)}
-              className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
-            >
-              <PencilIcon className="h-5 w-5 mr-2" />
-              Editar Cadastro
-            </button>
-          )}
-          {editingInfo && (
-            <div className="flex space-x-2">
-              <button
-                onClick={handleInfoUpdate}
-                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"
-              >
-                Salvar
-              </button>
-              <button
-                onClick={() => {
-                  setEditingInfo(false);
-                  loadEmployee(); // Recarregar para reverter mudanças
-                }}
-                className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
-              >
-                Cancelar
-              </button>
+      {/* Header com visual melhorado */}
+      <div className="mb-6">
+        <button
+          onClick={() => navigate('/employees')}
+          className="mb-4 inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
+        >
+          <ArrowLeftIcon className="h-4 w-4 mr-2" />
+          Voltar para Colaboradores
+        </button>
+        
+        <div className={`${config.classes.card} shadow-lg rounded-lg p-6 ${config.classes.border}`}>
+          <div className="flex items-start justify-between">
+            <div className="flex items-center space-x-4">
+              <div className="h-20 w-20 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white text-2xl font-bold">
+                {employee.full_name?.charAt(0) || 'C'}
+              </div>
+              <div>
+                <h1 className={`text-3xl font-bold ${config.classes.text}`}>
+                  {employee.full_name}
+                </h1>
+                <div className="flex items-center space-x-4 mt-2">
+                  <span className="text-sm text-gray-500 flex items-center">
+                    <IdentificationIcon className="h-4 w-4 mr-1" />
+                    ID: {employee.unique_id}
+                  </span>
+                  <span className="text-sm text-gray-500 flex items-center">
+                    <BuildingOfficeIcon className="h-4 w-4 mr-1" />
+                    {employee.department || 'Sem departamento'}
+                  </span>
+                  <span className="text-sm text-gray-500">
+                    {employee.position || 'Sem cargo'}
+                  </span>
+                </div>
+              </div>
             </div>
-          )}
+            
+            <div className="flex items-center space-x-3">
+              <span className={`px-4 py-2 rounded-full text-sm font-semibold ${getStatusBadge(statusForm.employment_status)}`}>
+                {statusForm.employment_status || 'Ativo'}
+              </span>
+              {!editingInfo && (
+                <button
+                  onClick={() => setEditingInfo(true)}
+                  className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                >
+                  <PencilIcon className="h-5 w-5 mr-2" />
+                  Editar Cadastro
+                </button>
+              )}
+              {editingInfo && (
+                <div className="flex space-x-2">
+                  <button
+                    onClick={handleInfoUpdate}
+                    className="inline-flex items-center px-4 py-2 border border-transparent rounded-md text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"
+                  >
+                    Salvar
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingInfo(false);
+                      loadEmployee(); // Recarregar para reverter mudanças
+                    }}
+                    className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -239,67 +363,96 @@ const EmployeeDetail = () => {
       {/* Tab Content */}
       <div className={`${config.classes.card} shadow rounded-lg p-6 ${config.classes.border}`}>
         
-        {/* Informações Básicas */}
+        {/* Informações Básicas - Layout melhorado em cards */}
         {activeTab === 'info' && !editingInfo && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <h3 className="text-lg font-medium mb-4">Dados Pessoais</h3>
-              <dl className="space-y-3">
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">ID Único (Matrícula)</dt>
-                  <dd className="mt-1 text-sm text-gray-900">{employee.unique_id || '-'}</dd>
+          <div className="space-y-6">
+            {/* Card de Informações Pessoais */}
+            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-6 border border-blue-100">
+              <div className="flex items-center mb-4">
+                <UserIcon className="h-6 w-6 text-blue-600 mr-2" />
+                <h3 className="text-lg font-semibold text-gray-900">Informações Pessoais</h3>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-white rounded-lg p-4 shadow-sm">
+                  <dt className="text-xs font-medium text-gray-500 uppercase mb-1">CPF</dt>
+                  <dd className="text-base font-semibold text-gray-900">{employee.cpf || 'Não informado'}</dd>
                 </div>
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">CPF</dt>
-                  <dd className="mt-1 text-sm text-gray-900">{employee.cpf || '-'}</dd>
+                <div className="bg-white rounded-lg p-4 shadow-sm">
+                  <dt className="text-xs font-medium text-gray-500 uppercase mb-1 flex items-center">
+                    <CakeIcon className="h-4 w-4 mr-1" />
+                    Data de Nascimento
+                  </dt>
+                  <dd className="text-base font-semibold text-gray-900">{formatDate(employee.birth_date)}</dd>
                 </div>
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Data de Nascimento</dt>
-                  <dd className="mt-1 text-sm text-gray-900">{formatDate(employee.birth_date)}</dd>
+                <div className="bg-white rounded-lg p-4 shadow-sm">
+                  <dt className="text-xs font-medium text-gray-500 uppercase mb-1">Sexo</dt>
+                  <dd className="text-base font-semibold text-gray-900">{employee.sex || 'Não informado'}</dd>
                 </div>
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Sexo</dt>
-                  <dd className="mt-1 text-sm text-gray-900">{employee.sex || '-'}</dd>
+                <div className="bg-white rounded-lg p-4 shadow-sm">
+                  <dt className="text-xs font-medium text-gray-500 uppercase mb-1">Estado Civil</dt>
+                  <dd className="text-base font-semibold text-gray-900">{employee.marital_status || 'Não informado'}</dd>
                 </div>
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Estado Civil</dt>
-                  <dd className="mt-1 text-sm text-gray-900">{employee.marital_status || '-'}</dd>
-                </div>
-              </dl>
+              </div>
             </div>
 
-            <div>
-              <h3 className="text-lg font-medium mb-4">Contato</h3>
-              <dl className="space-y-3">
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Telefone</dt>
-                  <dd className="mt-1 text-sm text-gray-900">{employee.phone_number || '-'}</dd>
+            {/* Card de Contato */}
+            <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-lg p-6 border border-green-100">
+              <div className="flex items-center mb-4">
+                <PhoneIcon className="h-6 w-6 text-green-600 mr-2" />
+                <h3 className="text-lg font-semibold text-gray-900">Informações de Contato</h3>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-white rounded-lg p-4 shadow-sm">
+                  <dt className="text-xs font-medium text-gray-500 uppercase mb-1 flex items-center">
+                    <PhoneIcon className="h-4 w-4 mr-1" />
+                    Telefone
+                  </dt>
+                  <dd className="text-base font-semibold text-gray-900">
+                    {employee.phone_number || 'Não informado'}
+                  </dd>
                 </div>
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Email</dt>
-                  <dd className="mt-1 text-sm text-gray-900">{employee.email || '-'}</dd>
+                <div className="bg-white rounded-lg p-4 shadow-sm">
+                  <dt className="text-xs font-medium text-gray-500 uppercase mb-1 flex items-center">
+                    <EnvelopeIcon className="h-4 w-4 mr-1" />
+                    Email
+                  </dt>
+                  <dd className="text-base font-semibold text-gray-900">
+                    {employee.email || 'Não informado'}
+                  </dd>
                 </div>
-              </dl>
+              </div>
+            </div>
 
-              <h3 className="text-lg font-medium mb-4 mt-6">Dados Profissionais</h3>
-              <dl className="space-y-3">
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Departamento</dt>
-                  <dd className="mt-1 text-sm text-gray-900">{employee.department || '-'}</dd>
+            {/* Card de Dados Profissionais */}
+            <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-lg p-6 border border-purple-100">
+              <div className="flex items-center mb-4">
+                <BriefcaseIcon className="h-6 w-6 text-purple-600 mr-2" />
+                <h3 className="text-lg font-semibold text-gray-900">Informações Profissionais</h3>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-white rounded-lg p-4 shadow-sm">
+                  <dt className="text-xs font-medium text-gray-500 uppercase mb-1 flex items-center">
+                    <BuildingOfficeIcon className="h-4 w-4 mr-1" />
+                    Departamento
+                  </dt>
+                  <dd className="text-base font-semibold text-gray-900">{employee.department || 'Não informado'}</dd>
                 </div>
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Cargo</dt>
-                  <dd className="mt-1 text-sm text-gray-900">{employee.position || '-'}</dd>
+                <div className="bg-white rounded-lg p-4 shadow-sm">
+                  <dt className="text-xs font-medium text-gray-500 uppercase mb-1">Cargo</dt>
+                  <dd className="text-base font-semibold text-gray-900">{employee.position || 'Não informado'}</dd>
                 </div>
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Data de Admissão</dt>
-                  <dd className="mt-1 text-sm text-gray-900">{formatDate(employee.admission_date)}</dd>
+                <div className="bg-white rounded-lg p-4 shadow-sm">
+                  <dt className="text-xs font-medium text-gray-500 uppercase mb-1 flex items-center">
+                    <CalendarIcon className="h-4 w-4 mr-1" />
+                    Data de Admissão
+                  </dt>
+                  <dd className="text-base font-semibold text-gray-900">{formatDate(employee.admission_date)}</dd>
                 </div>
-                <div>
-                  <dt className="text-sm font-medium text-gray-500">Tipo de Contrato</dt>
-                  <dd className="mt-1 text-sm text-gray-900">{employee.contract_type || '-'}</dd>
+                <div className="bg-white rounded-lg p-4 shadow-sm">
+                  <dt className="text-xs font-medium text-gray-500 uppercase mb-1">Tipo de Contrato</dt>
+                  <dd className="text-base font-semibold text-gray-900">{employee.contract_type || 'Não informado'}</dd>
                 </div>
-              </dl>
+              </div>
             </div>
           </div>
         )}
@@ -601,14 +754,244 @@ const EmployeeDetail = () => {
           </div>
         )}
 
-        {/* Outras tabs - placeholder */}
-        {['movements', 'leaves', 'payroll', 'benefits'].includes(activeTab) && (
-          <div className="text-center py-12">
-            <DocumentTextIcon className="mx-auto h-12 w-12 text-gray-400" />
-            <h3 className="mt-2 text-sm font-medium text-gray-900">Em Desenvolvimento</h3>
-            <p className="mt-1 text-sm text-gray-500">
-              Esta funcionalidade estará disponível em breve.
+        {/* Tab de Afastamentos - Funcional */}
+        {activeTab === 'leaves' && (
+          <div>
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-lg font-semibold text-gray-900">Histórico de Afastamentos</h3>
+              {!showLeaveForm && (
+                <button
+                  onClick={() => {
+                    setShowLeaveForm(true);
+                    setEditingLeave(null);
+                    setLeaveForm({ leave_type: '', start_date: '', end_date: '', days: '', notes: '' });
+                  }}
+                  className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 shadow-sm"
+                >
+                  <PlusIcon className="h-5 w-5 mr-2" />
+                  Novo Afastamento
+                </button>
+              )}
+            </div>
+
+            {showLeaveForm && (
+              <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-6">
+                <h4 className="text-md font-semibold mb-4 text-gray-900">
+                  {editingLeave ? 'Editar Afastamento' : 'Registrar Novo Afastamento'}
+                </h4>
+                <form onSubmit={handleLeaveSubmit} className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Tipo de Afastamento *
+                      </label>
+                      <select
+                        required
+                        value={leaveForm.leave_type}
+                        onChange={(e) => setLeaveForm({...leaveForm, leave_type: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                      >
+                        <option value="">Selecione...</option>
+                        <option value="Férias">Férias</option>
+                        <option value="Licença Médica">Licença Médica</option>
+                        <option value="Licença Maternidade">Licença Maternidade</option>
+                        <option value="Licença Paternidade">Licença Paternidade</option>
+                        <option value="Afastamento INSS">Afastamento INSS</option>
+                        <option value="Suspensão">Suspensão</option>
+                        <option value="Outro">Outro</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Dias de Afastamento
+                      </label>
+                      <input
+                        type="number"
+                        value={leaveForm.days}
+                        onChange={(e) => setLeaveForm({...leaveForm, days: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-gray-50"
+                        placeholder="Calculado automaticamente"
+                        readOnly
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Data de Início *
+                      </label>
+                      <input
+                        type="date"
+                        required
+                        value={leaveForm.start_date}
+                        onChange={(e) => setLeaveForm({...leaveForm, start_date: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Data de Término *
+                      </label>
+                      <input
+                        type="date"
+                        required
+                        value={leaveForm.end_date}
+                        onChange={(e) => setLeaveForm({...leaveForm, end_date: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Observações
+                    </label>
+                    <textarea
+                      value={leaveForm.notes}
+                      onChange={(e) => setLeaveForm({...leaveForm, notes: e.target.value})}
+                      rows="3"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Adicione detalhes sobre o afastamento..."
+                    />
+                  </div>
+
+                  <div className="flex justify-end space-x-3 pt-4 border-t">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowLeaveForm(false);
+                        setEditingLeave(null);
+                        setLeaveForm({ leave_type: '', start_date: '', end_date: '', days: '', notes: '' });
+                      }}
+                      className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 shadow-sm"
+                    >
+                      {editingLeave ? 'Atualizar' : 'Salvar'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {loadingLeaves ? (
+              <div className="flex justify-center items-center py-12">
+                <div className="spinner"></div>
+              </div>
+            ) : leaves.length === 0 ? (
+              <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+                <CalendarIcon className="mx-auto h-12 w-12 text-gray-400" />
+                <h3 className="mt-2 text-sm font-medium text-gray-900">Nenhum afastamento registrado</h3>
+                <p className="mt-1 text-sm text-gray-500">
+                  Comece registrando o primeiro afastamento deste colaborador.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {leaves.map((leave) => (
+                  <div
+                    key={leave.id}
+                    className="bg-white border border-gray-200 rounded-lg p-5 hover:shadow-md transition-shadow"
+                  >
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-3 mb-3">
+                          <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-semibold">
+                            {leave.leave_type}
+                          </span>
+                          <span className="text-sm text-gray-500">
+                            {leave.days} {leave.days === 1 ? 'dia' : 'dias'}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                          <div>
+                            <span className="text-gray-500">Início:</span>
+                            <span className="ml-2 font-medium text-gray-900">{formatDate(leave.start_date)}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Término:</span>
+                            <span className="ml-2 font-medium text-gray-900">{formatDate(leave.end_date)}</span>
+                          </div>
+                        </div>
+                        {leave.notes && (
+                          <div className="mt-3 text-sm text-gray-600 bg-gray-50 p-3 rounded">
+                            <span className="font-medium text-gray-700">Observações: </span>
+                            {leave.notes}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex space-x-2 ml-4">
+                        <button
+                          onClick={() => handleEditLeave(leave)}
+                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-md"
+                          title="Editar"
+                        >
+                          <PencilIcon className="h-5 w-5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteLeave(leave.id)}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded-md"
+                          title="Excluir"
+                        >
+                          <TrashIcon className="h-5 w-5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Outras tabs - placeholders melhorados */}
+        {activeTab === 'movements' && (
+          <div className="text-center py-16">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-yellow-100 rounded-full mb-4">
+              <BriefcaseIcon className="h-8 w-8 text-yellow-600" />
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Movimentações em Desenvolvimento</h3>
+            <p className="text-sm text-gray-500 max-w-md mx-auto mb-4">
+              Esta seção permitirá registrar promoções, transferências e alterações de cargo.
             </p>
+            <span className="inline-flex items-center px-3 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs font-medium">
+              🚧 Aguarde futuras atualizações
+            </span>
+          </div>
+        )}
+
+        {activeTab === 'payroll' && (
+          <div className="text-center py-16">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
+              <CurrencyDollarIcon className="h-8 w-8 text-green-600" />
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Folha de Pagamento em Desenvolvimento</h3>
+            <p className="text-sm text-gray-500 max-w-md mx-auto mb-4">
+              Histórico de holerites, salários e benefícios estarão disponíveis em breve.
+            </p>
+            <span className="inline-flex items-center px-3 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">
+              🚧 Aguarde futuras atualizações
+            </span>
+          </div>
+        )}
+
+        {activeTab === 'benefits' && (
+          <div className="text-center py-16">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-purple-100 rounded-full mb-4">
+              <HeartIcon className="h-8 w-8 text-purple-600" />
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Benefícios em Desenvolvimento</h3>
+            <p className="text-sm text-gray-500 max-w-md mx-auto mb-4">
+              Gestão de vale-transporte, vale-refeição e planos de saúde estarão disponíveis aqui.
+            </p>
+            <span className="inline-flex items-center px-3 py-1 bg-purple-100 text-purple-800 rounded-full text-xs font-medium">
+              🚧 Aguarde futuras atualizações
+            </span>
           </div>
         )}
       </div>

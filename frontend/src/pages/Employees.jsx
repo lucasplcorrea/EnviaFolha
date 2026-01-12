@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { PlusIcon, DocumentArrowUpIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, DocumentArrowUpIcon, ChevronUpIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import api from '../services/api';
 import { useTheme } from '../contexts/ThemeContext';
@@ -22,6 +22,9 @@ const Employees = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [positionFilter, setPositionFilter] = useState('');
+  
+  // Estado de ordenação
+  const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
   
   // Estados para seleção múltipla
   const [selectedEmployees, setSelectedEmployees] = useState([]);
@@ -353,6 +356,42 @@ const Employees = () => {
     
     return matchesSearch && matchesDepartment && matchesPosition;
   });
+
+  // Ordenar colaboradores filtrados
+  const sortedAndFilteredEmployees = useMemo(() => {
+    if (!sortConfig.key) return filteredEmployees;
+    
+    return [...filteredEmployees].sort((a, b) => {
+      let aValue, bValue;
+      
+      if (sortConfig.key === 'unique_id') {
+        // Ordenação numérica para ID
+        aValue = parseInt(a.unique_id) || 0;
+        bValue = parseInt(b.unique_id) || 0;
+      } else {
+        // Ordenação alfabética para nome e departamento
+        aValue = (a[sortConfig.key] || '').toLowerCase();
+        bValue = (b[sortConfig.key] || '').toLowerCase();
+      }
+      
+      if (aValue < bValue) {
+        return sortConfig.direction === 'asc' ? -1 : 1;
+      }
+      if (aValue > bValue) {
+        return sortConfig.direction === 'asc' ? 1 : -1;
+      }
+      return 0;
+    });
+  }, [filteredEmployees, sortConfig]);
+
+  // Função para alternar ordenação
+  const handleSort = (key) => {
+    let direction = 'asc';
+    if (sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
 
   // Obter listas únicas para filtros
   const uniqueDepartments = [...new Set(employees.map(e => e.department).filter(Boolean))];
@@ -829,7 +868,7 @@ const Employees = () => {
       <div className={`${config.classes.card} shadow rounded-lg ${config.classes.border}`}>
         <div className={`px-6 py-4 border-b ${config.classes.border}`}>
           <h3 className={`text-lg font-medium ${config.classes.text} mb-4`}>
-            Lista de Colaboradores ({filteredEmployees.length} de {employees.length})
+            Lista de Colaboradores ({sortedAndFilteredEmployees.length} de {employees.length})
           </h3>
           
           {/* Filtros de Busca */}
@@ -897,7 +936,7 @@ const Employees = () => {
           )}
         </div>
         
-        {filteredEmployees.length === 0 ? (
+        {sortedAndFilteredEmployees.length === 0 ? (
           <div className={`p-6 text-center ${config.classes.textSecondary}`}>
             {employees.length === 0 ? 
               'Nenhum colaborador cadastrado ainda.' :
@@ -917,17 +956,47 @@ const Employees = () => {
                       className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
                   </th>
-                  <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
-                    ID
+                  <th 
+                    onClick={() => handleSort('unique_id')}
+                    className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none`}
+                  >
+                    <div className="flex items-center space-x-1">
+                      <span>ID</span>
+                      {sortConfig.key === 'unique_id' && (
+                        sortConfig.direction === 'asc' ? 
+                          <ChevronUpIcon className="h-4 w-4" /> : 
+                          <ChevronDownIcon className="h-4 w-4" />
+                      )}
+                    </div>
                   </th>
-                  <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
-                    Nome
+                  <th 
+                    onClick={() => handleSort('full_name')}
+                    className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none`}
+                  >
+                    <div className="flex items-center space-x-1">
+                      <span>Nome</span>
+                      {sortConfig.key === 'full_name' && (
+                        sortConfig.direction === 'asc' ? 
+                          <ChevronUpIcon className="h-4 w-4" /> : 
+                          <ChevronDownIcon className="h-4 w-4" />
+                      )}
+                    </div>
                   </th>
                   <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
                     Telefone
                   </th>
-                  <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
-                    Departamento
+                  <th 
+                    onClick={() => handleSort('department')}
+                    className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none`}
+                  >
+                    <div className="flex items-center space-x-1">
+                      <span>Departamento</span>
+                      {sortConfig.key === 'department' && (
+                        sortConfig.direction === 'asc' ? 
+                          <ChevronUpIcon className="h-4 w-4" /> : 
+                          <ChevronDownIcon className="h-4 w-4" />
+                      )}
+                    </div>
                   </th>
                   <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
                     Ações
@@ -935,7 +1004,7 @@ const Employees = () => {
                 </tr>
               </thead>
               <tbody className={`${config.classes.card} divide-y ${config.classes.border}`}>
-                {filteredEmployees.map((employee) => (
+                {sortedAndFilteredEmployees.map((employee) => (
                   <tr key={employee.id}>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <input
