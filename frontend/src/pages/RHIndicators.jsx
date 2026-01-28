@@ -1785,10 +1785,10 @@ const RHIndicators = () => {
           );
         })()}
 
-        </div> {/* Fecha exportRef */}
-      </div> {/* Fecha space-y-6 - return de renderPayroll */}
+        </div>
+      </div>
     );
-  };  // Fecha renderPayroll
+  };
 
   // Return principal do componente RHIndicators
   if (loading) {
