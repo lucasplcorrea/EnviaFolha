@@ -20,7 +20,8 @@ import html2canvas from 'html2canvas';
 import * as XLSX from 'xlsx';
 
 const RHIndicators = () => {
-  const { config } = useTheme();
+  const { config, theme } = useTheme();
+  const isDarkMode = theme === 'dark';
   const [activeCategory, setActiveCategory] = useState('overview');
   const [loading, setLoading] = useState(true);
   const [indicatorsData, setIndicatorsData] = useState(null);
@@ -893,7 +894,7 @@ const RHIndicators = () => {
               return (
                 <MetricCard
                   key={key}
-                  title={translateMetricKey(key)}
+                  title={translateLabel(key)}
                   value={displayValue}
                   unit={displayUnit}
                 />
@@ -908,12 +909,12 @@ const RHIndicators = () => {
             return (
               <div key={distKey} className={`${config.classes.card} rounded-lg shadow p-6`}>
                 <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
-                  {translateMetricKey(distKey)}
+                  {translateLabel(distKey)}
                 </h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   {Object.entries(distData).map(([key, count]) => (
                     <div key={key} className={`${config.classes.card} p-4 rounded-lg ${config.classes.border}`}>
-                      <p className={`text-sm ${config.classes.textSecondary}`}>{translateMetricKey(key)}</p>
+                      <p className={`text-sm ${config.classes.textSecondary}`}>{translateLabel(key)}</p>
                       <p className={`text-2xl font-bold ${config.classes.text} mt-2`}>{count}</p>
                     </div>
                   ))}
@@ -925,6 +926,7 @@ const RHIndicators = () => {
       );
     };
 
+    // Return de renderPayroll - retorna o conteúdo da aba Folha de Pagamento
     return (
       <div className="space-y-6">
         {/* Seção de Filtros Modernizada */}
@@ -1782,9 +1784,61 @@ const RHIndicators = () => {
           </div>
           );
         })()}
-        
+
         </div> {/* Fecha exportRef */}
-      </div> {/* Fecha space-y-6 */}
+      </div> {/* Fecha space-y-6 - return de renderPayroll */}
+    );
+  };  // Fecha renderPayroll
+
+  // Return principal do componente RHIndicators
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen p-6">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <h1 className={`text-2xl font-bold ${config.classes.text}`}>
+            📊 Indicadores de RH
+          </h1>
+          <button
+            onClick={refreshIndicators}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <ArrowPathIcon className="h-5 w-5" />
+            Atualizar
+          </button>
+        </div>
+
+        {/* Tabs de categorias */}
+        <div className="flex flex-wrap gap-2 mb-6">
+          {categories.map(category => (
+            <button
+              key={category.id}
+              onClick={() => setActiveCategory(category.id)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                activeCategory === category.id
+                  ? 'bg-blue-600 text-white'
+                  : `${config.classes.card} ${config.classes.text} hover:bg-gray-100 dark:hover:bg-gray-700`
+              }`}
+            >
+              <category.icon className="h-5 w-5" />
+              {category.name}
+            </button>
+          ))}
+        </div>
+
+        {/* Conteúdo baseado na categoria */}
+        {activeCategory === 'overview' && renderOverview()}
+        {activeCategory === 'payroll' && renderPayroll()}
+      </div>
+    </div>
   );
 };
 
