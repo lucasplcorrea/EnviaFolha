@@ -134,7 +134,7 @@ class PayrollProcessingLog(Base, TimestampMixin):
     error_message = Column(Text, nullable=True)
     processing_summary = Column(JSON, nullable=True)  # Resumo detalhado
     
-    processed_by = Column(Integer, ForeignKey('users.id'), nullable=False)
+    processed_by = Column(Integer, ForeignKey('users.id'), nullable=True)  # Nullable para processos automáticos
     processing_time = Column(DECIMAL(5, 2), nullable=True)  # Tempo em segundos
     
     # Relacionamentos

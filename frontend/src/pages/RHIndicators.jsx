@@ -1782,10 +1782,9 @@ const RHIndicators = () => {
           </div>
           );
         })()}
+        
         </div> {/* Fecha exportRef */}
-        </div> {/* Fecha space-y-6 */}
-      </div> {/* Fecha max-w-7xl */}
-    </div> {/* Fecha min-h-screen */}
+      </div> {/* Fecha space-y-6 */}
   );
 };
 
