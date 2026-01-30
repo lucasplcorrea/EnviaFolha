@@ -30,6 +30,10 @@ const Payroll = () => {
   const [availableDepartments, setAvailableDepartments] = useState([]);
   const [filteredStats, setFilteredStats] = useState(null);
   
+  // Estados de filtros de 13º salário
+  const [include13Salary, setInclude13Salary] = useState(true); // Incluir valores de 13º
+  const [only13Salary, setOnly13Salary] = useState(false); // Mostrar somente 13º
+  
   // Estados de UI
   const [showPeriodDropdown, setShowPeriodDropdown] = useState(false);
   const [showDepartmentDropdown, setShowDepartmentDropdown] = useState(false);
@@ -284,6 +288,52 @@ const Payroll = () => {
     .filter(emp => selectedDepartments.length === 0 || selectedDepartments.includes(emp.department))
     .filter(emp => emp.name.toLowerCase().includes(employeeSearch.toLowerCase()) || emp.unique_id.includes(employeeSearch));
 
+  // Ajustar displayStats baseado nos filtros de 13º salário
+  const adjustedStats = React.useMemo(() => {
+    if (!displayStats) return null;
+    
+    const stats = { ...displayStats };
+    
+    // Se "Somente 13º" está ativo, zerar tudo exceto 13º e férias
+    if (only13Salary) {
+      // Zerar valores que NÃO são de 13º/férias
+      stats.total_salario_base = 0;
+      stats.total_gratificacoes = 0;
+      stats.total_periculosidade = 0;
+      stats.total_insalubridade = 0;
+      stats.total_adicional_noturno = 0;
+      stats.total_he_50_diurnas = 0;
+      stats.total_he_50_noturnas = 0;
+      stats.total_he_60 = 0;
+      stats.total_he_100_diurnas = 0;
+      stats.total_he_100_noturnas = 0;
+      stats.total_vale_transporte = 0;
+      stats.total_plano_saude = 0;
+      
+      // Manter apenas valores de 13º e férias
+      // (os campos total_13_* e total_ferias_* ficam intocados)
+    }
+    // Se "Incluir 13º" está DESATIVADO, zerar valores de 13º
+    else if (!include13Salary) {
+      stats.total_13_adiantamento = 0;
+      stats.total_13_integral = 0;
+      stats.total_13_maternidade_gps = 0;
+      stats.total_13_med_eventos = 0;
+      stats.total_13_med_horas_extras = 0;
+      stats.total_13_gratif_adiantamento = 0;
+      stats.total_13_gratif_integral = 0;
+      stats.total_13_salario = 0; // Gratificações antigas
+      stats.total_ferias_base = 0;
+      stats.total_ferias_abono_1_3 = 0;
+      stats.total_ferias_med_horas_extras = 0;
+      stats.total_ferias_pagas = 0; // Gratificações antigas
+      stats.total_desconto_13_adiantamento = 0;
+      stats.total_desconto_ferias_adiantamento = 0;
+    }
+    
+    return stats;
+  }, [displayStats, include13Salary, only13Salary]);
+
   return (
     <div className="space-y-6">
       {/* Filtros */}
@@ -449,6 +499,62 @@ const Payroll = () => {
           </div>
         </div>
 
+        {/* Toggles de 13º Salário */}
+        <div className="mt-4 p-4 bg-gradient-to-r from-green-50 to-amber-50 dark:from-green-900/20 dark:to-amber-900/20 rounded-lg border border-green-200 dark:border-green-800">
+          <div className="flex flex-wrap gap-4 items-center">
+            <span className="text-sm font-semibold text-green-700 dark:text-green-300">🎄 Filtros de 13º e Férias:</span>
+            
+            {/* Toggle: Incluir valores de 13º */}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <div className="relative">
+                <input
+                  type="checkbox"
+                  checked={include13Salary}
+                  onChange={(e) => {
+                    setInclude13Salary(e.target.checked);
+                    if (!e.target.checked) setOnly13Salary(false); // Desativa "somente 13º" se desmarcar
+                  }}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-green-300 dark:peer-focus:ring-green-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-green-600"></div>
+              </div>
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                {include13Salary ? '✅ Incluir valores de 13º e férias' : '❌ Excluir valores de 13º e férias'}
+              </span>
+            </label>
+
+            {/* Toggle: Exibir somente 13º */}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <div className="relative">
+                <input
+                  type="checkbox"
+                  checked={only13Salary}
+                  onChange={(e) => {
+                    setOnly13Salary(e.target.checked);
+                    if (e.target.checked) setInclude13Salary(true); // Ativa "incluir" se marcar "somente"
+                  }}
+                  disabled={!include13Salary}
+                  className="sr-only peer disabled:opacity-50"
+                />
+                <div className={`w-11 h-6 ${!include13Salary ? 'opacity-50 cursor-not-allowed' : ''} bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-amber-300 dark:peer-focus:ring-amber-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-amber-600`}></div>
+              </div>
+              <span className={`text-sm font-medium ${!include13Salary ? 'opacity-50' : ''} text-gray-700 dark:text-gray-300`}>
+                {only13Salary ? '🎯 Exibindo somente 13º e férias' : '📊 Exibir somente 13º e férias'}
+              </span>
+            </label>
+          </div>
+          {only13Salary && (
+            <p className="mt-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 px-3 py-1.5 rounded">
+              ℹ️ Mostrando apenas valores relacionados a 13º salário e férias (todos os outros valores estão zerados)
+            </p>
+          )}
+          {!include13Salary && (
+            <p className="mt-2 text-xs text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-900/30 px-3 py-1.5 rounded">
+              ℹ️ Valores de 13º salário e férias foram excluídos dos totalizadores
+            </p>
+          )}
+        </div>
+
         {/* Tags de filtros ativos */}
         {hasActiveFilters && (
           <div className="mt-4 p-4 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 rounded-lg">
@@ -518,12 +624,12 @@ const Payroll = () => {
             {/* Resumo Principal */}
             <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
               <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
-                📊 {hasActiveFilters ? 'Resumo Filtrado' : displayStats.period_name || 'Resumo'}
+                📊 {hasActiveFilters ? 'Resumo Filtrado' : adjustedStats.period_name || 'Resumo'}
               </h3>
               {!hasActiveFilters && displayStats.total_periods > 1 && (
                 <p className={`text-xs ${config.classes.textSecondary} mb-4 flex items-center gap-2`}>
                   <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full">
-                    {displayStats.total_periods} períodos consolidados
+                    {adjustedStats.total_periods} períodos consolidados
                   </span>
                   <span>• Médias calculadas por período</span>
                 </p>
@@ -532,19 +638,19 @@ const Payroll = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="border rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20">
                   <p className={`text-sm font-medium ${config.classes.textSecondary}`}>👥 Funcionários</p>
-                  <p className={`text-3xl font-bold ${config.classes.text} mt-2`}>{displayStats.total_employees}</p>
+                  <p className={`text-3xl font-bold ${config.classes.text} mt-2`}>{adjustedStats.total_employees}</p>
                 </div>
                 <div className="border rounded-lg p-4 bg-green-50 dark:bg-green-900/20">
                   <p className={`text-sm font-medium ${config.classes.textSecondary}`}>💰 Total Proventos</p>
-                  <p className="text-2xl font-bold text-green-700 dark:text-green-400 mt-2">R$ {formatCurrency(displayStats.total_proventos)}</p>
+                  <p className="text-2xl font-bold text-green-700 dark:text-green-400 mt-2">R$ {formatCurrency(adjustedStats.total_proventos)}</p>
                 </div>
                 <div className="border rounded-lg p-4 bg-red-50 dark:bg-red-900/20">
                   <p className={`text-sm font-medium ${config.classes.textSecondary}`}>📉 Total Descontos</p>
-                  <p className="text-2xl font-bold text-red-700 dark:text-red-400 mt-2">R$ {formatCurrency(displayStats.total_descontos)}</p>
+                  <p className="text-2xl font-bold text-red-700 dark:text-red-400 mt-2">R$ {formatCurrency(adjustedStats.total_descontos)}</p>
                 </div>
                 <div className="border rounded-lg p-4 bg-emerald-50 dark:bg-emerald-900/20">
                   <p className={`text-sm font-medium ${config.classes.textSecondary}`}>💵 Total Líquido</p>
-                  <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-400 mt-2">R$ {formatCurrency(displayStats.total_liquido)}</p>
+                  <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-400 mt-2">R$ {formatCurrency(adjustedStats.total_liquido)}</p>
                 </div>
               </div>
             </div>
@@ -555,17 +661,17 @@ const Payroll = () => {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className={`border rounded-lg p-4 ${config.classes.border}`}>
                   <p className={`text-sm font-medium ${config.classes.textSecondary}`}>💰 Total Salários Base</p>
-                  <p className={`text-2xl font-bold ${config.classes.text} mt-2`}>R$ {formatCurrency(displayStats.total_valor_salario)}</p>
+                  <p className={`text-2xl font-bold ${config.classes.text} mt-2`}>R$ {formatCurrency(adjustedStats.total_valor_salario)}</p>
                   <p className="text-xs text-gray-400 mt-1">Soma de todos os salários</p>
                 </div>
                 <div className={`border rounded-lg p-4 ${config.classes.border}`}>
                   <p className={`text-sm font-medium ${config.classes.textSecondary}`}>📊 Salário Médio</p>
-                  <p className={`text-2xl font-bold ${config.classes.text} mt-2`}>R$ {formatCurrency(displayStats.avg_salario)}</p>
+                  <p className={`text-2xl font-bold ${config.classes.text} mt-2`}>R$ {formatCurrency(adjustedStats.avg_salario)}</p>
                   <p className="text-xs text-gray-400 mt-1">Média por funcionário</p>
                 </div>
                 <div className={`border rounded-lg p-4 ${config.classes.border}`}>
                   <p className={`text-sm font-medium ${config.classes.textSecondary}`}>💵 Líquido Médio</p>
-                  <p className={`text-2xl font-bold ${config.classes.text} mt-2`}>R$ {formatCurrency(displayStats.avg_liquido)}</p>
+                  <p className={`text-2xl font-bold ${config.classes.text} mt-2`}>R$ {formatCurrency(adjustedStats.avg_liquido)}</p>
                   <p className="text-xs text-gray-400 mt-1">Média por funcionário</p>
                 </div>
               </div>
@@ -577,64 +683,64 @@ const Payroll = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
                 <div className="border rounded-lg p-4 bg-amber-50 dark:bg-amber-900/20">
                   <p className="text-sm font-medium text-amber-700 dark:text-amber-400">🎁 Gratificações</p>
-                  <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 mt-2">R$ {formatCurrency(displayStats.total_gratificacoes)}</p>
+                  <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 mt-2">R$ {formatCurrency(adjustedStats.total_gratificacoes)}</p>
                   <p className="text-xs text-gray-400 mt-1">Função e cargo</p>
                 </div>
                 <div className="border rounded-lg p-4 bg-green-50 dark:bg-green-900/20">
                   <p className="text-sm font-medium text-green-700 dark:text-green-400">🎄 13º Salário</p>
                   <p className="text-2xl font-bold text-green-700 dark:text-green-300 mt-2">
                     R$ {formatCurrency(
-                      (displayStats.total_13_adiantamento || 0) +
-                      (displayStats.total_13_integral || 0) +
-                      (displayStats.total_13_maternidade_gps || 0) +
-                      (displayStats.total_13_med_eventos || 0) +
-                      (displayStats.total_13_med_horas_extras || 0) +
-                      (displayStats.total_13_gratif_adiantamento || 0) +
-                      (displayStats.total_13_gratif_integral || 0) +
-                      (displayStats.total_13_salario || 0)
+                      (adjustedStats.total_13_adiantamento || 0) +
+                      (adjustedStats.total_13_integral || 0) +
+                      (adjustedStats.total_13_maternidade_gps || 0) +
+                      (adjustedStats.total_13_med_eventos || 0) +
+                      (adjustedStats.total_13_med_horas_extras || 0) +
+                      (adjustedStats.total_13_gratif_adiantamento || 0) +
+                      (adjustedStats.total_13_gratif_integral || 0) +
+                      (adjustedStats.total_13_salario || 0)
                     )}
                   </p>
                   {/* Breakdown detalhado */}
-                  {(displayStats.total_13_adiantamento > 0 || displayStats.total_13_integral > 0) && (
+                  {(adjustedStats.total_13_adiantamento > 0 || displayStats.total_13_integral > 0) && (
                     <div className="mt-3 pt-3 border-t border-green-200 dark:border-green-800">
                       <p className="text-xs text-gray-600 dark:text-gray-400 mb-2 font-semibold">Detalhamento:</p>
-                      {displayStats.total_13_adiantamento > 0 && (
+                      {adjustedStats.total_13_adiantamento > 0 && (
                         <p className="text-xs text-gray-600 dark:text-gray-400">
-                          • Adiant: <span className="font-medium">R$ {formatCurrency(displayStats.total_13_adiantamento)}</span>
+                          • Adiant: <span className="font-medium">R$ {formatCurrency(adjustedStats.total_13_adiantamento)}</span>
                         </p>
                       )}
-                      {displayStats.total_13_integral > 0 && (
+                      {adjustedStats.total_13_integral > 0 && (
                         <p className="text-xs text-gray-600 dark:text-gray-400">
-                          • Integral: <span className="font-medium">R$ {formatCurrency(displayStats.total_13_integral)}</span>
+                          • Integral: <span className="font-medium">R$ {formatCurrency(adjustedStats.total_13_integral)}</span>
                         </p>
                       )}
-                      {displayStats.total_13_maternidade_gps > 0 && (
+                      {adjustedStats.total_13_maternidade_gps > 0 && (
                         <p className="text-xs text-green-700 dark:text-green-400">
-                          • Matern (GPS): <span className="font-medium">R$ {formatCurrency(displayStats.total_13_maternidade_gps)}</span>
+                          • Matern (GPS): <span className="font-medium">R$ {formatCurrency(adjustedStats.total_13_maternidade_gps)}</span>
                           <span className="text-[10px] ml-1">Gov</span>
                         </p>
                       )}
-                      {displayStats.total_13_med_eventos > 0 && (
+                      {adjustedStats.total_13_med_eventos > 0 && (
                         <p className="text-xs text-gray-600 dark:text-gray-400">
-                          • Méd. Eventos: <span className="font-medium">R$ {formatCurrency(displayStats.total_13_med_eventos)}</span>
+                          • Méd. Eventos: <span className="font-medium">R$ {formatCurrency(adjustedStats.total_13_med_eventos)}</span>
                         </p>
                       )}
-                      {displayStats.total_13_med_horas_extras > 0 && (
+                      {adjustedStats.total_13_med_horas_extras > 0 && (
                         <p className="text-xs text-gray-600 dark:text-gray-400">
-                          • Méd. HE: <span className="font-medium">R$ {formatCurrency(displayStats.total_13_med_horas_extras)}</span>
+                          • Méd. HE: <span className="font-medium">R$ {formatCurrency(adjustedStats.total_13_med_horas_extras)}</span>
                         </p>
                       )}
-                      {(displayStats.total_13_gratif_adiantamento > 0 || displayStats.total_13_gratif_integral > 0) && (
+                      {(adjustedStats.total_13_gratif_adiantamento > 0 || displayStats.total_13_gratif_integral > 0) && (
                         <p className="text-xs text-gray-600 dark:text-gray-400">
                           • Gratif: <span className="font-medium">R$ {formatCurrency(
-                            (displayStats.total_13_gratif_adiantamento || 0) + 
-                            (displayStats.total_13_gratif_integral || 0)
+                            (adjustedStats.total_13_gratif_adiantamento || 0) + 
+                            (adjustedStats.total_13_gratif_integral || 0)
                           )}</span>
                         </p>
                       )}
                     </div>
                   )}
-                  {!(displayStats.total_13_adiantamento > 0 || displayStats.total_13_integral > 0) && (
+                  {!(adjustedStats.total_13_adiantamento > 0 || displayStats.total_13_integral > 0) && (
                     <p className="text-xs text-gray-400 mt-1">Proporcional e abono</p>
                   )}
                 </div>
@@ -642,56 +748,56 @@ const Payroll = () => {
                   <p className="text-sm font-medium text-sky-700 dark:text-sky-400">🏖️ Férias</p>
                   <p className="text-2xl font-bold text-sky-700 dark:text-sky-300 mt-2">
                     R$ {formatCurrency(
-                      (displayStats.total_ferias_base || 0) +
-                      (displayStats.total_ferias_abono_1_3 || 0) +
-                      (displayStats.total_ferias_med_horas_extras || 0) +
-                      (displayStats.total_ferias_pagas || 0)
+                      (adjustedStats.total_ferias_base || 0) +
+                      (adjustedStats.total_ferias_abono_1_3 || 0) +
+                      (adjustedStats.total_ferias_med_horas_extras || 0) +
+                      (adjustedStats.total_ferias_pagas || 0)
                     )}
                   </p>
                   {/* Breakdown detalhado */}
-                  {(displayStats.total_ferias_base > 0 || displayStats.total_ferias_abono_1_3 > 0) && (
+                  {(adjustedStats.total_ferias_base > 0 || displayStats.total_ferias_abono_1_3 > 0) && (
                     <div className="mt-3 pt-3 border-t border-sky-200 dark:border-sky-800">
                       <p className="text-xs text-gray-600 dark:text-gray-400 mb-2 font-semibold">Detalhamento:</p>
-                      {displayStats.total_ferias_base > 0 && (
+                      {adjustedStats.total_ferias_base > 0 && (
                         <p className="text-xs text-gray-600 dark:text-gray-400">
-                          • Base: <span className="font-medium">R$ {formatCurrency(displayStats.total_ferias_base)}</span>
+                          • Base: <span className="font-medium">R$ {formatCurrency(adjustedStats.total_ferias_base)}</span>
                         </p>
                       )}
-                      {displayStats.total_ferias_abono_1_3 > 0 && (
+                      {adjustedStats.total_ferias_abono_1_3 > 0 && (
                         <p className="text-xs text-sky-700 dark:text-sky-400">
-                          • Abono 1/3: <span className="font-medium">R$ {formatCurrency(displayStats.total_ferias_abono_1_3)}</span>
+                          • Abono 1/3: <span className="font-medium">R$ {formatCurrency(adjustedStats.total_ferias_abono_1_3)}</span>
                           <span className="text-[10px] ml-1">CF/88</span>
                         </p>
                       )}
-                      {displayStats.total_ferias_med_horas_extras > 0 && (
+                      {adjustedStats.total_ferias_med_horas_extras > 0 && (
                         <p className="text-xs text-gray-600 dark:text-gray-400">
-                          • Méd. HE: <span className="font-medium">R$ {formatCurrency(displayStats.total_ferias_med_horas_extras)}</span>
+                          • Méd. HE: <span className="font-medium">R$ {formatCurrency(adjustedStats.total_ferias_med_horas_extras)}</span>
                         </p>
                       )}
-                      {displayStats.total_ferias_pagas > 0 && (
+                      {adjustedStats.total_ferias_pagas > 0 && (
                         <p className="text-xs text-gray-600 dark:text-gray-400">
-                          • Gratif: <span className="font-medium">R$ {formatCurrency(displayStats.total_ferias_pagas)}</span>
+                          • Gratif: <span className="font-medium">R$ {formatCurrency(adjustedStats.total_ferias_pagas)}</span>
                         </p>
                       )}
-                      {displayStats.total_desconto_ferias_adiantamento > 0 && (
+                      {adjustedStats.total_desconto_ferias_adiantamento > 0 && (
                         <p className="text-xs text-red-600 dark:text-red-400">
-                          • Desc. Adiant: <span className="font-medium">-R$ {formatCurrency(displayStats.total_desconto_ferias_adiantamento)}</span>
+                          • Desc. Adiant: <span className="font-medium">-R$ {formatCurrency(adjustedStats.total_desconto_ferias_adiantamento)}</span>
                         </p>
                       )}
                     </div>
                   )}
-                  {!(displayStats.total_ferias_base > 0 || displayStats.total_ferias_abono_1_3 > 0) && (
+                  {!(adjustedStats.total_ferias_base > 0 || displayStats.total_ferias_abono_1_3 > 0) && (
                     <p className="text-xs text-gray-400 mt-1">Férias e proporcionais</p>
                   )}
                 </div>
                 <div className="border rounded-lg p-4 bg-orange-50 dark:bg-orange-900/20">
                   <p className="text-sm font-medium text-orange-700 dark:text-orange-400">⚠️ Periculosidade</p>
-                  <p className="text-2xl font-bold text-orange-700 dark:text-orange-300 mt-2">R$ {formatCurrency(displayStats.total_periculosidade)}</p>
+                  <p className="text-2xl font-bold text-orange-700 dark:text-orange-300 mt-2">R$ {formatCurrency(adjustedStats.total_periculosidade)}</p>
                   <p className="text-xs text-gray-400 mt-1">Adicional de risco</p>
                 </div>
                 <div className="border rounded-lg p-4 bg-yellow-50 dark:bg-yellow-900/20">
                   <p className="text-sm font-medium text-yellow-700 dark:text-yellow-400">🏥 Insalubridade</p>
-                  <p className="text-2xl font-bold text-yellow-700 dark:text-yellow-300 mt-2">R$ {formatCurrency(displayStats.total_insalubridade)}</p>
+                  <p className="text-2xl font-bold text-yellow-700 dark:text-yellow-300 mt-2">R$ {formatCurrency(adjustedStats.total_insalubridade)}</p>
                   <p className="text-xs text-gray-400 mt-1">Condições adversas</p>
                 </div>
               </div>
@@ -703,11 +809,11 @@ const Payroll = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="border rounded-lg p-4 bg-cyan-50 dark:bg-cyan-900/20">
                   <p className="text-sm font-medium text-cyan-700 dark:text-cyan-400">🚌 Vale Transporte</p>
-                  <p className="text-2xl font-bold text-cyan-700 dark:text-cyan-300 mt-2">R$ {formatCurrency(displayStats.total_vale_transporte)}</p>
+                  <p className="text-2xl font-bold text-cyan-700 dark:text-cyan-300 mt-2">R$ {formatCurrency(adjustedStats.total_vale_transporte)}</p>
                 </div>
                 <div className="border rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20">
                   <p className="text-sm font-medium text-blue-700 dark:text-blue-400">💊 Plano de Saúde</p>
-                  <p className="text-2xl font-bold text-blue-700 dark:text-blue-300 mt-2">R$ {formatCurrency(displayStats.total_plano_saude)}</p>
+                  <p className="text-2xl font-bold text-blue-700 dark:text-blue-300 mt-2">R$ {formatCurrency(adjustedStats.total_plano_saude)}</p>
                   <p className="text-xs text-gray-400 mt-1">Assistência médica</p>
                 </div>
               </div>
@@ -719,23 +825,23 @@ const Payroll = () => {
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="border rounded-lg p-4 bg-green-50 dark:bg-green-900/20">
                   <p className="text-sm font-medium text-green-700 dark:text-green-400">👷 Trabalhando</p>
-                  <p className="text-3xl font-bold text-green-700 dark:text-green-300 mt-2">{displayStats.trabalhando || 0}</p>
-                  <p className="text-xs text-gray-500 mt-1">{calcPercentage(displayStats.trabalhando, displayStats.total_employees)}% do total</p>
+                  <p className="text-3xl font-bold text-green-700 dark:text-green-300 mt-2">{adjustedStats.trabalhando || 0}</p>
+                  <p className="text-xs text-gray-500 mt-1">{calcPercentage(adjustedStats.trabalhando, displayStats.total_employees)}% do total</p>
                 </div>
                 <div className="border rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20">
                   <p className="text-sm font-medium text-blue-700 dark:text-blue-400">🏖️ Férias</p>
-                  <p className="text-3xl font-bold text-blue-700 dark:text-blue-300 mt-2">{displayStats.ferias || 0}</p>
-                  <p className="text-xs text-gray-500 mt-1">{calcPercentage(displayStats.ferias, displayStats.total_employees)}% do total</p>
+                  <p className="text-3xl font-bold text-blue-700 dark:text-blue-300 mt-2">{adjustedStats.ferias || 0}</p>
+                  <p className="text-xs text-gray-500 mt-1">{calcPercentage(adjustedStats.ferias, displayStats.total_employees)}% do total</p>
                 </div>
                 <div className="border rounded-lg p-4 bg-yellow-50 dark:bg-yellow-900/20">
                   <p className="text-sm font-medium text-yellow-700 dark:text-yellow-400">🏥 Afastados</p>
-                  <p className="text-3xl font-bold text-yellow-700 dark:text-yellow-300 mt-2">{displayStats.afastados || 0}</p>
-                  <p className="text-xs text-gray-500 mt-1">{calcPercentage(displayStats.afastados, displayStats.total_employees)}% do total</p>
+                  <p className="text-3xl font-bold text-yellow-700 dark:text-yellow-300 mt-2">{adjustedStats.afastados || 0}</p>
+                  <p className="text-xs text-gray-500 mt-1">{calcPercentage(adjustedStats.afastados, displayStats.total_employees)}% do total</p>
                 </div>
                 <div className="border rounded-lg p-4 bg-red-50 dark:bg-red-900/20">
                   <p className="text-sm font-medium text-red-700 dark:text-red-400">📤 Desligados</p>
-                  <p className="text-3xl font-bold text-red-700 dark:text-red-300 mt-2">{displayStats.demitidos || 0}</p>
-                  <p className="text-xs text-gray-500 mt-1">{calcPercentage(displayStats.demitidos, displayStats.total_employees)}% do total</p>
+                  <p className="text-3xl font-bold text-red-700 dark:text-red-300 mt-2">{adjustedStats.demitidos || 0}</p>
+                  <p className="text-xs text-gray-500 mt-1">{calcPercentage(adjustedStats.demitidos, displayStats.total_employees)}% do total</p>
                 </div>
               </div>
             </div>
@@ -746,17 +852,17 @@ const Payroll = () => {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="border rounded-lg p-4 bg-purple-50 dark:bg-purple-900/20">
                   <p className="text-sm font-medium text-purple-700 dark:text-purple-400">🏛️ INSS</p>
-                  <p className="text-2xl font-bold text-purple-700 dark:text-purple-300 mt-2">R$ {formatCurrency(displayStats.total_inss)}</p>
+                  <p className="text-2xl font-bold text-purple-700 dark:text-purple-300 mt-2">R$ {formatCurrency(adjustedStats.total_inss)}</p>
                   <p className="text-xs text-gray-400 mt-1">Previdência social</p>
                 </div>
                 <div className="border rounded-lg p-4 bg-orange-50 dark:bg-orange-900/20">
                   <p className="text-sm font-medium text-orange-700 dark:text-orange-400">📋 IRRF</p>
-                  <p className="text-2xl font-bold text-orange-700 dark:text-orange-300 mt-2">R$ {formatCurrency(displayStats.total_irrf)}</p>
+                  <p className="text-2xl font-bold text-orange-700 dark:text-orange-300 mt-2">R$ {formatCurrency(adjustedStats.total_irrf)}</p>
                   <p className="text-xs text-gray-400 mt-1">Imposto de renda</p>
                 </div>
                 <div className="border rounded-lg p-4 bg-indigo-50 dark:bg-indigo-900/20">
                   <p className="text-sm font-medium text-indigo-700 dark:text-indigo-400">🏦 FGTS</p>
-                  <p className="text-2xl font-bold text-indigo-700 dark:text-indigo-300 mt-2">R$ {formatCurrency(displayStats.total_fgts)}</p>
+                  <p className="text-2xl font-bold text-indigo-700 dark:text-indigo-300 mt-2">R$ {formatCurrency(adjustedStats.total_fgts)}</p>
                   <p className="text-xs text-gray-400 mt-1">Fundo de garantia</p>
                 </div>
               </div>
@@ -769,17 +875,17 @@ const Payroll = () => {
                 <div className="border rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20">
                   <p className="text-sm font-medium text-blue-700 dark:text-blue-400 mb-2">⏰ HE 50%</p>
                   <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">
-                    R$ {formatCurrency((displayStats.total_he_50_diurnas || 0) + (displayStats.total_he_50_noturnas || 0))}
+                    R$ {formatCurrency((adjustedStats.total_he_50_diurnas || 0) + (adjustedStats.total_he_50_noturnas || 0))}
                   </p>
                 </div>
                 <div className="border rounded-lg p-4 bg-purple-50 dark:bg-purple-900/20">
                   <p className="text-sm font-medium text-purple-700 dark:text-purple-400 mb-2">⏰ HE 60%</p>
-                  <p className="text-2xl font-bold text-purple-700 dark:text-purple-300">R$ {formatCurrency(displayStats.total_he_60)}</p>
+                  <p className="text-2xl font-bold text-purple-700 dark:text-purple-300">R$ {formatCurrency(adjustedStats.total_he_60)}</p>
                 </div>
                 <div className="border rounded-lg p-4 bg-orange-50 dark:bg-orange-900/20">
                   <p className="text-sm font-medium text-orange-700 dark:text-orange-400 mb-2">⏰ HE 100%</p>
                   <p className="text-2xl font-bold text-orange-700 dark:text-orange-300">
-                    R$ {formatCurrency((displayStats.total_he_100_diurnas || 0) + (displayStats.total_he_100_noturnas || 0))}
+                    R$ {formatCurrency((adjustedStats.total_he_100_diurnas || 0) + (adjustedStats.total_he_100_noturnas || 0))}
                   </p>
                 </div>
               </div>

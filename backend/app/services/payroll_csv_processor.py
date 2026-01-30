@@ -221,12 +221,20 @@ class PayrollCSVProcessor:
             year: Ano (ex: 2024)
             month: Mês (1-12)
             period_type: Tipo (mensal, 13_adiantamento, etc)
+            
+        Nota: 13º salário é CONSOLIDADO com o período mensal correspondente:
+        - 13_adiantamento → busca/cria período de Novembro
+        - 13_integral → busca/cria período de Dezembro
         """
+        # 13º salário deve ser consolidado com o período mensal (não criar separado)
+        if period_type in ['13_adiantamento', '13_integral']:
+            # Forçar tipo 'mensal' para consolidar com folha do mês
+            period_type = 'mensal'
+            print(f"🔄 13º salário será consolidado com período mensal: {month}/{year}")
+        
         # Mapear tipo para nome amigável
         type_names = {
             'mensal': f'{self._get_month_name(month)} {year}',
-            '13_adiantamento': f'13º Salário (Adiantamento) {month}/{year}',
-            '13_integral': f'13º Salário (Integral) {month}/{year}',
             'complementar': f'Folha Complementar {month}/{year}',
             'adiantamento_salario': f'Adiantamento Salarial {month}/{year}'
         }
