@@ -610,7 +610,6 @@ const Payroll = () => {
                 <div className="border rounded-lg p-4 bg-cyan-50 dark:bg-cyan-900/20">
                   <p className="text-sm font-medium text-cyan-700 dark:text-cyan-400">🚌 Vale Transporte</p>
                   <p className="text-2xl font-bold text-cyan-700 dark:text-cyan-300 mt-2">R$ {formatCurrency(displayStats.total_vale_transporte)}</p>
-                  <p className="text-xs text-gray-400 mt-1">Benefício mobilidade</p>
                 </div>
                 <div className="border rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20">
                   <p className="text-sm font-medium text-blue-700 dark:text-blue-400">💊 Plano de Saúde</p>
@@ -710,8 +709,10 @@ const Payroll = () => {
                   </tr>
                 </thead>
                 <tbody className={`${config.classes.card} divide-y ${config.classes.border}`}>
-                  {financial_stats.map((period, index) => {
-                    const prevPeriod = index > 0 ? financial_stats[index - 1] : null;
+                  {[...financial_stats].reverse().map((period, index) => {
+                    // Inverter índice para comparar corretamente (do mais antigo para o mais novo)
+                    const reversedIndex = financial_stats.length - 1 - index;
+                    const prevPeriod = reversedIndex > 0 ? financial_stats[reversedIndex - 1] : null;
                     
                     // Calcular variações percentuais
                     const getVariation = (current, previous) => {
