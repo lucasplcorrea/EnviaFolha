@@ -243,8 +243,9 @@ const Payroll = () => {
   // Calcular displayStats
   const displayStats = filteredStats || 
     (financial_stats && financial_stats.length > 0 ? {
-      period_name: 'Todos os Períodos',
+      period_name: 'Consolidado de Todos os Períodos',
       total_employees: totals?.total_employees || 0,
+      total_periods: totals?.total_periods || financial_stats.length,
       total_proventos: totals?.total_proventos || 0,
       total_descontos: totals?.total_descontos || 0,
       total_liquido: totals?.total_liquido || 0,
@@ -252,8 +253,9 @@ const Payroll = () => {
       total_irrf: totals?.total_irrf || 0,
       total_fgts: totals?.total_fgts || 0,
       total_valor_salario: totals?.total_salarios || 0,
-      avg_salario: totals?.total_employees > 0 ? (totals?.total_salarios || 0) / totals?.total_employees : 0,
-      avg_liquido: totals?.total_employees > 0 ? (totals?.total_liquido || 0) / totals?.total_employees : 0,
+      // Usar médias calculadas do backend ao invés de dividir totais
+      avg_salario: financial_stats.reduce((sum, p) => sum + (p.avg_salario || 0), 0) / financial_stats.length,
+      avg_liquido: financial_stats.reduce((sum, p) => sum + (p.avg_liquido || 0), 0) / financial_stats.length,
       total_he_50_diurnas: financial_stats.reduce((sum, p) => sum + (p.total_he_50_diurnas || 0), 0),
       total_he_50_noturnas: financial_stats.reduce((sum, p) => sum + (p.total_he_50_noturnas || 0), 0),
       total_he_60: financial_stats.reduce((sum, p) => sum + (p.total_he_60 || 0), 0),
@@ -513,9 +515,17 @@ const Payroll = () => {
           <>
             {/* Resumo Principal */}
             <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
-              <h3 className={`text-lg font-semibold ${config.classes.text} mb-6`}>
-                📊 Resumo {hasActiveFilters ? 'Filtrado' : displayStats.period_name || ''}
+              <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
+                📊 {hasActiveFilters ? 'Resumo Filtrado' : displayStats.period_name || 'Resumo'}
               </h3>
+              {!hasActiveFilters && displayStats.total_periods > 1 && (
+                <p className={`text-xs ${config.classes.textSecondary} mb-4 flex items-center gap-2`}>
+                  <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full">
+                    {displayStats.total_periods} períodos consolidados
+                  </span>
+                  <span>• Médias calculadas por período</span>
+                </p>
+              )}
               
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="border rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20">
@@ -542,16 +552,46 @@ const Payroll = () => {
               <h3 className={`text-lg font-semibold ${config.classes.text} mb-6`}>💼 Informações Salariais</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className={`border rounded-lg p-4 ${config.classes.border}`}>
-                  <p className={`text-sm font-medium ${config.classes.textSecondary}`}>💰 Total Salários</p>
+                  <p className={`text-sm font-medium ${config.classes.textSecondary}`}>💰 Total Salários Base</p>
                   <p className={`text-2xl font-bold ${config.classes.text} mt-2`}>R$ {formatCurrency(displayStats.total_valor_salario)}</p>
+                  <p className="text-xs text-gray-400 mt-1">Soma de todos os salários</p>
                 </div>
                 <div className={`border rounded-lg p-4 ${config.classes.border}`}>
                   <p className={`text-sm font-medium ${config.classes.textSecondary}`}>📊 Salário Médio</p>
                   <p className={`text-2xl font-bold ${config.classes.text} mt-2`}>R$ {formatCurrency(displayStats.avg_salario)}</p>
+                  <p className="text-xs text-gray-400 mt-1">Média por funcionário</p>
                 </div>
                 <div className={`border rounded-lg p-4 ${config.classes.border}`}>
-                  <p className={`text-sm font-medium ${config.classes.textSecondary}`}>💵 Média Líquido</p>
+                  <p className={`text-sm font-medium ${config.classes.textSecondary}`}>💵 Líquido Médio</p>
                   <p className={`text-2xl font-bold ${config.classes.text} mt-2`}>R$ {formatCurrency(displayStats.avg_liquido)}</p>
+                  <p className="text-xs text-gray-400 mt-1">Média por funcionário</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Adicionais e Benefícios */}
+            <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
+              <h3 className={`text-lg font-semibold ${config.classes.text} mb-6`}>💎 Adicionais e Benefícios</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="border rounded-lg p-4 bg-amber-50 dark:bg-amber-900/20">
+                  <p className="text-sm font-medium text-amber-700 dark:text-amber-400">🎁 Gratificações</p>
+                  <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 mt-2">R$ {formatCurrency(displayStats.total_gratificacoes)}</p>
+                  <p className="text-xs text-gray-400 mt-1">Função, férias, 13º</p>
+                </div>
+                <div className="border rounded-lg p-4 bg-orange-50 dark:bg-orange-900/20">
+                  <p className="text-sm font-medium text-orange-700 dark:text-orange-400">⚠️ Periculosidade</p>
+                  <p className="text-2xl font-bold text-orange-700 dark:text-orange-300 mt-2">R$ {formatCurrency(displayStats.total_periculosidade)}</p>
+                  <p className="text-xs text-gray-400 mt-1">Adicional de risco</p>
+                </div>
+                <div className="border rounded-lg p-4 bg-yellow-50 dark:bg-yellow-900/20">
+                  <p className="text-sm font-medium text-yellow-700 dark:text-yellow-400">🏥 Insalubridade</p>
+                  <p className="text-2xl font-bold text-yellow-700 dark:text-yellow-300 mt-2">R$ {formatCurrency(displayStats.total_insalubridade)}</p>
+                  <p className="text-xs text-gray-400 mt-1">Condições adversas</p>
+                </div>
+                <div className="border rounded-lg p-4 bg-cyan-50 dark:bg-cyan-900/20">
+                  <p className="text-sm font-medium text-cyan-700 dark:text-cyan-400">🚌 Vale Transporte</p>
+                  <p className="text-2xl font-bold text-cyan-700 dark:text-cyan-300 mt-2">R$ {formatCurrency(displayStats.total_vale_transporte)}</p>
+                  <p className="text-xs text-gray-400 mt-1">Benefício mobilidade</p>
                 </div>
               </div>
             </div>
@@ -647,15 +687,60 @@ const Payroll = () => {
                   </tr>
                 </thead>
                 <tbody className={`${config.classes.card} divide-y ${config.classes.border}`}>
-                  {financial_stats.map((period) => (
-                    <tr key={period.period_id} className={config.classes.cardHover}>
-                      <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${config.classes.text}`}>{period.period_name}</td>
-                      <td className={`px-6 py-4 whitespace-nowrap text-sm ${config.classes.textSecondary}`}>{period.total_employees}</td>
-                      <td className={`px-6 py-4 whitespace-nowrap text-sm ${config.classes.textSecondary}`}>R$ {formatCurrency(period.total_proventos)}</td>
-                      <td className={`px-6 py-4 whitespace-nowrap text-sm ${config.classes.textSecondary}`}>R$ {formatCurrency(period.total_descontos)}</td>
-                      <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${config.classes.text}`}>R$ {formatCurrency(period.total_liquido)}</td>
-                    </tr>
-                  ))}
+                  {financial_stats.map((period, index) => {
+                    const prevPeriod = index > 0 ? financial_stats[index - 1] : null;
+                    
+                    // Calcular variações percentuais
+                    const getVariation = (current, previous) => {
+                      if (!previous || previous === 0) return null;
+                      return ((current - previous) / previous) * 100;
+                    };
+                    
+                    const empVariation = prevPeriod ? getVariation(period.total_employees, prevPeriod.total_employees) : null;
+                    const proventosVariation = prevPeriod ? getVariation(period.total_proventos, prevPeriod.total_proventos) : null;
+                    const descontosVariation = prevPeriod ? getVariation(period.total_descontos, prevPeriod.total_descontos) : null;
+                    const liquidoVariation = prevPeriod ? getVariation(period.total_liquido, prevPeriod.total_liquido) : null;
+                    
+                    const TrendIndicator = ({ variation }) => {
+                      if (variation === null) return null;
+                      const isPositive = variation > 0;
+                      const isNeutral = Math.abs(variation) < 0.5;
+                      
+                      if (isNeutral) {
+                        return <span className="text-xs text-gray-400 ml-1">→</span>;
+                      }
+                      
+                      return (
+                        <span className={`text-xs ml-1 ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
+                          {isPositive ? '↑' : '↓'} {Math.abs(variation).toFixed(1)}%
+                        </span>
+                      );
+                    };
+                    
+                    return (
+                      <tr key={period.period_id} className={config.classes.cardHover}>
+                        <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${config.classes.text}`}>
+                          {period.period_name}
+                        </td>
+                        <td className={`px-6 py-4 whitespace-nowrap text-sm ${config.classes.textSecondary}`}>
+                          {period.total_employees}
+                          <TrendIndicator variation={empVariation} />
+                        </td>
+                        <td className={`px-6 py-4 whitespace-nowrap text-sm ${config.classes.textSecondary}`}>
+                          R$ {formatCurrency(period.total_proventos)}
+                          <TrendIndicator variation={proventosVariation} />
+                        </td>
+                        <td className={`px-6 py-4 whitespace-nowrap text-sm ${config.classes.textSecondary}`}>
+                          R$ {formatCurrency(period.total_descontos)}
+                          <TrendIndicator variation={descontosVariation} />
+                        </td>
+                        <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${config.classes.text}`}>
+                          R$ {formatCurrency(period.total_liquido)}
+                          <TrendIndicator variation={liquidoVariation} />
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
