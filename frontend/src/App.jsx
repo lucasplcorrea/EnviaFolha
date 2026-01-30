@@ -23,6 +23,18 @@ import Endomarketing from './pages/Endomarketing.jsx';
 import RHIndicators from './pages/RHIndicators.jsx';
 import QueueManagement from './pages/QueueManagement.jsx';
 
+// Indicadores Refatorados
+import {
+  IndicatorsLayout,
+  Overview as IndicatorsOverview,
+  Headcount,
+  Turnover,
+  Demographics,
+  Tenure,
+  Leaves,
+  Payroll as PayrollIndicators
+} from './pages/indicators';
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -73,6 +85,17 @@ function AppContent() {
                     <Route path="communications" element={<ProtectedRoute><CommunicationSender /></ProtectedRoute>} />
                     <Route path="endomarketing" element={<ProtectedRoute><Endomarketing /></ProtectedRoute>} />
                     <Route path="rh-indicators" element={<ProtectedRoute><RHIndicators /></ProtectedRoute>} />
+                    {/* Novos Indicadores Refatorados */}
+                    <Route path="indicators" element={<ProtectedRoute><IndicatorsLayout /></ProtectedRoute>}>
+                      <Route index element={<IndicatorsOverview />} />
+                      <Route path="overview" element={<IndicatorsOverview />} />
+                      <Route path="headcount" element={<Headcount />} />
+                      <Route path="turnover" element={<Turnover />} />
+                      <Route path="demographics" element={<Demographics />} />
+                      <Route path="tenure" element={<Tenure />} />
+                      <Route path="leaves" element={<Leaves />} />
+                      <Route path="payroll" element={<PayrollIndicators />} />
+                    </Route>
                     <Route path="queue-management" element={<ProtectedRoute><QueueManagement /></ProtectedRoute>} />
                     <Route path="reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
                     <Route path="users" element={<ProtectedRoute><Users /></ProtectedRoute>} />

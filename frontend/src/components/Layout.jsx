@@ -43,7 +43,7 @@ const navigation = [
   },
   { name: 'Comunicados', href: '/communications', icon: ChatBubbleLeftRightIcon },
   { name: 'Endomarketing', href: '/endomarketing', icon: HeartIcon },
-  { name: 'Indicadores RH', href: '/rh-indicators', icon: PresentationChartLineIcon },
+  { name: 'Indicadores RH', href: '/indicators', icon: PresentationChartLineIcon },
   { name: 'Filas de Envio', href: '/queue-management', icon: QueueListIcon },
   { name: 'Relatórios', href: '/reports', icon: ChartBarIcon },
   { name: 'Configurações', href: '/settings', icon: CogIcon },
