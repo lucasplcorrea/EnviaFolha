@@ -263,6 +263,8 @@ const Payroll = () => {
       total_he_100_noturnas: financial_stats.reduce((sum, p) => sum + (p.total_he_100_noturnas || 0), 0),
       total_adicional_noturno: financial_stats.reduce((sum, p) => sum + (p.total_adicional_noturno || 0), 0),
       total_gratificacoes: financial_stats.reduce((sum, p) => sum + (p.total_gratificacoes || 0), 0),
+      total_13_salario: financial_stats.reduce((sum, p) => sum + (p.total_13_salario || 0), 0),
+      total_ferias_pagas: financial_stats.reduce((sum, p) => sum + (p.total_ferias_pagas || 0), 0),
       total_periculosidade: financial_stats.reduce((sum, p) => sum + (p.total_periculosidade || 0), 0),
       total_insalubridade: financial_stats.reduce((sum, p) => sum + (p.total_insalubridade || 0), 0),
       total_plano_saude: totals?.total_plano_saude || 0,
@@ -572,11 +574,21 @@ const Payroll = () => {
             {/* Adicionais e Benefícios */}
             <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
               <h3 className={`text-lg font-semibold ${config.classes.text} mb-6`}>💎 Adicionais e Benefícios</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
                 <div className="border rounded-lg p-4 bg-amber-50 dark:bg-amber-900/20">
                   <p className="text-sm font-medium text-amber-700 dark:text-amber-400">🎁 Gratificações</p>
                   <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 mt-2">R$ {formatCurrency(displayStats.total_gratificacoes)}</p>
-                  <p className="text-xs text-gray-400 mt-1">Função, férias, 13º</p>
+                  <p className="text-xs text-gray-400 mt-1">Função e cargo</p>
+                </div>
+                <div className="border rounded-lg p-4 bg-green-50 dark:bg-green-900/20">
+                  <p className="text-sm font-medium text-green-700 dark:text-green-400">🎄 13º Salário</p>
+                  <p className="text-2xl font-bold text-green-700 dark:text-green-300 mt-2">R$ {formatCurrency(displayStats.total_13_salario)}</p>
+                  <p className="text-xs text-gray-400 mt-1">Proporcional e abono</p>
+                </div>
+                <div className="border rounded-lg p-4 bg-sky-50 dark:bg-sky-900/20">
+                  <p className="text-sm font-medium text-sky-700 dark:text-sky-400">🏖️ Férias Pagas</p>
+                  <p className="text-2xl font-bold text-sky-700 dark:text-sky-300 mt-2">R$ {formatCurrency(displayStats.total_ferias_pagas)}</p>
+                  <p className="text-xs text-gray-400 mt-1">Férias e proporcionais</p>
                 </div>
                 <div className="border rounded-lg p-4 bg-orange-50 dark:bg-orange-900/20">
                   <p className="text-sm font-medium text-orange-700 dark:text-orange-400">⚠️ Periculosidade</p>
@@ -588,10 +600,22 @@ const Payroll = () => {
                   <p className="text-2xl font-bold text-yellow-700 dark:text-yellow-300 mt-2">R$ {formatCurrency(displayStats.total_insalubridade)}</p>
                   <p className="text-xs text-gray-400 mt-1">Condições adversas</p>
                 </div>
+              </div>
+            </div>
+
+            {/* Benefícios */}
+            <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
+              <h3 className={`text-lg font-semibold ${config.classes.text} mb-6`}>🎫 Benefícios</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="border rounded-lg p-4 bg-cyan-50 dark:bg-cyan-900/20">
                   <p className="text-sm font-medium text-cyan-700 dark:text-cyan-400">🚌 Vale Transporte</p>
                   <p className="text-2xl font-bold text-cyan-700 dark:text-cyan-300 mt-2">R$ {formatCurrency(displayStats.total_vale_transporte)}</p>
                   <p className="text-xs text-gray-400 mt-1">Benefício mobilidade</p>
+                </div>
+                <div className="border rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20">
+                  <p className="text-sm font-medium text-blue-700 dark:text-blue-400">💊 Plano de Saúde</p>
+                  <p className="text-2xl font-bold text-blue-700 dark:text-blue-300 mt-2">R$ {formatCurrency(displayStats.total_plano_saude)}</p>
+                  <p className="text-xs text-gray-400 mt-1">Assistência médica</p>
                 </div>
               </div>
             </div>
@@ -625,23 +649,22 @@ const Payroll = () => {
 
             {/* Encargos */}
             <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
-              <h3 className={`text-lg font-semibold ${config.classes.text} mb-6`}>📑 Encargos e Benefícios</h3>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <h3 className={`text-lg font-semibold ${config.classes.text} mb-6`}>📑 Encargos Trabalhistas</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="border rounded-lg p-4 bg-purple-50 dark:bg-purple-900/20">
                   <p className="text-sm font-medium text-purple-700 dark:text-purple-400">🏛️ INSS</p>
                   <p className="text-2xl font-bold text-purple-700 dark:text-purple-300 mt-2">R$ {formatCurrency(displayStats.total_inss)}</p>
+                  <p className="text-xs text-gray-400 mt-1">Previdência social</p>
                 </div>
                 <div className="border rounded-lg p-4 bg-orange-50 dark:bg-orange-900/20">
                   <p className="text-sm font-medium text-orange-700 dark:text-orange-400">📋 IRRF</p>
                   <p className="text-2xl font-bold text-orange-700 dark:text-orange-300 mt-2">R$ {formatCurrency(displayStats.total_irrf)}</p>
+                  <p className="text-xs text-gray-400 mt-1">Imposto de renda</p>
                 </div>
                 <div className="border rounded-lg p-4 bg-indigo-50 dark:bg-indigo-900/20">
                   <p className="text-sm font-medium text-indigo-700 dark:text-indigo-400">🏦 FGTS</p>
                   <p className="text-2xl font-bold text-indigo-700 dark:text-indigo-300 mt-2">R$ {formatCurrency(displayStats.total_fgts)}</p>
-                </div>
-                <div className="border rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20">
-                  <p className="text-sm font-medium text-blue-700 dark:text-blue-400">💊 Plano de Saúde</p>
-                  <p className="text-2xl font-bold text-blue-700 dark:text-blue-300 mt-2">R$ {formatCurrency(displayStats.total_plano_saude)}</p>
+                  <p className="text-xs text-gray-400 mt-1">Fundo de garantia</p>
                 </div>
               </div>
             </div>

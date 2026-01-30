@@ -4015,12 +4015,16 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                             COALESCE(SUM((earnings_data->>'ADICIONAL_NOTURNO')::numeric), 0) as total_adicional_noturno,
                             (
                                 COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO')::numeric), 0) + 
-                                COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_20')::numeric), 0) +
+                                COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_20')::numeric), 0)
+                            ) as total_gratificacoes,
+                            (
                                 COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_13_SAL_PROP')::numeric), 0) +
-                                COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_ABONO')::numeric), 0) +
+                                COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_ABONO')::numeric), 0)
+                            ) as total_13_salario,
+                            (
                                 COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_FERIAS')::numeric), 0) +
                                 COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_FERIAS_PROP')::numeric), 0)
-                            ) as total_gratificacoes,
+                            ) as total_ferias_pagas,
                             COALESCE(SUM((earnings_data->>'PERICULOSIDADE')::numeric), 0) as total_periculosidade,
                             (COALESCE(SUM((earnings_data->>'INSALUBRIDADE')::numeric), 0) + COALESCE(SUM((earnings_data->>'INSALUBRIDADE_NORMATIVO')::numeric), 0)) as total_insalubridade,
                             COALESCE(SUM((additional_data->>'Valor Salário')::numeric), 0) as total_valor_salario,
@@ -4069,24 +4073,26 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                             "total_he_100_noturnas": float(stats_row[9]) if stats_row[9] else 0,
                             "total_adicional_noturno": float(stats_row[10]) if stats_row[10] else 0,
                             "total_gratificacoes": float(stats_row[11]) if stats_row[11] else 0,
-                            "total_periculosidade": float(stats_row[12]) if stats_row[12] else 0,
-                            "total_insalubridade": float(stats_row[13]) if stats_row[13] else 0,
-                            "total_valor_salario": float(stats_row[14]) if stats_row[14] else 0,
-                            "total_salario_mensal": float(stats_row[15]) if stats_row[15] else 0,
-                            "total_proventos": float(stats_row[16]) if stats_row[16] else 0,
-                            "total_descontos": float(stats_row[17]) if stats_row[17] else 0,
-                            "total_vantagens": float(stats_row[18]) if stats_row[18] else 0,
-                            "total_liquido": float(stats_row[19]) if stats_row[19] else 0,
-                            "avg_salario": float(stats_row[20]) if stats_row[20] else 0,
-                            "avg_liquido": float(stats_row[21]) if stats_row[21] else 0,
-                            "total_he50_horas": float(stats_row[22]) if stats_row[22] else 0,
-                            "total_horas_noturnas": float(stats_row[23]) if stats_row[23] else 0,
-                            "total_plano_saude": float(stats_row[24]) if stats_row[24] else 0,
-                            "total_vale_transporte": float(stats_row[25]) if stats_row[25] else 0,
-                            "trabalhando": stats_row[26] or 0,
-                            "ferias": stats_row[27] or 0,
-                            "afastados": stats_row[28] or 0,
-                            "demitidos": stats_row[29] or 0,
+                            "total_13_salario": float(stats_row[12]) if stats_row[12] else 0,
+                            "total_ferias_pagas": float(stats_row[13]) if stats_row[13] else 0,
+                            "total_periculosidade": float(stats_row[14]) if stats_row[14] else 0,
+                            "total_insalubridade": float(stats_row[15]) if stats_row[15] else 0,
+                            "total_valor_salario": float(stats_row[16]) if stats_row[16] else 0,
+                            "total_salario_mensal": float(stats_row[17]) if stats_row[17] else 0,
+                            "total_proventos": float(stats_row[18]) if stats_row[18] else 0,
+                            "total_descontos": float(stats_row[19]) if stats_row[19] else 0,
+                            "total_vantagens": float(stats_row[20]) if stats_row[20] else 0,
+                            "total_liquido": float(stats_row[21]) if stats_row[21] else 0,
+                            "avg_salario": float(stats_row[22]) if stats_row[22] else 0,
+                            "avg_liquido": float(stats_row[23]) if stats_row[23] else 0,
+                            "total_he50_horas": float(stats_row[24]) if stats_row[24] else 0,
+                            "total_horas_noturnas": float(stats_row[25]) if stats_row[25] else 0,
+                            "total_plano_saude": float(stats_row[26]) if stats_row[26] else 0,
+                            "total_vale_transporte": float(stats_row[27]) if stats_row[27] else 0,
+                            "trabalhando": stats_row[28] or 0,
+                            "ferias": stats_row[29] or 0,
+                            "afastados": stats_row[30] or 0,
+                            "demitidos": stats_row[31] or 0,
                         })
                 
                 # 3. Totais gerais
@@ -4328,12 +4334,16 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                         COALESCE(SUM((earnings_data->>'ADICIONAL_NOTURNO')::numeric), 0) as total_adicional_noturno,
                         (
                             COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO')::numeric), 0) + 
-                            COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_20')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_20')::numeric), 0)
+                        ) as total_gratificacoes,
+                        (
                             COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_13_SAL_PROP')::numeric), 0) +
-                            COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_ABONO')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_ABONO')::numeric), 0)
+                        ) as total_13_salario,
+                        (
                             COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_FERIAS')::numeric), 0) +
                             COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_FERIAS_PROP')::numeric), 0)
-                        ) as total_gratificacoes,
+                        ) as total_ferias_pagas,
                         COALESCE(SUM((earnings_data->>'PERICULOSIDADE')::numeric), 0) as total_periculosidade,
                         (COALESCE(SUM((earnings_data->>'INSALUBRIDADE')::numeric), 0) + COALESCE(SUM((earnings_data->>'INSALUBRIDADE_NORMATIVO')::numeric), 0)) as total_insalubridade,
                         COALESCE(SUM((additional_data->>'Horas Extras 50% Diurnas')::numeric), 0) as total_he50_horas,
@@ -4388,16 +4398,18 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                         "total_he_100_noturnas": float(row[16]) if row and row[16] else 0,
                         "total_adicional_noturno": float(row[17]) if row and row[17] else 0,
                         "total_gratificacoes": float(row[18]) if row and row[18] else 0,
-                        "total_periculosidade": float(row[19]) if row and row[19] else 0,
-                        "total_insalubridade": float(row[20]) if row and row[20] else 0,
-                        "total_he50_horas": float(row[21]) if row and row[21] else 0,
-                        "total_horas_noturnas": float(row[22]) if row and row[22] else 0,
-                        "total_plano_saude": float(row[23]) if row and row[23] else 0,
-                        "total_vale_transporte": float(row[24]) if row and row[24] else 0,
-                        "trabalhando": row[25] if row else 0,
-                        "ferias": row[26] if row else 0,
-                        "afastados": row[27] if row else 0,
-                        "demitidos": row[28] if row else 0,
+                        "total_13_salario": float(row[19]) if row and row[19] else 0,
+                        "total_ferias_pagas": float(row[20]) if row and row[20] else 0,
+                        "total_periculosidade": float(row[21]) if row and row[21] else 0,
+                        "total_insalubridade": float(row[22]) if row and row[22] else 0,
+                        "total_he50_horas": float(row[23]) if row and row[23] else 0,
+                        "total_horas_noturnas": float(row[24]) if row and row[24] else 0,
+                        "total_plano_saude": float(row[25]) if row and row[25] else 0,
+                        "total_vale_transporte": float(row[26]) if row and row[26] else 0,
+                        "trabalhando": row[27] if row else 0,
+                        "ferias": row[28] if row else 0,
+                        "afastados": row[29] if row else 0,
+                        "demitidos": row[30] if row else 0,
                         "contratados": 0,  # Será calculado se múltiplos períodos
                     }
                 }
