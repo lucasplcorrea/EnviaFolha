@@ -495,6 +495,50 @@ class PayrollCSVProcessor:
                 if value > 0:
                     earnings[json_field] = value
         
+        # 13º Salário - Adiantamento (Novembro)
+        decimo_adiantamento_fields = {
+            '13_SALARIO_ADIANTAMENTO': '13o Salário Adiantamento',
+            '13_GRATIFICACAO_FUNCAO_ADIANTAMENTO': 'Gratificacao Função 13o Sal.Adiantamento',
+        }
+        
+        for json_field, csv_field in decimo_adiantamento_fields.items():
+            if csv_field in row and row[csv_field]:
+                value = parse_br_number(row[csv_field])
+                if value > 0:
+                    earnings[json_field] = value
+        
+        # 13º Salário - Integral (Dezembro)
+        decimo_integral_fields = {
+            '13_SALARIO_INTEGRAL': '13o Salário Integral',
+            '13_SALARIO_MATERNIDADE_GPS': '13o Salário Maternidade (GPS)',
+            '13_MEDIA_EVENTOS_VARIAVEIS': 'Med.Eve.Var.13o Sal.Integral',
+            '13_MEDIA_HORAS_EXTRAS_DIURNO': 'Med.Hrs.Ext.13o Sal.Integral Diurno',
+            '13_MEDIA_HORAS_EXTRAS_NOTURNAS': 'Med.Hrs.Ext.13o Sal.Integral Noturnas',
+            '13_GRATIFICACAO_FUNCAO_INTEGRAL': 'Gratificacao Função 13o Sal.Integral',
+            '13_ADICIONAL_NOTURNO': 'Adicional Noturno 13o Sal.Integral',
+        }
+        
+        for json_field, csv_field in decimo_integral_fields.items():
+            if csv_field in row and row[csv_field]:
+                value = parse_br_number(row[csv_field])
+                if value > 0:
+                    earnings[json_field] = value
+        
+        # Férias - Valores Base
+        ferias_fields = {
+            'FERIAS_VALOR_BASE': 'Horas Férias Diurnas',
+            'FERIAS_ABONO_1_3': '1/3 Sobre Férias',
+            'FERIAS_MEDIA_HORAS_EXTRAS': 'Med.Hrs.Ext.S/Férias Diurnas',
+            'FERIAS_MEDIA_HORAS_EXTRAS_NOTURNAS': 'Med.Hrs.Ext.S/Férias Noturnas',
+            'FERIAS_ADICIONAL_NOTURNO': 'Adicional Noturno S/Férias',
+        }
+        
+        for json_field, csv_field in ferias_fields.items():
+            if csv_field in row and row[csv_field]:
+                value = parse_br_number(row[csv_field])
+                if value > 0:
+                    earnings[json_field] = value
+        
         # Adicionais Legais
         adicionais_legais = {
             'PERICULOSIDADE': 'Periculosidade',
@@ -515,7 +559,7 @@ class PayrollCSVProcessor:
         # FGTS - todas as variantes
         fgts_fields = ['FGTS', 'FGTS 13o Salário GRFC', 'FGTS GRFC', 'FGTS Multa - Depósito Saldo',
                        'FGTS S/13o Sal.Proporc.Resc.', 'FGTS S/Aviso Prévio Indenizado', 'FGTS S/Férias',
-                       'FGTS s/13o Salário Indenizado GRFC']
+                       'FGTS s/13o Salário Indenizado GRFC', 'FGTS S/13o Salário']
         
         # INSS - todas as variantes (incluindo devoluções negativas)
         inss_fields = ['INSS', 'INSS S/13o Salário', 'INSS S/Férias', 'Devolução INSS Mês']
@@ -524,6 +568,27 @@ class PayrollCSVProcessor:
         irrf_fields = ['IRRF', 'IRRF Férias na Rescisão', 'IRRF S/13o Salário', 'IRRF S/Férias']
         
         deductions = {}
+        
+        # Descontos específicos de 13º e Férias
+        desconto_13_fields = {
+            'DESCONTO_13_ADIANTAMENTO': 'Desconto 13o Salário Adiantamento',
+        }
+        
+        for json_field, csv_field in desconto_13_fields.items():
+            if csv_field in row and row[csv_field]:
+                value = parse_br_number(row[csv_field])
+                if value > 0:
+                    deductions[json_field] = value
+        
+        desconto_ferias_fields = {
+            'DESCONTO_FERIAS_ADIANTAMENTO': 'Desconto Adiantamento Férias',
+        }
+        
+        for json_field, csv_field in desconto_ferias_fields.items():
+            if csv_field in row and row[csv_field]:
+                value = parse_br_number(row[csv_field])
+                if value > 0:
+                    deductions[json_field] = value
         
         # Somar todos os FGTS
         total_fgts = 0

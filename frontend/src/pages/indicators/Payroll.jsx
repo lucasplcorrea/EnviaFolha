@@ -582,13 +582,107 @@ const Payroll = () => {
                 </div>
                 <div className="border rounded-lg p-4 bg-green-50 dark:bg-green-900/20">
                   <p className="text-sm font-medium text-green-700 dark:text-green-400">🎄 13º Salário</p>
-                  <p className="text-2xl font-bold text-green-700 dark:text-green-300 mt-2">R$ {formatCurrency(displayStats.total_13_salario)}</p>
-                  <p className="text-xs text-gray-400 mt-1">Proporcional e abono</p>
+                  <p className="text-2xl font-bold text-green-700 dark:text-green-300 mt-2">
+                    R$ {formatCurrency(
+                      (displayStats.total_13_adiantamento || 0) +
+                      (displayStats.total_13_integral || 0) +
+                      (displayStats.total_13_maternidade_gps || 0) +
+                      (displayStats.total_13_med_eventos || 0) +
+                      (displayStats.total_13_med_horas_extras || 0) +
+                      (displayStats.total_13_gratif_adiantamento || 0) +
+                      (displayStats.total_13_gratif_integral || 0) +
+                      (displayStats.total_13_salario || 0)
+                    )}
+                  </p>
+                  {/* Breakdown detalhado */}
+                  {(displayStats.total_13_adiantamento > 0 || displayStats.total_13_integral > 0) && (
+                    <div className="mt-3 pt-3 border-t border-green-200 dark:border-green-800">
+                      <p className="text-xs text-gray-600 dark:text-gray-400 mb-2 font-semibold">Detalhamento:</p>
+                      {displayStats.total_13_adiantamento > 0 && (
+                        <p className="text-xs text-gray-600 dark:text-gray-400">
+                          • Adiant: <span className="font-medium">R$ {formatCurrency(displayStats.total_13_adiantamento)}</span>
+                        </p>
+                      )}
+                      {displayStats.total_13_integral > 0 && (
+                        <p className="text-xs text-gray-600 dark:text-gray-400">
+                          • Integral: <span className="font-medium">R$ {formatCurrency(displayStats.total_13_integral)}</span>
+                        </p>
+                      )}
+                      {displayStats.total_13_maternidade_gps > 0 && (
+                        <p className="text-xs text-green-700 dark:text-green-400">
+                          • Matern (GPS): <span className="font-medium">R$ {formatCurrency(displayStats.total_13_maternidade_gps)}</span>
+                          <span className="text-[10px] ml-1">Gov</span>
+                        </p>
+                      )}
+                      {displayStats.total_13_med_eventos > 0 && (
+                        <p className="text-xs text-gray-600 dark:text-gray-400">
+                          • Méd. Eventos: <span className="font-medium">R$ {formatCurrency(displayStats.total_13_med_eventos)}</span>
+                        </p>
+                      )}
+                      {displayStats.total_13_med_horas_extras > 0 && (
+                        <p className="text-xs text-gray-600 dark:text-gray-400">
+                          • Méd. HE: <span className="font-medium">R$ {formatCurrency(displayStats.total_13_med_horas_extras)}</span>
+                        </p>
+                      )}
+                      {(displayStats.total_13_gratif_adiantamento > 0 || displayStats.total_13_gratif_integral > 0) && (
+                        <p className="text-xs text-gray-600 dark:text-gray-400">
+                          • Gratif: <span className="font-medium">R$ {formatCurrency(
+                            (displayStats.total_13_gratif_adiantamento || 0) + 
+                            (displayStats.total_13_gratif_integral || 0)
+                          )}</span>
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {!(displayStats.total_13_adiantamento > 0 || displayStats.total_13_integral > 0) && (
+                    <p className="text-xs text-gray-400 mt-1">Proporcional e abono</p>
+                  )}
                 </div>
                 <div className="border rounded-lg p-4 bg-sky-50 dark:bg-sky-900/20">
-                  <p className="text-sm font-medium text-sky-700 dark:text-sky-400">🏖️ Férias Pagas</p>
-                  <p className="text-2xl font-bold text-sky-700 dark:text-sky-300 mt-2">R$ {formatCurrency(displayStats.total_ferias_pagas)}</p>
-                  <p className="text-xs text-gray-400 mt-1">Férias e proporcionais</p>
+                  <p className="text-sm font-medium text-sky-700 dark:text-sky-400">🏖️ Férias</p>
+                  <p className="text-2xl font-bold text-sky-700 dark:text-sky-300 mt-2">
+                    R$ {formatCurrency(
+                      (displayStats.total_ferias_base || 0) +
+                      (displayStats.total_ferias_abono_1_3 || 0) +
+                      (displayStats.total_ferias_med_horas_extras || 0) +
+                      (displayStats.total_ferias_pagas || 0)
+                    )}
+                  </p>
+                  {/* Breakdown detalhado */}
+                  {(displayStats.total_ferias_base > 0 || displayStats.total_ferias_abono_1_3 > 0) && (
+                    <div className="mt-3 pt-3 border-t border-sky-200 dark:border-sky-800">
+                      <p className="text-xs text-gray-600 dark:text-gray-400 mb-2 font-semibold">Detalhamento:</p>
+                      {displayStats.total_ferias_base > 0 && (
+                        <p className="text-xs text-gray-600 dark:text-gray-400">
+                          • Base: <span className="font-medium">R$ {formatCurrency(displayStats.total_ferias_base)}</span>
+                        </p>
+                      )}
+                      {displayStats.total_ferias_abono_1_3 > 0 && (
+                        <p className="text-xs text-sky-700 dark:text-sky-400">
+                          • Abono 1/3: <span className="font-medium">R$ {formatCurrency(displayStats.total_ferias_abono_1_3)}</span>
+                          <span className="text-[10px] ml-1">CF/88</span>
+                        </p>
+                      )}
+                      {displayStats.total_ferias_med_horas_extras > 0 && (
+                        <p className="text-xs text-gray-600 dark:text-gray-400">
+                          • Méd. HE: <span className="font-medium">R$ {formatCurrency(displayStats.total_ferias_med_horas_extras)}</span>
+                        </p>
+                      )}
+                      {displayStats.total_ferias_pagas > 0 && (
+                        <p className="text-xs text-gray-600 dark:text-gray-400">
+                          • Gratif: <span className="font-medium">R$ {formatCurrency(displayStats.total_ferias_pagas)}</span>
+                        </p>
+                      )}
+                      {displayStats.total_desconto_ferias_adiantamento > 0 && (
+                        <p className="text-xs text-red-600 dark:text-red-400">
+                          • Desc. Adiant: <span className="font-medium">-R$ {formatCurrency(displayStats.total_desconto_ferias_adiantamento)}</span>
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {!(displayStats.total_ferias_base > 0 || displayStats.total_ferias_abono_1_3 > 0) && (
+                    <p className="text-xs text-gray-400 mt-1">Férias e proporcionais</p>
+                  )}
                 </div>
                 <div className="border rounded-lg p-4 bg-orange-50 dark:bg-orange-900/20">
                   <p className="text-sm font-medium text-orange-700 dark:text-orange-400">⚠️ Periculosidade</p>
