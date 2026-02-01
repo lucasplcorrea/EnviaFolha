@@ -15,7 +15,7 @@ import {
 
 const PayrollDataProcessor = () => {
   const [periods, setPeriods] = useState([]);
-  const [csvFile, setCsvFile] = useState(null);
+  const [csvFiles, setCsvFiles] = useState([]);
   const [csvDivision, setCsvDivision] = useState('0060');
   const [csvAutoCreate, setCsvAutoCreate] = useState(true);
   const [selectedPeriod, setSelectedPeriod] = useState('');
@@ -81,69 +81,91 @@ const PayrollDataProcessor = () => {
   };
 
   const handleCsvFileSelect = (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
+    const files = Array.from(event.target.files);
+    if (files.length === 0) return;
 
-    if (!file.name.endsWith('.csv') && !file.name.endsWith('.CSV')) {
-      toast.error('Por favor, selecione um arquivo CSV');
+    const invalidFiles = files.filter(f => !f.name.endsWith('.csv') && !f.name.endsWith('.CSV'));
+    if (invalidFiles.length > 0) {
+      toast.error('Por favor, selecione apenas arquivos CSV');
       return;
     }
 
-    setCsvFile(file);
+    setCsvFiles(files);
     setCsvResult(null);
   };
 
   const handleCsvUpload = async () => {
-    if (!csvFile) {
-      toast.error('Selecione um arquivo CSV primeiro');
+    if (csvFiles.length === 0) {
+      toast.error('Selecione pelo menos um arquivo CSV');
       return;
     }
 
     setCsvUploading(true);
     setCsvResult(null);
 
+    const results = [];
+    let successCount = 0;
+    let errorCount = 0;
+
     try {
-      // 1. Upload do arquivo
-      const formData = new FormData();
-      formData.append('file', csvFile);
+      for (let i = 0; i < csvFiles.length; i++) {
+        const file = csvFiles[i];
+        toast.loading(`Processando ${i + 1}/${csvFiles.length}: ${file.name}...`, { id: `upload-${i}` });
 
-      const uploadResponse = await api.post('/uploads/csv', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
+        try {
+          // 1. Upload do arquivo
+          const formData = new FormData();
+          formData.append('file', file);
+
+          const uploadResponse = await api.post('/uploads/csv', formData, {
+            headers: {
+              'Content-Type': 'multipart/form-data',
+            },
+          });
+
+          const filePath = uploadResponse.data.file_path;
+
+          // 2. Processar o CSV
+          const processResponse = await api.post('/payroll/upload-csv', {
+            file_path: filePath,
+            division_code: csvDivision,
+            auto_create_employees: csvAutoCreate,
+            period_id: selectedPeriod || null,
+          });
+
+          const result = processResponse.data;
+          results.push({ file: file.name, ...result });
+
+          if (result.success) {
+            successCount++;
+            toast.success(`✅ ${file.name} processado!`, { id: `upload-${i}` });
+          } else {
+            errorCount++;
+            toast.error(`❌ ${file.name}: ${result.error}`, { id: `upload-${i}` });
+          }
+        } catch (error) {
+          errorCount++;
+          toast.error(`❌ ${file.name}: ${error.response?.data?.error || error.message}`, { id: `upload-${i}` });
+          results.push({ 
+            file: file.name, 
+            success: false, 
+            error: error.response?.data?.error || error.message 
+          });
+        }
+      }
+
+      // Resumo final
+      setCsvResult({
+        success: successCount > 0,
+        summary: `${successCount} arquivo(s) processado(s) com sucesso, ${errorCount} erro(s)`,
+        results: results
       });
 
-      const filePath = uploadResponse.data.file_path;
-
-      // 2. Processar o CSV
-      const processResponse = await api.post('/payroll/upload-csv', {
-        file_path: filePath,
-        division_code: csvDivision,
-        auto_create_employees: csvAutoCreate,
-        period_id: selectedPeriod || null,
-      });
-
-      const result = processResponse.data;
-      setCsvResult(result);
-
-      if (result.success) {
-        const stats = result.stats;
-        toast.success(
-          `✅ Processado! ${stats.processed}/${stats.total_rows} linhas, ${stats.new_employees} novos funcionários`
-        );
+      if (successCount > 0) {
         loadPeriods();
         loadProcessingHistory();
-        setCsvFile(null);
-      } else {
-        toast.error(`❌ Erro: ${result.error}`);
+        setCsvFiles([]);
       }
-    } catch (error) {
-      console.error('Erro no upload CSV:', error);
-      toast.error(error.response?.data?.error || 'Erro ao processar CSV');
-      setCsvResult({
-        success: false,
-        error: error.response?.data?.error || error.message,
-      });
     } finally {
       setCsvUploading(false);
     }
@@ -177,13 +199,14 @@ const PayrollDataProcessor = () => {
                 <input
                   type="file"
                   accept=".csv,.CSV"
+                  multiple
                   onChange={handleCsvFileSelect}
                   className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
                 />
-                {csvFile && (
+                {csvFiles.length > 0 && (
                   <button
                     onClick={() => {
-                      setCsvFile(null);
+                      setCsvFiles([]);
                       setCsvResult(null);
                     }}
                     className="text-red-600 hover:text-red-800"
@@ -192,10 +215,17 @@ const PayrollDataProcessor = () => {
                   </button>
                 )}
               </div>
-              {csvFile && (
-                <p className="mt-2 text-sm text-green-600">
-                  ✓ {csvFile.name} ({(csvFile.size / 1024).toFixed(2)} KB)
-                </p>
+              {csvFiles.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  <p className="text-sm font-medium text-green-600">
+                    ✓ {csvFiles.length} arquivo(s) selecionado(s):
+                  </p>
+                  <ul className="text-sm text-gray-600 ml-4">
+                    {csvFiles.map((f, idx) => (
+                      <li key={idx}>• {f.name} ({(f.size / 1024).toFixed(2)} KB)</li>
+                    ))}
+                  </ul>
+                </div>
               )}
             </div>
 
@@ -225,17 +255,18 @@ const PayrollDataProcessor = () => {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 <BuildingOfficeIcon className="inline h-4 w-4 mr-1" />
-                Código da Empresa
+                Empresa
               </label>
-              <input
-                type="text"
+              <select
                 value={csvDivision}
                 onChange={(e) => setCsvDivision(e.target.value)}
-                placeholder="Ex: 0060"
                 className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
+              >
+                <option value="0060">0060 - Empreendimentos</option>
+                <option value="0059">0059 - Infraestrutura</option>
+              </select>
               <p className="mt-1 text-xs text-gray-500">
-                Código de divisão/empresa para processar os dados
+                Selecione a empresa para processar os dados
               </p>
             </div>
 
@@ -262,9 +293,9 @@ const PayrollDataProcessor = () => {
             {/* Upload Button */}
             <button
               onClick={handleCsvUpload}
-              disabled={!csvFile || csvUploading}
+              disabled={csvFiles.length === 0 || csvUploading}
               className={`w-full flex items-center justify-center space-x-2 py-3 px-4 rounded-lg font-medium transition-all ${
-                !csvFile || csvUploading
+                csvFiles.length === 0 || csvUploading
                   ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                   : 'bg-blue-600 text-white hover:bg-blue-700 shadow-md hover:shadow-lg'
               }`}
@@ -280,7 +311,7 @@ const PayrollDataProcessor = () => {
               ) : (
                 <>
                   <DocumentArrowUpIcon className="h-5 w-5" />
-                  <span>Processar CSV</span>
+                  <span>Processar {csvFiles.length} CSV{csvFiles.length > 1 ? 's' : ''}</span>
                 </>
               )}
             </button>
@@ -302,7 +333,35 @@ const PayrollDataProcessor = () => {
                     <h4 className={`font-medium ${csvResult.success ? 'text-green-900' : 'text-red-900'}`}>
                       {csvResult.success ? 'Processamento Concluído!' : 'Erro no Processamento'}
                     </h4>
-                    {csvResult.success && csvResult.stats && (
+                    
+                    {/* Resumo geral para múltiplos arquivos */}
+                    {csvResult.summary && (
+                      <p className="mt-2 text-sm font-medium">{csvResult.summary}</p>
+                    )}
+                    
+                    {/* Detalhes de cada arquivo */}
+                    {csvResult.results && csvResult.results.length > 0 && (
+                      <div className="mt-3 space-y-2 max-h-60 overflow-y-auto">
+                        {csvResult.results.map((result, idx) => (
+                          <div key={idx} className={`text-sm p-2 rounded ${
+                            result.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                          }`}>
+                            <p className="font-medium">{result.file}</p>
+                            {result.success && result.stats && (
+                              <p className="text-xs mt-1">
+                                {result.stats.processed}/{result.stats.total_rows} linhas, {result.stats.new_employees} novos
+                              </p>
+                            )}
+                            {result.error && (
+                              <p className="text-xs mt-1">{result.error}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    
+                    {/* Resultado único (retrocompatibilidade) */}
+                    {csvResult.stats && !csvResult.results && (
                       <div className="mt-2 text-sm text-green-800 space-y-1">
                         <p>• Total de linhas: {csvResult.stats.total_rows}</p>
                         <p>• Processadas: {csvResult.stats.processed}</p>
@@ -312,7 +371,7 @@ const PayrollDataProcessor = () => {
                         )}
                       </div>
                     )}
-                    {csvResult.error && (
+                    {csvResult.error && !csvResult.results && (
                       <p className="mt-2 text-sm text-red-800">{csvResult.error}</p>
                     )}
                   </div>
@@ -331,7 +390,19 @@ const PayrollDataProcessor = () => {
               <div key={period.id} className="border rounded-lg p-3 hover:bg-gray-50 transition-colors">
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
-                    <h3 className="font-medium text-gray-900 text-sm">{period.period_name}</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-medium text-gray-900 text-sm">{period.period_name}</h3>
+                      {/* Badge da empresa */}
+                      {period.company_name && (
+                        <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded-full ${
+                          period.company === '0060' 
+                            ? 'bg-blue-100 text-blue-800' 
+                            : 'bg-purple-100 text-purple-800'
+                        }`}>
+                          {period.company_name}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-gray-500 mt-0.5">
                       {period.month}/{period.year}
                     </p>
@@ -441,7 +512,16 @@ const PayrollDataProcessor = () => {
                     </h3>
                     <div className="mt-2">
                       <p className="text-sm text-gray-500">
-                        Tem certeza que deseja deletar o período <strong className="text-gray-900">{periodToDelete.period_name}</strong>?
+                        Tem certeza que deseja deletar o período <strong className="text-gray-900">{periodToDelete.period_name}</strong>
+                        {periodToDelete.company_name && (
+                          <span className={`ml-2 inline-flex px-2 py-0.5 text-xs font-semibold rounded-full ${
+                            periodToDelete.company === '0060' 
+                              ? 'bg-blue-100 text-blue-800' 
+                              : 'bg-purple-100 text-purple-800'
+                          }`}>
+                            {periodToDelete.company_name}
+                          </span>
+                        )}?
                       </p>
                       <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-md">
                         <p className="text-sm text-yellow-800">

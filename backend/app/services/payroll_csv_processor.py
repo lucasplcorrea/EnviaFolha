@@ -72,6 +72,9 @@ class PayrollCSVProcessor:
         """Processa arquivo CSV de folha de pagamento"""
         start_time = time.time()
         
+        # Armazenar division_code como atributo da classe
+        self.division = division_code
+        
         try:
             # 1. Validar arquivo
             if not os.path.exists(file_path):
@@ -84,7 +87,7 @@ class PayrollCSVProcessor:
             if not file_info['matched']:
                 return self._error_response(f"Tipo de arquivo não reconhecido: {filename}")
             
-            print(f"📄 Processando {file_info['tipo']} - {file_info['mes']}/{file_info['ano']}")
+            print(f"📄 Processando {file_info['tipo']} - {file_info['mes']}/{file_info['ano']} (empresa {division_code})")
             
             # 3. Ler CSV
             df = self._read_csv(file_path)
@@ -132,7 +135,7 @@ class PayrollCSVProcessor:
                 # 7. Invalidar cache de indicadores
                 self._invalidate_indicators_cache()
                 
-                # 8. Log de processamento
+                # 8. Log de processamento (com commit separado)
                 self._create_processing_log(
                     period_id=period.id,
                     filename=filename,
@@ -140,6 +143,7 @@ class PayrollCSVProcessor:
                     status='completed',
                     processing_time=time.time() - start_time
                 )
+                self.db.commit()  # Commit do log
                 
                 return {
                     'success': True,
@@ -168,8 +172,10 @@ class PayrollCSVProcessor:
                     error_message=str(e),
                     processing_time=time.time() - start_time
                 )
-            except:
-                pass
+                self.db.commit()  # Commit do log de erro
+            except Exception as log_error:
+                print(f"⚠️ Erro ao criar log de erro: {log_error}")
+            
             return self._error_response(f"Erro crítico: {str(e)}")
     
     def _read_csv(self, file_path: str) -> Optional[pd.DataFrame]:
@@ -209,29 +215,31 @@ class PayrollCSVProcessor:
         
         period_name = type_names.get(period_type, f'Folha {month}/{year}')
         
-        # Buscar existente
+        # Buscar existente considerando empresa também
         period = self.db.query(PayrollPeriod).filter(
             and_(
                 PayrollPeriod.year == year,
                 PayrollPeriod.month == month,
-                PayrollPeriod.period_name == period_name
+                PayrollPeriod.period_name == period_name,
+                PayrollPeriod.company == self.division  # Filtrar por empresa
             )
         ).first()
         
         if period:
-            print(f"✅ Período existente encontrado: {period_name}")
+            print(f"✅ Período existente encontrado: {period_name} (empresa {self.division})")
             return period
         
-        # Criar novo
+        # Criar novo com empresa
         period = PayrollPeriod(
             year=year,
             month=month,
-            period_name=period_name
+            period_name=period_name,
+            company=self.division  # Salvar empresa no período
         )
         
         self.db.add(period)
         self.db.flush()
-        print(f"✅ Novo período criado: {period_name}")
+        print(f"✅ Novo período criado: {period_name} (empresa {self.division})")
         
         return period
     
@@ -347,7 +355,7 @@ class PayrollCSVProcessor:
         employee = Employee(
             unique_id=matricula,
             name=str(row.get('Nome Colaborador', row.get('NOME', ''))).strip(),
-            division_code=division_code
+            company_code=division_code  # Usar company_code ao invés de division_code
         )
         
         # Campos opcionais

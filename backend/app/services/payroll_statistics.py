@@ -9,14 +9,17 @@ from sqlalchemy.orm import Session
 
 def calculate_payroll_statistics(
     db_session: Session,
-    period_ids: Optional[List[int]] = None,
+    companies: Optional[List[str]] = None,
     years: Optional[List[int]] = None,
     months: Optional[List[int]] = None,
+    period_ids: Optional[List[int]] = None,
     department_ids: Optional[List[str]] = None,
     employee_ids: Optional[List[int]] = None
 ) -> Dict[str, Any]:
     """
     Calcula estatísticas de folha organizadas por seções
+    
+    Ordem dos filtros: Empresa, Anos, Meses, Período, Setores, Colaboradores
     
     Seções:
     1. Resumo de Filtro
@@ -28,13 +31,13 @@ def calculate_payroll_statistics(
     7. Empréstimos
     """
     
-    # Construir filtro SQL
+    # Construir filtro SQL (ordem: Empresa, Anos, Meses, Período, Setores, Colaboradores)
     where_clauses = []
     params = {}
     
-    if period_ids:
-        where_clauses.append("pd.period_id = ANY(:period_ids)")
-        params['period_ids'] = period_ids
+    if companies:
+        where_clauses.append("pp.company = ANY(:companies)")
+        params['companies'] = companies
     
     if years:
         where_clauses.append("pp.year = ANY(:years)")
@@ -44,8 +47,15 @@ def calculate_payroll_statistics(
         where_clauses.append("pp.month = ANY(:months)")
         params['months'] = months
     
+    if period_ids:
+        where_clauses.append("pd.period_id = ANY(:period_ids)")
+        params['period_ids'] = period_ids
+    
     if department_ids:
-        where_clauses.append("e.division_code = ANY(:department_ids)")
+        where_clauses.append("""(
+            e.department = ANY(:department_ids)
+            OR (e.department IS NULL AND 'Sem departamento cadastrado' = ANY(:department_ids))
+        )""")
         params['department_ids'] = department_ids
     
     if employee_ids:
@@ -65,8 +75,9 @@ def calculate_payroll_statistics(
             COALESCE(SUM((pd.additional_data->>'Total de Descontos')::numeric), 0) as total_descontos,
             COALESCE(SUM((pd.additional_data->>'Líquido de Cálculo')::numeric), 0) as total_liquido,
             
-            -- Informações Salariais
+            -- Informações Salariais (com count de registros para média correta)
             COALESCE(SUM((pd.additional_data->>'Salário Mensal')::numeric), 0) as total_salarios_base,
+            COUNT(pd.id) as total_registros,
             
             -- Adicionais e Benefícios
             COALESCE(SUM((pd.earnings_data->>'GRATIFICACAO_FUNCAO_20')::numeric), 0) as total_gratificacoes,
@@ -111,12 +122,14 @@ def calculate_payroll_statistics(
         return _empty_statistics()
     
     # Calcular médias
-    total_funcionarios = float(result[0]) if result[0] else 1  # Evitar divisão por zero
+    total_funcionarios = int(result[0]) if result[0] else 0
+    total_registros = int(result[5]) if result[5] else 1  # Total de registros para média correta
     total_salarios_base = float(result[4])
     total_liquido = float(result[3])
     
-    salario_medio = total_salarios_base / total_funcionarios if total_funcionarios > 0 else 0
-    liquido_medio = total_liquido / total_funcionarios if total_funcionarios > 0 else 0
+    # Média por REGISTRO (não por funcionário único)
+    salario_medio = total_salarios_base / total_registros if total_registros > 0 else 0
+    liquido_medio = total_liquido / total_registros if total_registros > 0 else 0
     
     # ===============================
     # ORGANIZAR POR SEÇÕES
@@ -141,48 +154,53 @@ def calculate_payroll_statistics(
         
         # Seção 3: Adicionais e Benefícios
         "adicionais_beneficios": {
-            "gratificacoes": float(result[5]),
-            "periculosidade": float(result[6]),
-            "insalubridade": float(result[7]),
+            "gratificacoes": float(result[6]),
+            "periculosidade": float(result[7]),
+            "insalubridade": float(result[8]),
             "vale_transporte": 0.0,  # Zerado conforme solicitado
-            "plano_saude": float(result[8]),
+            "plano_saude": float(result[9]),
             "vale_mobilidade": 0.0,  # Zerado conforme solicitado
             "vale_refeicao": 0.0,  # Zerado conforme solicitado
             "vale_alimentacao": 0.0,  # Zerado conforme solicitado
             "saldo_livre": 0.0,  # Zerado conforme solicitado
-            "transferencia_filial": float(result[9]),
-            "ajuda_custo": float(result[10]),
-            "licenca_paternidade": float(result[11])
+            "transferencia_filial": float(result[10]),
+            "ajuda_custo": float(result[11]),
+            "licenca_paternidade": float(result[12]),
+            "total": float(result[6]) + float(result[7]) + float(result[8]) + float(result[9]) + float(result[10]) + float(result[11]) + float(result[12])
         },
         
         # Seção 4: Encargos Trabalhistas
         "encargos_trabalhistas": {
-            "inss": float(result[12]),
-            "irrf": float(result[13]),
-            "fgts": float(result[14])
+            "inss": float(result[13]),
+            "irrf": float(result[14]),
+            "fgts": float(result[15]),
+            "total": float(result[13]) + float(result[14]) + float(result[15])
         },
         
         # Seção 5: Horas Extras
         "horas_extras": {
-            "dsr_diurno": float(result[15]),
-            "he50_diurno": float(result[16]),
-            "he100_diurno": float(result[17]),
-            "adicional_noturno": float(result[18]),
-            "dsr_noturno": float(result[19]),
-            "he50_noturno": float(result[20]),
-            "he100_noturno": float(result[21])
+            "dsr_diurno": float(result[16]),
+            "he50_diurno": float(result[17]),
+            "he100_diurno": float(result[18]),
+            "adicional_noturno": float(result[19]),
+            "dsr_noturno": float(result[20]),
+            "he50_noturno": float(result[21]),
+            "he100_noturno": float(result[22]),
+            "total": float(result[16]) + float(result[17]) + float(result[18]) + float(result[19]) + float(result[20]) + float(result[21]) + float(result[22])
         },
         
         # Seção 6: Atestados e Faltas
         "atestados_faltas": {
-            "horas_faltas": float(result[22]),
-            "atestados_medicos": float(result[23])
+            "horas_faltas": float(result[23]),
+            "atestados_medicos": float(result[24]),
+            "total": float(result[23]) + float(result[24])
         },
         
         # Seção 7: Empréstimos
         "emprestimos": {
-            "emprestimo_trabalhador": float(result[24]),
-            "adiantamentos": float(result[25])
+            "emprestimo_trabalhador": float(result[25]),
+            "adiantamentos": float(result[26]),
+            "total": float(result[25]) + float(result[26])
         }
     }
 
@@ -214,12 +232,14 @@ def _empty_statistics() -> Dict[str, Any]:
             "saldo_livre": 0.0,
             "transferencia_filial": 0.0,
             "ajuda_custo": 0.0,
-            "licenca_paternidade": 0.0
+            "licenca_paternidade": 0.0,
+            "total": 0.0
         },
         "encargos_trabalhistas": {
             "inss": 0.0,
             "irrf": 0.0,
-            "fgts": 0.0
+            "fgts": 0.0,
+            "total": 0.0
         },
         "horas_extras": {
             "dsr_diurno": 0.0,
@@ -228,14 +248,17 @@ def _empty_statistics() -> Dict[str, Any]:
             "adicional_noturno": 0.0,
             "dsr_noturno": 0.0,
             "he50_noturno": 0.0,
-            "he100_noturno": 0.0
+            "he100_noturno": 0.0,
+            "total": 0.0
         },
         "atestados_faltas": {
             "horas_faltas": 0.0,
-            "atestados_medicos": 0.0
+            "atestados_medicos": 0.0,
+            "total": 0.0
         },
         "emprestimos": {
             "emprestimo_trabalhador": 0.0,
-            "adiantamentos": 0.0
+            "adiantamentos": 0.0,
+            "total": 0.0
         }
     }

@@ -1481,6 +1481,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_payroll_employees()  # 🆕 Lista colaboradores
         elif path == '/api/v1/payroll/divisions':
             self.handle_payroll_divisions()  # 🆕 Lista setores
+        elif path == '/api/v1/payroll/companies':
+            self.handle_payroll_companies()  # 🆕 Lista empresas
         elif path == '/api/v1/payroll/years':
             self.handle_payroll_years()  # 🆕 Lista anos disponíveis
         elif path == '/api/v1/payroll/months':
@@ -3337,11 +3339,16 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
                 periods_data = []
                 for period in periods:
+                    # Mapear código da empresa para nome
+                    company_name = "Empreendimentos" if period.company == "0060" else "Infraestrutura" if period.company == "0059" else period.company
+                    
                     periods_data.append({
                         "id": period.id,
                         "year": period.year,
                         "month": period.month,
                         "period_name": period.period_name,
+                        "company": period.company,
+                        "company_name": company_name,
                         "description": period.description,
                         "is_closed": period.is_closed,
                         "created_at": period.created_at.isoformat() if hasattr(period, 'created_at') else None
@@ -3974,15 +3981,15 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 }, 500)
                 return
             
-            # Parse query parameters
+            # Parse query parameters (ordem: Empresa, Anos, Meses, Período, Setores, Colaboradores)
             query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             
-            # Converter período IDs de string para lista de inteiros
-            period_ids = None
-            if 'periods' in query_params and query_params['periods']:
-                periods_str = query_params['periods'][0] if isinstance(query_params['periods'], list) else query_params['periods']
-                period_ids = [int(p.strip()) for p in periods_str.split(',') if p.strip()]
-                print(f"   Períodos selecionados: {period_ids}")
+            # Empresas (0060 = Empreendimentos, 0059 = Infraestrutura)
+            companies = None
+            if 'companies' in query_params and query_params['companies']:
+                comp_str = query_params['companies'][0]
+                companies = [c.strip() for c in comp_str.split(',') if c.strip()]
+                print(f"   Empresas selecionadas: {companies}")
             
             # Converter anos
             years = None
@@ -3997,6 +4004,13 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 months_str = query_params['months'][0]
                 months = [int(m.strip()) for m in months_str.split(',') if m.strip()]
                 print(f"   Meses selecionados: {months}")
+            
+            # Converter período IDs de string para lista de inteiros
+            period_ids = None
+            if 'periods' in query_params and query_params['periods']:
+                periods_str = query_params['periods'][0] if isinstance(query_params['periods'], list) else query_params['periods']
+                period_ids = [int(p.strip()) for p in periods_str.split(',') if p.strip()]
+                print(f"   Períodos selecionados: {period_ids}")
             
             # Departamentos
             department_ids = None
@@ -4015,12 +4029,13 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             # Criar sessão do banco
             db = SessionLocal()
             try:
-                # Chamar a nova função simplificada
+                # Chamar a nova função simplificada (com ordem: Empresa, Anos, Meses, Período, Setores, Colaboradores)
                 result = calculate_payroll_statistics(
                     db_session=db,
-                    period_ids=period_ids,
+                    companies=companies,
                     years=years,
                     months=months,
+                    period_ids=period_ids,
                     department_ids=department_ids,
                     employee_ids=employee_ids
                 )
@@ -4112,11 +4127,11 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             with db_engine.connect() as conn:
                 result = conn.execute(text("""
                     SELECT DISTINCT
-                        COALESCE(e.department, e.position, 'Não especificado') as dept,
+                        COALESCE(e.department, 'Sem departamento cadastrado') as dept,
                         COUNT(DISTINCT e.id) as total_employees
                     FROM employees e
                     INNER JOIN payroll_data pd ON pd.employee_id = e.id
-                    GROUP BY COALESCE(e.department, e.position, 'Não especificado')
+                    GROUP BY COALESCE(e.department, 'Sem departamento cadastrado')
                     ORDER BY dept
                 """))
                 
@@ -4135,6 +4150,37 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
         except Exception as e:
             print(f"❌ Erro ao listar departamentos: {e}")
+            self.send_json_response({
+                "success": False,
+                "error": str(e)
+            }, 500)
+    
+    def handle_payroll_companies(self):
+        """Lista empresas disponíveis"""
+        try:
+            print("🏢 Carregando empresas disponíveis...")
+            
+            companies = [
+                {
+                    "code": "0060",
+                    "name": "Empreendimentos",
+                    "full_name": "0060 - Empreendimentos"
+                },
+                {
+                    "code": "0059",
+                    "name": "Infraestrutura",
+                    "full_name": "0059 - Infraestrutura"
+                }
+            ]
+            
+            print(f"✅ {len(companies)} empresas disponíveis")
+            self.send_json_response({
+                "success": True,
+                "companies": companies
+            })
+            
+        except Exception as e:
+            print(f"❌ Erro ao listar empresas: {e}")
             self.send_json_response({
                 "success": False,
                 "error": str(e)

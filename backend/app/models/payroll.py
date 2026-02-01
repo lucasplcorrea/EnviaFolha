@@ -31,6 +31,7 @@ class PayrollPeriod(Base, TimestampMixin):
     year = Column(Integer, nullable=False)
     month = Column(Integer, nullable=False)
     period_name = Column(String(100), nullable=False)  # Ex: "Janeiro 2024", "13º Salário 2024"
+    company = Column(String(50), nullable=False, default='0060')  # '0060' = Empreendimentos, '0059' = Infraestrutura
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
     is_closed = Column(Boolean, default=False)  # Período fechado não pode ser alterado
@@ -39,7 +40,7 @@ class PayrollPeriod(Base, TimestampMixin):
     payroll_data = relationship("PayrollData", back_populates="period")
     
     def __repr__(self):
-        return f"<PayrollPeriod(period='{self.period_name}', year={self.year}, month={self.month})>"
+        return f"<PayrollPeriod(period='{self.period_name}', year={self.year}, month={self.month}, company={self.company})>"
 
 class PayrollData(Base, TimestampMixin):
     """Modelo para dados dinâmicos de folha de pagamento"""

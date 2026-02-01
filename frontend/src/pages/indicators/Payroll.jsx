@@ -17,14 +17,16 @@ const PayrollV2 = () => {
   const [data, setData] = useState(null);
   const [showFilters, setShowFilters] = useState(true); // Controle de expansão dos filtros
   
-  // Dados brutos dos filtros
+  // Dados brutos dos filtros (ordem: Empresa, Anos, Meses, Período, Setores, Colaboradores)
+  const [allCompanies, setAllCompanies] = useState([]);
   const [allPeriods, setAllPeriods] = useState([]);
   const [allYears, setAllYears] = useState([]);
   const [allMonths, setAllMonths] = useState([]);
   const [allDepartments, setAllDepartments] = useState([]);
   const [allEmployees, setAllEmployees] = useState([]);
   
-  // Seleções
+  // Seleções (ordem: Empresa, Anos, Meses, Período, Setores, Colaboradores)
+  const [selectedCompanies, setSelectedCompanies] = useState([]);
   const [selectedPeriods, setSelectedPeriods] = useState([]);
   const [selectedYears, setSelectedYears] = useState([]);
   const [selectedMonths, setSelectedMonths] = useState([]);
@@ -38,10 +40,10 @@ const PayrollV2 = () => {
 
   // Carregar estatísticas quando mudar qualquer filtro
   useEffect(() => {
-    if (selectedPeriods.length > 0 || selectedYears.length > 0 || selectedMonths.length > 0) {
+    if (selectedCompanies.length > 0 || selectedPeriods.length > 0 || selectedYears.length > 0 || selectedMonths.length > 0) {
       loadStatistics();
     }
-  }, [selectedPeriods, selectedYears, selectedMonths, selectedDepartments, selectedEmployees]);
+  }, [selectedCompanies, selectedPeriods, selectedYears, selectedMonths, selectedDepartments, selectedEmployees]);
 
   // ============================================
   // FILTROS CASCATA (DRILL-THROUGH)
@@ -99,6 +101,15 @@ const PayrollV2 = () => {
 
   const loadFilters = async () => {
     try {
+      // Carregar empresas
+      const companiesRes = await api.get('/payroll/companies');
+      setAllCompanies(companiesRes.data.companies || []);
+      
+      // Selecionar Empreendimentos (0060) por padrão
+      if (companiesRes.data.companies && companiesRes.data.companies.length > 0) {
+        setSelectedCompanies(['0060']);
+      }
+      
       // Carregar períodos
       const periodsRes = await api.get('/payroll/periods');
       setAllPeriods(periodsRes.data.periods || []);
@@ -134,9 +145,10 @@ const PayrollV2 = () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (selectedPeriods.length > 0) params.append('periods', selectedPeriods.join(','));
+      if (selectedCompanies.length > 0) params.append('companies', selectedCompanies.join(','));
       if (selectedYears.length > 0) params.append('years', selectedYears.join(','));
       if (selectedMonths.length > 0) params.append('months', selectedMonths.join(','));
+      if (selectedPeriods.length > 0) params.append('periods', selectedPeriods.join(','));
       if (selectedDepartments.length > 0) params.append('departments', selectedDepartments.join(','));
       if (selectedEmployees.length > 0) params.append('employees', selectedEmployees.join(','));
       
@@ -157,16 +169,17 @@ const PayrollV2 = () => {
     }).format(value || 0);
   };
 
-  // Contar total de filtros ativos
-  const totalActiveFilters = selectedPeriods.length + selectedYears.length + 
-                             selectedMonths.length + selectedDepartments.length + 
-                             selectedEmployees.length;
+  // Contar total de filtros ativos (ordem: Empresa, Anos, Meses, Período, Setores, Colaboradores)
+  const totalActiveFilters = selectedCompanies.length + selectedYears.length + 
+                             selectedMonths.length + selectedPeriods.length +
+                             selectedDepartments.length + selectedEmployees.length;
 
   // Limpar todos os filtros
   const clearAllFilters = () => {
-    setSelectedPeriods([]);
+    setSelectedCompanies([]);
     setSelectedYears([]);
     setSelectedMonths([]);
+    setSelectedPeriods([]);
     setSelectedDepartments([]);
     setSelectedEmployees([]);
   };
@@ -228,20 +241,20 @@ const PayrollV2 = () => {
           </div>
         </div>
 
-        {/* Grid de Filtros - Colapsável */}
+        {/* Grid de Filtros - Colapsável (ordem: Empresa, Anos, Meses, Período, Setores, Colaboradores) */}
         {showFilters && (
           <div className="p-6 bg-gray-50 dark:bg-gray-800/50">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-              {/* Filtro de Períodos */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
+              {/* 1. Filtro de Empresa */}
               <MultiSelect
-                label="Períodos"
-                options={filteredPeriods.map(p => ({ value: p.id, label: p.period_name }))}
-                selected={selectedPeriods}
-                onChange={setSelectedPeriods}
-                placeholder="Todos os períodos"
+                label="Empresa"
+                options={allCompanies.map(c => ({ value: c.code, label: c.full_name }))}
+                selected={selectedCompanies}
+                onChange={setSelectedCompanies}
+                placeholder="Todas as empresas"
               />
 
-              {/* Filtro de Anos */}
+              {/* 2. Filtro de Anos */}
               <MultiSelect
                 label="Anos"
                 options={filteredYears.map(y => ({ value: y, label: y.toString() }))}
@@ -250,7 +263,7 @@ const PayrollV2 = () => {
                 placeholder="Todos os anos"
               />
 
-              {/* Filtro de Meses */}
+              {/* 3. Filtro de Meses */}
               <MultiSelect
                 label="Meses"
                 options={filteredMonths.map(m => ({ value: m.number, label: m.name }))}
@@ -259,7 +272,16 @@ const PayrollV2 = () => {
                 placeholder="Todos os meses"
               />
 
-              {/* Filtro de Setores */}
+              {/* 4. Filtro de Períodos */}
+              <MultiSelect
+                label="Períodos"
+                options={filteredPeriods.map(p => ({ value: p.id, label: p.period_name }))}
+                selected={selectedPeriods}
+                onChange={setSelectedPeriods}
+                placeholder="Todos os períodos"
+              />
+
+              {/* 5. Filtro de Setores */}
               <MultiSelect
                 label="Setores"
                 options={filteredDepartments.map(d => ({ value: d.name, label: d.name }))}
@@ -269,7 +291,7 @@ const PayrollV2 = () => {
                 searchable={true}
               />
 
-              {/* Filtro de Colaboradores */}
+              {/* 6. Filtro de Colaboradores */}
               <MultiSelect
                 label="Colaboradores"
                 options={filteredEmployees.map(e => ({ value: e.id, label: e.name }))}
@@ -282,7 +304,7 @@ const PayrollV2 = () => {
           </div>
         )}
 
-        {/* Resumo Compacto dos Filtros Ativos - Sempre Visível */}
+        {/* Resumo Compacto dos Filtros Ativos - Sempre Visível (ordem: Empresa, Anos, Meses, Período, Setores, Colaboradores) */}
         {totalActiveFilters > 0 && (
           <div className="px-6 py-3 bg-blue-50 dark:bg-blue-900/20 border-t border-blue-100 dark:border-blue-800">
             <div className="flex flex-wrap gap-2 items-center">
@@ -290,6 +312,44 @@ const PayrollV2 = () => {
                 Filtros aplicados:
               </span>
               
+              {/* Empresas */}
+              {selectedCompanies.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {allCompanies.filter(c => selectedCompanies.includes(c.code)).map(c => (
+                    <span key={c.code} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200">
+                      {c.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Anos */}
+              {selectedYears.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {selectedYears.map(y => (
+                    <span key={y} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 dark:bg-indigo-900 text-indigo-800 dark:text-indigo-200">
+                      {y}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Meses */}
+              {selectedMonths.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {filteredMonths.filter(m => selectedMonths.includes(m.number)).slice(0, 3).map(m => (
+                    <span key={m.number} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200">
+                      {m.name}
+                    </span>
+                  ))}
+                  {selectedMonths.length > 3 && (
+                    <span className="px-2 py-0.5 text-xs text-green-700 dark:text-green-300">
+                      +{selectedMonths.length - 3} meses
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* Períodos */}
               {selectedPeriods.length > 0 && (
                 <div className="flex flex-wrap gap-1">
@@ -430,6 +490,18 @@ const PayrollV2 = () => {
         <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
           💎 Adicionais e Benefícios
         </h3>
+        
+        {/* Card Totalizador */}
+        <div className="mb-4">
+          <CardStat 
+            icon="💰" 
+            label="Total Adicionais e Benefícios" 
+            value={adicionais_beneficios.total} 
+            color="purple" 
+            prefix="R$" 
+          />
+        </div>
+
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <CardStatMini icon="🎁" label="Gratificações" value={adicionais_beneficios.gratificacoes} color="amber" />
           <CardStatMini icon="⚠️" label="Periculosidade" value={adicionais_beneficios.periculosidade} color="orange" />
@@ -451,6 +523,18 @@ const PayrollV2 = () => {
         <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
           🏛️ Encargos Trabalhistas
         </h3>
+        
+        {/* Card Totalizador */}
+        <div className="mb-4">
+          <CardStat 
+            icon="💰" 
+            label="Total Encargos" 
+            value={encargos_trabalhistas.total} 
+            color="purple" 
+            prefix="R$" 
+          />
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <CardStat icon="🏛️" label="INSS" value={encargos_trabalhistas.inss} color="blue" prefix="R$" />
           <CardStat icon="📝" label="IRRF" value={encargos_trabalhistas.irrf} color="indigo" prefix="R$" />
@@ -463,6 +547,17 @@ const PayrollV2 = () => {
         <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
           ⏰ Horas Extras
         </h3>
+        
+        {/* Card Totalizador */}
+        <div className="mb-4">
+          <CardStat 
+            icon="💰" 
+            label="Total Horas Extras" 
+            value={horas_extras.total} 
+            color="purple" 
+            prefix="R$" 
+          />
+        </div>
         
         {/* Horas Extras Diurnas */}
         <div className="mb-4">
@@ -491,6 +586,18 @@ const PayrollV2 = () => {
         <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
           🏥 Atestados Médicos e Horas Faltas
         </h3>
+        
+        {/* Card Totalizador */}
+        <div className="mb-4">
+          <CardStat 
+            icon="💰" 
+            label="Total Atestados e Faltas" 
+            value={atestados_faltas.total} 
+            color="purple" 
+            prefix="R$" 
+          />
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <CardStat icon="❌" label="Horas Faltas" value={atestados_faltas.horas_faltas} color="red" prefix="R$" />
           <CardStat icon="🏥" label="Atestados Médicos" value={atestados_faltas.atestados_medicos} color="blue" prefix="R$" />
@@ -502,6 +609,18 @@ const PayrollV2 = () => {
         <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
           💳 Empréstimos
         </h3>
+        
+        {/* Card Totalizador */}
+        <div className="mb-4">
+          <CardStat 
+            icon="💰" 
+            label="Total Empréstimos" 
+            value={emprestimos.total} 
+            color="purple" 
+            prefix="R$" 
+          />
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <CardStat icon="💳" label="Empréstimo do Trabalhador" value={emprestimos.emprestimo_trabalhador} color="orange" prefix="R$" />
           <CardStat icon="💰" label="Adiantamentos" value={emprestimos.adiantamentos} color="amber" prefix="R$" />
