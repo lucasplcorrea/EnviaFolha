@@ -1481,6 +1481,10 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_payroll_employees()  # 🆕 Lista colaboradores
         elif path == '/api/v1/payroll/divisions':
             self.handle_payroll_divisions()  # 🆕 Lista setores
+        elif path == '/api/v1/payroll/years':
+            self.handle_payroll_years()  # 🆕 Lista anos disponíveis
+        elif path == '/api/v1/payroll/months':
+            self.handle_payroll_months()  # 🆕 Lista meses disponíveis
         elif path == '/api/v1/payroll/processing-history':
             self.handle_payroll_processing_history()  # 🆕 Histórico de processamento
         elif path.startswith('/api/v1/payroll/statistics-debug'):
@@ -3955,217 +3959,77 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             }, 500)
     
     def handle_payroll_statistics(self):
-        """Retorna estatísticas consolidadas dos dados CSV processados"""
+        """Retorna estatísticas consolidadas dos dados CSV processados (versão simplificada)"""
         try:
             print("📊 Carregando estatísticas de folha de pagamento...")
             
-            from sqlalchemy import text
+            from app.services.payroll_statistics import calculate_payroll_statistics
             
-            # Usar a variável global db_engine
-            global db_engine
-            if not db_engine:
+            # Usar a variável global SessionLocal
+            global SessionLocal
+            if not SessionLocal:
                 self.send_json_response({
                     "success": False,
                     "error": "Banco de dados não disponível"
                 }, 500)
                 return
             
-            # 1. Períodos com contagem de registros
-            with db_engine.connect() as conn:
-                result = conn.execute(text("""
-                    SELECT 
-                        pp.id,
-                        pp.period_name,
-                        pp.year,
-                        pp.month,
-                        pp.is_active,
-                        COUNT(pd.id) as total_records
-                    FROM payroll_periods pp
-                    LEFT JOIN payroll_data pd ON pd.period_id = pp.id
-                    GROUP BY pp.id, pp.period_name, pp.year, pp.month, pp.is_active
-                    ORDER BY pp.year DESC, pp.month DESC
-                """))
+            # Parse query parameters
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            
+            # Converter período IDs de string para lista de inteiros
+            period_ids = None
+            if 'periods' in query_params and query_params['periods']:
+                periods_str = query_params['periods'][0] if isinstance(query_params['periods'], list) else query_params['periods']
+                period_ids = [int(p.strip()) for p in periods_str.split(',') if p.strip()]
+                print(f"   Períodos selecionados: {period_ids}")
+            
+            # Converter anos
+            years = None
+            if 'years' in query_params and query_params['years']:
+                years_str = query_params['years'][0]
+                years = [int(y.strip()) for y in years_str.split(',') if y.strip()]
+                print(f"   Anos selecionados: {years}")
+            
+            # Converter meses
+            months = None
+            if 'months' in query_params and query_params['months']:
+                months_str = query_params['months'][0]
+                months = [int(m.strip()) for m in months_str.split(',') if m.strip()]
+                print(f"   Meses selecionados: {months}")
+            
+            # Departamentos
+            department_ids = None
+            if 'departments' in query_params and query_params['departments']:
+                dept_str = query_params['departments'][0]
+                department_ids = [d.strip() for d in dept_str.split(',') if d.strip()]
+                print(f"   Departamentos selecionados: {department_ids}")
+            
+            # Colaboradores
+            employee_ids = None
+            if 'employees' in query_params and query_params['employees']:
+                emp_str = query_params['employees'][0]
+                employee_ids = [int(e.strip()) for e in emp_str.split(',') if e.strip()]
+                print(f"   Colaboradores selecionados: {employee_ids}")
+            
+            # Criar sessão do banco
+            db = SessionLocal()
+            try:
+                # Chamar a nova função simplificada
+                result = calculate_payroll_statistics(
+                    db_session=db,
+                    period_ids=period_ids,
+                    years=years,
+                    months=months,
+                    department_ids=department_ids,
+                    employee_ids=employee_ids
+                )
                 
-                periods = []
-                for row in result:
-                    periods.append({
-                        "id": row[0],
-                        "period_name": row[1],
-                        "year": row[2],
-                        "month": row[3],
-                        "is_active": row[4],
-                        "total_records": row[5]
-                    })
+                print(f"✅ Estatísticas calculadas com sucesso")
+                self.send_json_response(result)
                 
-                # 2. Estatísticas financeiras por período
-                financial_stats = []
-                for period in periods:
-                    stats_result = conn.execute(text("""
-                        SELECT 
-                            COUNT(*) as total_employees,
-                            COALESCE(SUM((earnings_data->>'SALARIO_BASE')::numeric), 0) as total_salario_base,
-                            COALESCE(SUM((deductions_data->>'INSS')::numeric), 0) as total_inss,
-                            COALESCE(SUM((deductions_data->>'IRRF')::numeric), 0) as total_irrf,
-                            COALESCE(SUM((deductions_data->>'FGTS')::numeric), 0) as total_fgts,
-                            COALESCE(SUM((earnings_data->>'HORAS_EXTRAS_50_DIURNAS')::numeric), 0) as total_he_50_diurnas,
-                            COALESCE(SUM((earnings_data->>'HORAS_EXTRAS_50_NOTURNAS')::numeric), 0) as total_he_50_noturnas,
-                            COALESCE(SUM((earnings_data->>'HORAS_EXTRAS_60_DIURNAS')::numeric), 0) as total_he_60,
-                            COALESCE(SUM((earnings_data->>'HORAS_EXTRAS_100_DIURNAS')::numeric), 0) as total_he_100_diurnas,
-                            COALESCE(SUM((earnings_data->>'HORAS_EXTRAS_100_NOTURNAS')::numeric), 0) as total_he_100_noturnas,
-                            COALESCE(SUM((earnings_data->>'ADICIONAL_NOTURNO')::numeric), 0) as total_adicional_noturno,
-                            (
-                                COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO')::numeric), 0) + 
-                                COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_20')::numeric), 0)
-                            ) as total_gratificacoes,
-                            (
-                                COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_13_SAL_PROP')::numeric), 0) +
-                                COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_ABONO')::numeric), 0)
-                            ) as total_13_salario,
-                            (
-                                COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_FERIAS')::numeric), 0) +
-                                COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_FERIAS_PROP')::numeric), 0)
-                            ) as total_ferias_pagas,
-                            -- 13º Salário - Valores Base
-                            COALESCE(SUM((earnings_data->>'13_SALARIO_ADIANTAMENTO')::numeric), 0) as total_13_adiantamento,
-                            COALESCE(SUM((earnings_data->>'13_SALARIO_INTEGRAL')::numeric), 0) as total_13_integral,
-                            COALESCE(SUM((earnings_data->>'13_SALARIO_MATERNIDADE_GPS')::numeric), 0) as total_13_maternidade_gps,
-                            COALESCE(SUM((earnings_data->>'13_MEDIA_EVENTOS_VARIAVEIS')::numeric), 0) as total_13_med_eventos,
-                            COALESCE(SUM((earnings_data->>'13_MEDIA_HORAS_EXTRAS_DIURNO')::numeric), 0) as total_13_med_horas_extras,
-                            COALESCE(SUM((earnings_data->>'13_GRATIFICACAO_FUNCAO_ADIANTAMENTO')::numeric), 0) as total_13_gratif_adiantamento,
-                            COALESCE(SUM((earnings_data->>'13_GRATIFICACAO_FUNCAO_INTEGRAL')::numeric), 0) as total_13_gratif_integral,
-                            -- Férias - Valores Base
-                            COALESCE(SUM((earnings_data->>'FERIAS_VALOR_BASE')::numeric), 0) as total_ferias_base,
-                            COALESCE(SUM((earnings_data->>'FERIAS_ABONO_1_3')::numeric), 0) as total_ferias_abono_1_3,
-                            COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_HORAS_EXTRAS')::numeric), 0) as total_ferias_med_horas_extras,
-                            -- Descontos de 13º e Férias
-                            COALESCE(SUM((deductions_data->>'DESCONTO_13_ADIANTAMENTO')::numeric), 0) as total_desconto_13_adiantamento,
-                            COALESCE(SUM((deductions_data->>'DESCONTO_FERIAS_ADIANTAMENTO')::numeric), 0) as total_desconto_ferias_adiantamento,
-                            COALESCE(SUM((earnings_data->>'PERICULOSIDADE')::numeric), 0) as total_periculosidade,
-                            (COALESCE(SUM((earnings_data->>'INSALUBRIDADE')::numeric), 0) + COALESCE(SUM((earnings_data->>'INSALUBRIDADE_NORMATIVO')::numeric), 0)) as total_insalubridade,
-                            COALESCE(SUM((additional_data->>'Valor Salário')::numeric), 0) as total_valor_salario,
-                            COALESCE(SUM((additional_data->>'Salário Mensal')::numeric), 0) as total_salario_mensal,
-                            COALESCE(SUM((additional_data->>'Total de Proventos')::numeric), 0) as total_proventos,
-                            COALESCE(SUM((additional_data->>'Total de Descontos')::numeric), 0) as total_descontos_geral,
-                            COALESCE(SUM((additional_data->>'Total de Vantagens')::numeric), 0) as total_vantagens,
-                            COALESCE(SUM((additional_data->>'Líquido de Cálculo')::numeric), 0) as total_liquido,
-                            COALESCE(AVG((additional_data->>'Valor Salário')::numeric), 0) as avg_salario,
-                            COALESCE(AVG((additional_data->>'Líquido de Cálculo')::numeric), 0) as avg_liquido,
-                            COALESCE(SUM((additional_data->>'Horas Extras 50% Diurnas')::numeric), 0) as total_he50_horas,
-                            COALESCE(SUM((additional_data->>'Horas Normais Noturnas')::numeric), 0) as total_horas_noturnas,
-                            COALESCE(SUM((benefits_data->>'PLANO_SAUDE')::numeric), 0) as total_plano_saude,
-                            COALESCE(SUM((benefits_data->>'VALE_TRANSPORTE')::numeric), 0) as total_vale_transporte,
-                            COUNT(CASE WHEN additional_data->>'Status' = 'Trabalhando' THEN 1 END) as trabalhando,
-                            COUNT(CASE WHEN additional_data->>'Status' = 'Férias' THEN 1 END) as ferias,
-                            COUNT(CASE WHEN 
-                                additional_data->>'Status' LIKE '%Afastado%' OR
-                                additional_data->>'Status' LIKE '%Auxílio Doença%' OR
-                                additional_data->>'Status' LIKE '%Auxilio Doenca%' OR
-                                additional_data->>'Status' LIKE '%Licença%' OR
-                                additional_data->>'Status' LIKE '%Licenca%' OR
-                                additional_data->>'Status' LIKE '%Paternidade%' OR
-                                additional_data->>'Status' LIKE '%Maternidade%' OR
-                                additional_data->>'Status' LIKE '%Acidente Trabalho%'
-                            THEN 1 END) as afastados,
-                            COUNT(CASE WHEN additional_data->>'Status' LIKE '%Demitido%' OR additional_data->>'Status' LIKE '%Rescisão%' THEN 1 END) as demitidos
-                        FROM payroll_data
-                        WHERE period_id = :period_id
-                    """), {"period_id": period["id"]})
-                    
-                    stats_row = stats_result.fetchone()
-                    if stats_row:
-                        financial_stats.append({
-                            "period_id": period["id"],
-                            "period_name": period["period_name"],
-                            "total_employees": stats_row[0],
-                            "total_salario_base": float(stats_row[1]) if stats_row[1] else 0,
-                            "total_inss": float(stats_row[2]) if stats_row[2] else 0,
-                            "total_irrf": float(stats_row[3]) if stats_row[3] else 0,
-                            "total_fgts": float(stats_row[4]) if stats_row[4] else 0,
-                            "total_he_50_diurnas": float(stats_row[5]) if stats_row[5] else 0,
-                            "total_he_50_noturnas": float(stats_row[6]) if stats_row[6] else 0,
-                            "total_he_60": float(stats_row[7]) if stats_row[7] else 0,
-                            "total_he_100_diurnas": float(stats_row[8]) if stats_row[8] else 0,
-                            "total_he_100_noturnas": float(stats_row[9]) if stats_row[9] else 0,
-                            "total_adicional_noturno": float(stats_row[10]) if stats_row[10] else 0,
-                            "total_gratificacoes": float(stats_row[11]) if stats_row[11] else 0,
-                            "total_13_salario": float(stats_row[12]) if stats_row[12] else 0,
-                            "total_ferias_pagas": float(stats_row[13]) if stats_row[13] else 0,
-                            # Novos campos de 13º e Férias
-                            "total_13_adiantamento": float(stats_row[14]) if stats_row[14] else 0,
-                            "total_13_integral": float(stats_row[15]) if stats_row[15] else 0,
-                            "total_13_maternidade_gps": float(stats_row[16]) if stats_row[16] else 0,
-                            "total_13_med_eventos": float(stats_row[17]) if stats_row[17] else 0,
-                            "total_13_med_horas_extras": float(stats_row[18]) if stats_row[18] else 0,
-                            "total_13_gratif_adiantamento": float(stats_row[19]) if stats_row[19] else 0,
-                            "total_13_gratif_integral": float(stats_row[20]) if stats_row[20] else 0,
-                            "total_ferias_base": float(stats_row[21]) if stats_row[21] else 0,
-                            "total_ferias_abono_1_3": float(stats_row[22]) if stats_row[22] else 0,
-                            "total_ferias_med_horas_extras": float(stats_row[23]) if stats_row[23] else 0,
-                            "total_desconto_13_adiantamento": float(stats_row[24]) if stats_row[24] else 0,
-                            "total_desconto_ferias_adiantamento": float(stats_row[25]) if stats_row[25] else 0,
-                            # Campos existentes ajustados
-                            "total_periculosidade": float(stats_row[26]) if stats_row[26] else 0,
-                            "total_insalubridade": float(stats_row[27]) if stats_row[27] else 0,
-                            "total_valor_salario": float(stats_row[28]) if stats_row[28] else 0,
-                            "total_salario_mensal": float(stats_row[29]) if stats_row[29] else 0,
-                            "total_proventos": float(stats_row[30]) if stats_row[30] else 0,
-                            "total_descontos": float(stats_row[31]) if stats_row[31] else 0,
-                            "total_vantagens": float(stats_row[32]) if stats_row[32] else 0,
-                            "total_liquido": float(stats_row[33]) if stats_row[33] else 0,
-                            "avg_salario": float(stats_row[34]) if stats_row[34] else 0,
-                            "avg_liquido": float(stats_row[35]) if stats_row[35] else 0,
-                            "total_he50_horas": float(stats_row[36]) if stats_row[36] else 0,
-                            "total_horas_noturnas": float(stats_row[37]) if stats_row[37] else 0,
-                            "total_plano_saude": float(stats_row[38]) if stats_row[38] else 0,
-                            "total_vale_transporte": float(stats_row[39]) if stats_row[39] else 0,
-                            "trabalhando": stats_row[40] or 0,
-                            "ferias": stats_row[41] or 0,
-                            "afastados": stats_row[42] or 0,
-                            "demitidos": stats_row[43] or 0,
-                        })
-                
-                # 3. Totais gerais
-                total_result = conn.execute(text("""
-                    SELECT 
-                        COUNT(DISTINCT period_id) as total_periods,
-                        COUNT(*) as total_records,
-                        COUNT(DISTINCT employee_id) as total_employees,
-                        COALESCE(SUM((deductions_data->>'INSS')::numeric), 0) as total_inss_all,
-                        COALESCE(SUM((deductions_data->>'IRRF')::numeric), 0) as total_irrf_all,
-                        COALESCE(SUM((deductions_data->>'FGTS')::numeric), 0) as total_fgts_all,
-                        COALESCE(SUM((additional_data->>'Total de Proventos')::numeric), 0) as total_proventos_all,
-                        COALESCE(SUM((additional_data->>'Total de Descontos')::numeric), 0) as total_descontos_all,
-                        COALESCE(SUM((additional_data->>'Total de Vantagens')::numeric), 0) as total_vantagens_all,
-                        COALESCE(SUM((additional_data->>'Líquido de Cálculo')::numeric), 0) as total_liquido_all,
-                        COALESCE(SUM((additional_data->>'Valor Salário')::numeric), 0) as total_salarios_all,
-                        COALESCE(SUM((benefits_data->>'PLANO_SAUDE')::numeric), 0) as total_plano_saude_all
-                    FROM payroll_data
-                """))
-                
-                totals_row = total_result.fetchone()
-                
-                response = {
-                    "success": True,
-                    "periods": periods,
-                    "financial_stats": financial_stats,
-                    "totals": {
-                        "total_periods": totals_row[0] if totals_row else 0,
-                        "total_records": totals_row[1] if totals_row else 0,
-                        "total_employees": totals_row[2] if totals_row else 0,
-                        "total_inss": float(totals_row[3]) if totals_row and totals_row[3] else 0,
-                        "total_irrf": float(totals_row[4]) if totals_row and totals_row[4] else 0,
-                        "total_fgts": float(totals_row[5]) if totals_row and totals_row[5] else 0,
-                        "total_proventos": float(totals_row[6]) if totals_row and totals_row[6] else 0,
-                        "total_descontos": float(totals_row[7]) if totals_row and totals_row[7] else 0,
-                        "total_vantagens": float(totals_row[8]) if totals_row and totals_row[8] else 0,
-                        "total_liquido": float(totals_row[9]) if totals_row and totals_row[9] else 0,
-                        "total_salarios": float(totals_row[10]) if totals_row and totals_row[10] else 0,
-                        "total_plano_saude": float(totals_row[11]) if totals_row and totals_row[11] else 0,
-                    }
-                }
-                
-                print(f"✅ Estatísticas carregadas: {totals_row[0]} períodos, {totals_row[1]} registros")
-                self.send_json_response(response)
+            finally:
+                db.close()
                 
         except Exception as e:
             print(f"❌ Erro ao carregar estatísticas: {e}")
@@ -4276,6 +4140,95 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 "error": str(e)
             }, 500)
     
+    def handle_payroll_years(self):
+        """Lista anos disponíveis nos períodos de folha"""
+        try:
+            print("📅 Carregando anos disponíveis...")
+            
+            from sqlalchemy import text
+            
+            global db_engine
+            if not db_engine:
+                self.send_json_response({
+                    "success": False,
+                    "error": "Banco de dados não disponível"
+                }, 500)
+                return
+            
+            with db_engine.connect() as conn:
+                result = conn.execute(text("""
+                    SELECT DISTINCT year
+                    FROM payroll_periods
+                    WHERE year IS NOT NULL
+                    ORDER BY year DESC
+                """))
+                
+                years = [row[0] for row in result]
+                
+                print(f"✅ {len(years)} anos encontrados")
+                self.send_json_response({
+                    "success": True,
+                    "years": years
+                })
+                
+        except Exception as e:
+            print(f"❌ Erro ao listar anos: {e}")
+            self.send_json_response({
+                "success": False,
+                "error": str(e)
+            }, 500)
+    
+    def handle_payroll_months(self):
+        """Lista meses disponíveis nos períodos de folha"""
+        try:
+            print("📅 Carregando meses disponíveis...")
+            
+            from sqlalchemy import text
+            
+            global db_engine
+            if not db_engine:
+                self.send_json_response({
+                    "success": False,
+                    "error": "Banco de dados não disponível"
+                }, 500)
+                return
+            
+            # Mapeamento de meses
+            month_names = {
+                1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+                5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+                9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+            }
+            
+            with db_engine.connect() as conn:
+                result = conn.execute(text("""
+                    SELECT DISTINCT month
+                    FROM payroll_periods
+                    WHERE month IS NOT NULL
+                    ORDER BY month
+                """))
+                
+                months = []
+                for row in result:
+                    month_num = row[0]
+                    months.append({
+                        "number": month_num,
+                        "name": month_names.get(month_num, f"Mês {month_num}")
+                    })
+                
+                print(f"✅ {len(months)} meses encontrados")
+                self.send_json_response({
+                    "success": True,
+                    "months": months
+                })
+                
+        except Exception as e:
+            print(f"❌ Erro ao listar meses: {e}")
+            self.send_json_response({
+                "success": False,
+                "error": str(e)
+            }, 500)
+    
     def handle_payroll_statistics_filtered(self):
         """Estatísticas de folha com filtros (períodos, setores, colaboradores)"""
         try:
@@ -4347,6 +4300,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                         COUNT(DISTINCT pd.period_id) as total_periods,
                         COALESCE(SUM((additional_data->>'Valor Salário')::numeric), 0) as total_valor_salario,
                         COALESCE(AVG((additional_data->>'Valor Salário')::numeric), 0) as avg_salario,
+                        COALESCE(AVG((additional_data->>'Líquido de Cálculo')::numeric), 0) as avg_liquido,
                         COALESCE(SUM((additional_data->>'Salário Mensal')::numeric), 0) as total_salario_mensal,
                         COALESCE(SUM((additional_data->>'Total de Proventos')::numeric), 0) as total_proventos,
                         COALESCE(SUM((additional_data->>'Total de Descontos')::numeric), 0) as total_descontos,
@@ -4365,31 +4319,77 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                             COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO')::numeric), 0) + 
                             COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_20')::numeric), 0)
                         ) as total_gratificacoes,
+                        -- 13º Salário - TODOS os componentes (Adiantamento Nov + Integral Dez + Proporcional + Indenizado)
                         (
-                            COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_13_SAL_PROP')::numeric), 0) +
-                            COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_ABONO')::numeric), 0)
+                            COALESCE(SUM((earnings_data->>'13_SALARIO_ADIANTAMENTO')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_GRATIFICACAO_ADIANTAMENTO')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_MEDIA_EVENTOS_ADIANTAMENTO')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_MEDIA_HE_ADIANTAMENTO')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_SALARIO_INTEGRAL')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_GRATIFICACAO_INTEGRAL')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_MEDIA_EVENTOS_INTEGRAL')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_MEDIA_HE_INTEGRAL')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_SALARIO_PROPORCIONAL')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_SALARIO_PROPORCIONAL_APP')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_GRATIFICACAO_PROPORCIONAL')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_MEDIA_EVENTOS_PROPORCIONAL')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_MEDIA_HE_PROPORCIONAL')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_SALARIO_INDENIZADO')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_SALARIO_COMPLEMENTAR')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_SALARIO_LIC_MATER')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_SALARIO_MATERNIDADE_GPS')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_MEDIA_EVENTOS_INDENIZADO')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_MEDIA_HE_INDENIZADO')::numeric), 0)
                         ) as total_13_salario,
+                        -- Férias - TODOS os componentes (Valor Base + 1/3 + Gratificações + Médias + Adiantamentos)
                         (
-                            COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_FERIAS')::numeric), 0) +
-                            COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_FERIAS_PROP')::numeric), 0)
+                            COALESCE(SUM((earnings_data->>'FERIAS_VALOR_BASE')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_VALOR_PROPORCIONAIS')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_VALOR_VENCIDAS')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_VALOR_APP')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_DIFERENCA')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_MULTA_DOBRO')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_ABONO_1_3')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_ABONO_1_3_PROPORCIONAIS')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_ABONO_1_3_VENCIDAS')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_ABONO_1_3_APP')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_ANTECIPACAO_1_3')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_GRATIFICACAO')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_GRATIFICACAO_PROPORC')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_EVENTOS')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_EVENTOS_PROPORC')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_EVENTOS_VENCIDAS')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_HE')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_HE_PROPORC')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_HE_VENCIDAS')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_ADIANTAMENTO_PAGO')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_ABONO_ADIANTAMENTO')::numeric), 0)
                         ) as total_ferias_pagas,
-                        -- 13º Salário - Valores Base
-                        COALESCE(SUM((earnings_data->>'13_SALARIO_ADIANTAMENTO')::numeric), 0) as total_13_adiantamento,
-                        COALESCE(SUM((earnings_data->>'13_SALARIO_INTEGRAL')::numeric), 0) as total_13_integral,
-                        COALESCE(SUM((earnings_data->>'13_SALARIO_MATERNIDADE_GPS')::numeric), 0) as total_13_maternidade_gps,
-                        COALESCE(SUM((earnings_data->>'13_MEDIA_EVENTOS_VARIAVEIS')::numeric), 0) as total_13_med_eventos,
-                        COALESCE(SUM((earnings_data->>'13_MEDIA_HORAS_EXTRAS_DIURNO')::numeric), 0) as total_13_med_horas_extras,
-                        COALESCE(SUM((earnings_data->>'13_GRATIFICACAO_FUNCAO_ADIANTAMENTO')::numeric), 0) as total_13_gratif_adiantamento,
-                        COALESCE(SUM((earnings_data->>'13_GRATIFICACAO_FUNCAO_INTEGRAL')::numeric), 0) as total_13_gratif_integral,
-                        -- Férias - Valores Base
-                        COALESCE(SUM((earnings_data->>'FERIAS_VALOR_BASE')::numeric), 0) as total_ferias_base,
-                        COALESCE(SUM((earnings_data->>'FERIAS_ABONO_1_3')::numeric), 0) as total_ferias_abono_1_3,
-                        COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_HORAS_EXTRAS')::numeric), 0) as total_ferias_med_horas_extras,
-                        -- Descontos de 13º e Férias
+                        -- 13º Salário - Componentes Agrupados
+                        (COALESCE(SUM((earnings_data->>'13_SALARIO_ADIANTAMENTO')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_GRATIFICACAO_ADIANTAMENTO')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_MEDIA_EVENTOS_ADIANTAMENTO')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_MEDIA_HE_ADIANTAMENTO')::numeric), 0)) as total_13_adiantamento,
+                        (COALESCE(SUM((earnings_data->>'13_SALARIO_INTEGRAL')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_GRATIFICACAO_INTEGRAL')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_MEDIA_EVENTOS_INTEGRAL')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_MEDIA_HE_INTEGRAL')::numeric), 0)) as total_13_integral,
+                        (COALESCE(SUM((earnings_data->>'13_SALARIO_PROPORCIONAL')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_SALARIO_PROPORCIONAL_APP')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_GRATIFICACAO_PROPORCIONAL')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_MEDIA_EVENTOS_PROPORCIONAL')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_MEDIA_HE_PROPORCIONAL')::numeric), 0)) as total_13_proporcional,
+                        (COALESCE(SUM((earnings_data->>'13_SALARIO_INDENIZADO')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_MEDIA_EVENTOS_INDENIZADO')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_MEDIA_HE_INDENIZADO')::numeric), 0)) as total_13_indenizado,
+                        (COALESCE(SUM((earnings_data->>'13_SALARIO_COMPLEMENTAR')::numeric), 0)) as total_13_complementar,
+                        (COALESCE(SUM((earnings_data->>'13_SALARIO_LIC_MATER')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_SALARIO_MATERNIDADE_GPS')::numeric), 0)) as total_13_maternidade,
+                        -- Férias - Componentes Agrupados
+                        (COALESCE(SUM((earnings_data->>'FERIAS_VALOR_BASE')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_VALOR_PROPORCIONAIS')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_VALOR_VENCIDAS')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_VALOR_APP')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_DIFERENCA')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_MULTA_DOBRO')::numeric), 0)) as total_ferias_valor_base,
+                        (COALESCE(SUM((earnings_data->>'FERIAS_ABONO_1_3')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_ABONO_1_3_PROPORCIONAIS')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_ABONO_1_3_VENCIDAS')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_ABONO_1_3_APP')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_ANTECIPACAO_1_3')::numeric), 0)) as total_ferias_abono_1_3,
+                        (COALESCE(SUM((earnings_data->>'FERIAS_GRATIFICACAO')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_GRATIFICACAO_PROPORC')::numeric), 0)) as total_ferias_gratificacao,
+                        (COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_EVENTOS')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_EVENTOS_PROPORC')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_EVENTOS_VENCIDAS')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_HE')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_HE_PROPORC')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_HE_VENCIDAS')::numeric), 0)) as total_ferias_medias,
+                        (COALESCE(SUM((earnings_data->>'FERIAS_ADIANTAMENTO_PAGO')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_ABONO_ADIANTAMENTO')::numeric), 0)) as total_ferias_adiantamento,
+                        -- Descontos de 13º (não mais desconto de férias!)
                         COALESCE(SUM((deductions_data->>'DESCONTO_13_ADIANTAMENTO')::numeric), 0) as total_desconto_13_adiantamento,
-                        COALESCE(SUM((deductions_data->>'DESCONTO_FERIAS_ADIANTAMENTO')::numeric), 0) as total_desconto_ferias_adiantamento,
                         COALESCE(SUM((earnings_data->>'PERICULOSIDADE')::numeric), 0) as total_periculosidade,
                         (COALESCE(SUM((earnings_data->>'INSALUBRIDADE')::numeric), 0) + COALESCE(SUM((earnings_data->>'INSALUBRIDADE_NORMATIVO')::numeric), 0)) as total_insalubridade,
+                        COALESCE(SUM((additional_data->>'Valor Salário')::numeric), 0) as total_valor_salario_2,
+                        COALESCE(SUM((additional_data->>'Salário Mensal')::numeric), 0) as total_salario_mensal_2,
+                        COALESCE(SUM((additional_data->>'Total de Proventos')::numeric), 0) as total_proventos_2,
+                        COALESCE(SUM((additional_data->>'Total de Descontos')::numeric), 0) as total_descontos_2,
+                        COALESCE(SUM((additional_data->>'Total de Vantagens')::numeric), 0) as total_vantagens_2,
+                        COALESCE(SUM((additional_data->>'Líquido de Cálculo')::numeric), 0) as total_liquido_2,
+                        COALESCE(AVG((additional_data->>'Valor Salário')::numeric), 0) as avg_salario_2,
+                        COALESCE(AVG((additional_data->>'Líquido de Cálculo')::numeric), 0) as avg_liquido_2,
                         COALESCE(SUM((additional_data->>'Horas Extras 50% Diurnas')::numeric), 0) as total_he50_horas,
                         COALESCE(SUM((additional_data->>'Horas Normais Noturnas')::numeric), 0) as total_horas_noturnas,
                         COALESCE(SUM((benefits_data->>'PLANO_SAUDE')::numeric), 0) as total_plano_saude,
@@ -4427,47 +4427,51 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                         "total_periods": row[1] if row else 0,
                         "total_valor_salario": float(row[2]) if row and row[2] else 0,
                         "avg_salario": float(row[3]) if row and row[3] else 0,
-                        "total_salario_mensal": float(row[4]) if row and row[4] else 0,
-                        "total_proventos": float(row[5]) if row and row[5] else 0,
-                        "total_descontos": float(row[6]) if row and row[6] else 0,
-                        "total_vantagens": float(row[7]) if row and row[7] else 0,
-                        "total_liquido": float(row[8]) if row and row[8] else 0,
-                        "total_inss": float(row[9]) if row and row[9] else 0,
-                        "total_irrf": float(row[10]) if row and row[10] else 0,
-                        "total_fgts": float(row[11]) if row and row[11] else 0,
-                        "total_he_50_diurnas": float(row[12]) if row and row[12] else 0,
-                        "total_he_50_noturnas": float(row[13]) if row and row[13] else 0,
-                        "total_he_60": float(row[14]) if row and row[14] else 0,
-                        "total_he_100_diurnas": float(row[15]) if row and row[15] else 0,
-                        "total_he_100_noturnas": float(row[16]) if row and row[16] else 0,
-                        "total_adicional_noturno": float(row[17]) if row and row[17] else 0,
-                        "total_gratificacoes": float(row[18]) if row and row[18] else 0,
-                        "total_13_salario": float(row[19]) if row and row[19] else 0,
-                        "total_ferias_pagas": float(row[20]) if row and row[20] else 0,
-                        # Novos campos de 13º e Férias
-                        "total_13_adiantamento": float(row[21]) if row and row[21] else 0,
-                        "total_13_integral": float(row[22]) if row and row[22] else 0,
-                        "total_13_maternidade_gps": float(row[23]) if row and row[23] else 0,
-                        "total_13_med_eventos": float(row[24]) if row and row[24] else 0,
-                        "total_13_med_horas_extras": float(row[25]) if row and row[25] else 0,
-                        "total_13_gratif_adiantamento": float(row[26]) if row and row[26] else 0,
-                        "total_13_gratif_integral": float(row[27]) if row and row[27] else 0,
-                        "total_ferias_base": float(row[28]) if row and row[28] else 0,
+                        "avg_liquido": float(row[4]) if row and row[4] else 0,
+                        "total_salario_mensal": float(row[5]) if row and row[5] else 0,
+                        "total_proventos": float(row[6]) if row and row[6] else 0,
+                        "total_descontos": float(row[7]) if row and row[7] else 0,
+                        "total_vantagens": float(row[8]) if row and row[8] else 0,
+                        "total_liquido": float(row[9]) if row and row[9] else 0,
+                        "total_inss": float(row[10]) if row and row[10] else 0,
+                        "total_irrf": float(row[11]) if row and row[11] else 0,
+                        "total_fgts": float(row[12]) if row and row[12] else 0,
+                        "total_he_50_diurnas": float(row[13]) if row and row[13] else 0,
+                        "total_he_50_noturnas": float(row[14]) if row and row[14] else 0,
+                        "total_he_60": float(row[15]) if row and row[15] else 0,
+                        "total_he_100_diurnas": float(row[16]) if row and row[16] else 0,
+                        "total_he_100_noturnas": float(row[17]) if row and row[17] else 0,
+                        "total_adicional_noturno": float(row[18]) if row and row[18] else 0,
+                        "total_gratificacoes": float(row[19]) if row and row[19] else 0,
+                        # 13º Salário e Férias - TOTAIS CONSOLIDADOS
+                        "total_13_salario": float(row[20]) if row and row[20] else 0,
+                        "total_ferias_pagas": float(row[21]) if row and row[21] else 0,
+                        # 13º Salário - Componentes detalhados (nova estrutura)
+                        "total_13_adiantamento": float(row[22]) if row and row[22] else 0,
+                        "total_13_integral": float(row[23]) if row and row[23] else 0,
+                        "total_13_proporcional": float(row[24]) if row and row[24] else 0,
+                        "total_13_indenizado": float(row[25]) if row and row[25] else 0,
+                        "total_13_complementar": float(row[26]) if row and row[26] else 0,
+                        "total_13_maternidade": float(row[27]) if row and row[27] else 0,
+                        # Férias - Componentes detalhados (nova estrutura)
+                        "total_ferias_valor_base": float(row[28]) if row and row[28] else 0,
                         "total_ferias_abono_1_3": float(row[29]) if row and row[29] else 0,
-                        "total_ferias_med_horas_extras": float(row[30]) if row and row[30] else 0,
-                        "total_desconto_13_adiantamento": float(row[31]) if row and row[31] else 0,
-                        "total_desconto_ferias_adiantamento": float(row[32]) if row and row[32] else 0,
-                        # Campos existentes ajustados
-                        "total_periculosidade": float(row[33]) if row and row[33] else 0,
-                        "total_insalubridade": float(row[34]) if row and row[34] else 0,
-                        "total_he50_horas": float(row[35]) if row and row[35] else 0,
-                        "total_horas_noturnas": float(row[36]) if row and row[36] else 0,
-                        "total_plano_saude": float(row[37]) if row and row[37] else 0,
-                        "total_vale_transporte": float(row[38]) if row and row[38] else 0,
-                        "trabalhando": row[39] if row else 0,
-                        "ferias": row[40] if row else 0,
-                        "afastados": row[41] if row else 0,
-                        "demitidos": row[42] if row else 0,
+                        "total_ferias_gratificacao": float(row[30]) if row and row[30] else 0,
+                        "total_ferias_medias": float(row[31]) if row and row[31] else 0,
+                        "total_ferias_adiantamento": float(row[32]) if row and row[32] else 0,
+                        # Descontos
+                        "total_desconto_13_adiantamento": float(row[33]) if row and row[33] else 0,
+                        # Outros campos
+                        "total_periculosidade": float(row[34]) if row and row[34] else 0,
+                        "total_insalubridade": float(row[35]) if row and row[35] else 0,
+                        "total_he50_horas": float(row[44]) if row and row[44] else 0,
+                        "total_horas_noturnas": float(row[45]) if row and row[45] else 0,
+                        "total_plano_saude": float(row[46]) if row and row[46] else 0,
+                        "total_vale_transporte": float(row[47]) if row and row[47] else 0,
+                        "trabalhando": row[48] if row else 0,
+                        "ferias": row[49] if row else 0,
+                        "afastados": row[50] if row else 0,
+                        "demitidos": row[51] if row else 0,
                         "contratados": 0,  # Será calculado se múltiplos períodos
                     }
                 }

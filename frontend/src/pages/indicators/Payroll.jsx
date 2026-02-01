@@ -1,978 +1,584 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useTheme } from '../../contexts/ThemeContext';
-import {
-  CurrencyDollarIcon,
-  ArrowPathIcon,
-  ExclamationTriangleIcon,
-  DocumentArrowDownIcon,
-  ChevronDownIcon
-} from '@heroicons/react/24/outline';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
-import * as XLSX from 'xlsx';
-import { LoadingSpinner, EmptyState, formatCurrency, calcPercentage } from './components';
+import MultiSelect from '../../components/MultiSelect';
 
-const Payroll = () => {
+/**
+ * VERSÃO V2 - REFATORADA
+ * Organizada nas 7 seções especificadas pelo RH
+ * Sem filtros complexos de 13º (agora é período separado)
+ */
+const PayrollV2 = () => {
   const { config, theme } = useTheme();
   const isDarkMode = theme === 'dark';
   
-  // Estados principais
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
+  const [showFilters, setShowFilters] = useState(true); // Controle de expansão dos filtros
   
-  // Estados de filtros
+  // Dados brutos dos filtros
+  const [allPeriods, setAllPeriods] = useState([]);
+  const [allYears, setAllYears] = useState([]);
+  const [allMonths, setAllMonths] = useState([]);
+  const [allDepartments, setAllDepartments] = useState([]);
+  const [allEmployees, setAllEmployees] = useState([]);
+  
+  // Seleções
   const [selectedPeriods, setSelectedPeriods] = useState([]);
+  const [selectedYears, setSelectedYears] = useState([]);
+  const [selectedMonths, setSelectedMonths] = useState([]);
   const [selectedDepartments, setSelectedDepartments] = useState([]);
   const [selectedEmployees, setSelectedEmployees] = useState([]);
-  const [availableEmployees, setAvailableEmployees] = useState([]);
-  const [availableDepartments, setAvailableDepartments] = useState([]);
-  const [filteredStats, setFilteredStats] = useState(null);
-  
-  // Estados de filtros de 13º salário
-  const [include13Salary, setInclude13Salary] = useState(true); // Incluir valores de 13º
-  const [only13Salary, setOnly13Salary] = useState(false); // Mostrar somente 13º
-  
-  // Estados de UI
-  const [showPeriodDropdown, setShowPeriodDropdown] = useState(false);
-  const [showDepartmentDropdown, setShowDepartmentDropdown] = useState(false);
-  const [showEmployeeDropdown, setShowEmployeeDropdown] = useState(false);
-  const [employeeSearch, setEmployeeSearch] = useState('');
-  const [showExportDropdown, setShowExportDropdown] = useState(false);
-  
-  // Refs
-  const exportRef = useRef(null);
-  const exportDropdownRef = useRef(null);
 
-  // Carregar dados principais
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await api.get('/payroll/statistics');
-      setData(response.data);
-    } catch (error) {
-      console.error('Erro ao carregar folha:', error);
-      toast.error('Erro ao carregar estatísticas da folha');
-    } finally {
-      setLoading(false);
-    }
+  // Carregar filtros disponíveis
+  useEffect(() => {
+    loadFilters();
   }, []);
 
-  // Carregar filtros
-  const loadFiltersData = useCallback(async () => {
+  // Carregar estatísticas quando mudar qualquer filtro
+  useEffect(() => {
+    if (selectedPeriods.length > 0 || selectedYears.length > 0 || selectedMonths.length > 0) {
+      loadStatistics();
+    }
+  }, [selectedPeriods, selectedYears, selectedMonths, selectedDepartments, selectedEmployees]);
+
+  // ============================================
+  // FILTROS CASCATA (DRILL-THROUGH)
+  // ============================================
+  
+  // Períodos filtrados baseado em ano/mês selecionado
+  const filteredPeriods = useMemo(() => {
+    let filtered = allPeriods;
+    
+    if (selectedYears.length > 0) {
+      filtered = filtered.filter(p => selectedYears.includes(p.year));
+    }
+    
+    if (selectedMonths.length > 0) {
+      filtered = filtered.filter(p => selectedMonths.includes(p.month));
+    }
+    
+    return filtered;
+  }, [allPeriods, selectedYears, selectedMonths]);
+
+  // Anos disponíveis baseado nos períodos selecionados
+  const filteredYears = useMemo(() => {
+    if (selectedPeriods.length > 0) {
+      const yearsFromPeriods = allPeriods
+        .filter(p => selectedPeriods.includes(p.id))
+        .map(p => p.year);
+      return allYears.filter(y => yearsFromPeriods.includes(y));
+    }
+    return allYears;
+  }, [allPeriods, allYears, selectedPeriods]);
+
+  // Meses disponíveis baseado nos períodos/anos selecionados
+  const filteredMonths = useMemo(() => {
+    let relevantPeriods = allPeriods;
+    
+    if (selectedPeriods.length > 0) {
+      relevantPeriods = relevantPeriods.filter(p => selectedPeriods.includes(p.id));
+    } else if (selectedYears.length > 0) {
+      relevantPeriods = relevantPeriods.filter(p => selectedYears.includes(p.year));
+    }
+    
+    const monthsFromPeriods = relevantPeriods.map(p => p.month);
+    return allMonths.filter(m => monthsFromPeriods.includes(m.number));
+  }, [allPeriods, allMonths, selectedPeriods, selectedYears]);
+
+  // Departamentos disponíveis (sem filtro por enquanto, mas pode ser implementado)
+  const filteredDepartments = useMemo(() => {
+    return allDepartments;
+  }, [allDepartments]);
+
+  // Colaboradores disponíveis (sem filtro por enquanto, mas pode ser implementado)
+  const filteredEmployees = useMemo(() => {
+    return allEmployees;
+  }, [allEmployees]);
+
+  const loadFilters = async () => {
     try {
-      const [employeesRes, departmentsRes] = await Promise.all([
-        api.get('/payroll/employees'),
-        api.get('/payroll/divisions')
-      ]);
-      setAvailableEmployees(employeesRes.data.employees || []);
-      setAvailableDepartments(departmentsRes.data.departments || []);
+      // Carregar períodos
+      const periodsRes = await api.get('/payroll/periods');
+      setAllPeriods(periodsRes.data.periods || []);
+      
+      // Selecionar último período por padrão
+      if (periodsRes.data.periods && periodsRes.data.periods.length > 0) {
+        setSelectedPeriods([periodsRes.data.periods[0].id]);
+      }
+
+      // Carregar anos disponíveis
+      const yearsRes = await api.get('/payroll/years');
+      setAllYears(yearsRes.data.years || []);
+
+      // Carregar meses disponíveis
+      const monthsRes = await api.get('/payroll/months');
+      setAllMonths(monthsRes.data.months || []);
+
+      // Carregar departamentos
+      const deptsRes = await api.get('/payroll/divisions');
+      setAllDepartments(deptsRes.data.departments || []);
+
+      // Carregar colaboradores
+      const empsRes = await api.get('/payroll/employees');
+      setAllEmployees(empsRes.data.employees || []);
+      
     } catch (error) {
       console.error('Erro ao carregar filtros:', error);
+      toast.error('Erro ao carregar filtros');
     }
-  }, []);
+  };
 
-  // Carregar estatísticas filtradas
-  const loadFilteredStatistics = useCallback(async () => {
+  const loadStatistics = async () => {
+    setLoading(true);
     try {
       const params = new URLSearchParams();
       if (selectedPeriods.length > 0) params.append('periods', selectedPeriods.join(','));
-      if (selectedDepartments.length > 0) params.append('divisions', selectedDepartments.join(','));
+      if (selectedYears.length > 0) params.append('years', selectedYears.join(','));
+      if (selectedMonths.length > 0) params.append('months', selectedMonths.join(','));
+      if (selectedDepartments.length > 0) params.append('departments', selectedDepartments.join(','));
       if (selectedEmployees.length > 0) params.append('employees', selectedEmployees.join(','));
       
-      const response = await api.get(`/payroll/statistics-filtered?${params.toString()}`);
-      setFilteredStats(response.data.stats);
+      const response = await api.get(`/payroll/statistics?${params}`);
+      setData(response.data);
     } catch (error) {
-      console.error('Erro ao filtrar:', error);
-      toast.error('Erro ao aplicar filtros');
+      console.error('Erro ao carregar estatísticas:', error);
+      toast.error('Erro ao carregar estatísticas');
+    } finally {
+      setLoading(false);
     }
-  }, [selectedPeriods, selectedDepartments, selectedEmployees]);
+  };
 
-  // Effects
-  useEffect(() => {
-    loadData();
-    loadFiltersData();
-  }, [loadData, loadFiltersData]);
+  const formatCurrency = (value) => {
+    return new Intl.NumberFormat('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(value || 0);
+  };
 
-  useEffect(() => {
-    if (selectedPeriods.length > 0 || selectedDepartments.length > 0 || selectedEmployees.length > 0) {
-      loadFilteredStatistics();
-    } else {
-      setFilteredStats(null);
-    }
-  }, [selectedPeriods, selectedDepartments, selectedEmployees, loadFilteredStatistics]);
+  // Contar total de filtros ativos
+  const totalActiveFilters = selectedPeriods.length + selectedYears.length + 
+                             selectedMonths.length + selectedDepartments.length + 
+                             selectedEmployees.length;
 
-  // Fechar dropdown ao clicar fora
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (exportDropdownRef.current && !exportDropdownRef.current.contains(event.target)) {
-        setShowExportDropdown(false);
-      }
-    };
-    if (showExportDropdown) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showExportDropdown]);
-
-  // Handlers
-  const clearFilters = () => {
+  // Limpar todos os filtros
+  const clearAllFilters = () => {
     setSelectedPeriods([]);
+    setSelectedYears([]);
+    setSelectedMonths([]);
     setSelectedDepartments([]);
     setSelectedEmployees([]);
-    setFilteredStats(null);
-    setEmployeeSearch('');
   };
 
-  const togglePeriodSelection = (periodId) => {
-    setSelectedPeriods(prev => 
-      prev.includes(periodId) ? prev.filter(id => id !== periodId) : [...prev, periodId]
-    );
-  };
-
-  const toggleDepartmentSelection = (deptName) => {
-    setSelectedDepartments(prev => {
-      const newSelection = prev.includes(deptName) 
-        ? prev.filter(name => name !== deptName) 
-        : [...prev, deptName];
-      
-      if (newSelection.length > 0) {
-        const validEmployeeIds = availableEmployees
-          .filter(emp => newSelection.includes(emp.department))
-          .map(emp => emp.id);
-        setSelectedEmployees(current => current.filter(id => validEmployeeIds.includes(id)));
-      }
-      return newSelection;
-    });
-  };
-
-  const toggleEmployeeSelection = (employeeId) => {
-    setSelectedEmployees(prev =>
-      prev.includes(employeeId) ? prev.filter(id => id !== employeeId) : [...prev, employeeId]
-    );
-  };
-
-  // Funções de exportação
-  const exportCurrentView = async () => {
-    try {
-      setShowExportDropdown(false);
-      const loadingToast = toast.loading('📄 Gerando PDF...');
-      
-      if (!exportRef.current) {
-        toast.dismiss(loadingToast);
-        toast.error('Erro ao capturar tela');
-        return;
-      }
-
-      const canvas = await html2canvas(exportRef.current, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: isDarkMode ? '#1F2937' : '#FFFFFF'
-      });
-
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const imgWidth = 210;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      let heightLeft = imgHeight;
-      let position = 0;
-
-      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, position, imgWidth, imgHeight);
-      heightLeft -= 297;
-
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, position, imgWidth, imgHeight);
-        heightLeft -= 297;
-      }
-
-      pdf.save(`folha_pagamento_${new Date().toISOString().split('T')[0]}.pdf`);
-      toast.dismiss(loadingToast);
-      toast.success('✅ PDF exportado!');
-    } catch (error) {
-      console.error('Erro:', error);
-      toast.error('❌ Erro ao gerar PDF');
-    }
-  };
-
-  const exportToExcel = () => {
-    try {
-      setShowExportDropdown(false);
-      const loadingToast = toast.loading('📗 Gerando Excel...');
-
-      const stats = displayStats || {};
-      const wb = XLSX.utils.book_new();
-
-      const resumoData = [
-        ['RELATÓRIO DE FOLHA DE PAGAMENTO'],
-        ['Gerado em:', new Date().toLocaleString('pt-BR')],
-        [],
-        ['RESUMO'],
-        ['Total de Colaboradores', stats.total_employees || 0],
-        ['Total Proventos', stats.total_proventos || 0],
-        ['Total Descontos', stats.total_descontos || 0],
-        ['Total Líquido', stats.total_liquido || 0],
-        [],
-        ['ENCARGOS'],
-        ['INSS', stats.total_inss || 0],
-        ['IRRF', stats.total_irrf || 0],
-        ['FGTS', stats.total_fgts || 0],
-      ];
-
-      const ws = XLSX.utils.aoa_to_sheet(resumoData);
-      XLSX.utils.book_append_sheet(wb, ws, 'Resumo');
-
-      XLSX.writeFile(wb, `folha_${new Date().toISOString().split('T')[0]}.xlsx`);
-      toast.dismiss(loadingToast);
-      toast.success('✅ Excel exportado!');
-    } catch (error) {
-      console.error('Erro:', error);
-      toast.error('❌ Erro ao gerar Excel');
-    }
-  };
-
-  // Render
   if (loading) {
-    return <LoadingSpinner message="Carregando estatísticas da folha..." />;
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
   }
 
-  if (!data?.success) {
-    return <EmptyState icon={ExclamationTriangleIcon} message="Nenhum dado de folha disponível" />;
+  if (!data) {
+    return (
+      <div className="text-center text-gray-500 py-12">
+        Nenhum dado disponível
+      </div>
+    );
   }
 
-  const { periods, financial_stats, totals } = data;
-  
-  // Calcular displayStats
-  const displayStats = filteredStats || 
-    (financial_stats && financial_stats.length > 0 ? {
-      period_name: 'Consolidado de Todos os Períodos',
-      total_employees: totals?.total_employees || 0,
-      total_periods: totals?.total_periods || financial_stats.length,
-      total_proventos: totals?.total_proventos || 0,
-      total_descontos: totals?.total_descontos || 0,
-      total_liquido: totals?.total_liquido || 0,
-      total_inss: totals?.total_inss || 0,
-      total_irrf: totals?.total_irrf || 0,
-      total_fgts: totals?.total_fgts || 0,
-      total_valor_salario: totals?.total_salarios || 0,
-      // Usar médias calculadas do backend ao invés de dividir totais
-      avg_salario: financial_stats.reduce((sum, p) => sum + (p.avg_salario || 0), 0) / financial_stats.length,
-      avg_liquido: financial_stats.reduce((sum, p) => sum + (p.avg_liquido || 0), 0) / financial_stats.length,
-      total_he_50_diurnas: financial_stats.reduce((sum, p) => sum + (p.total_he_50_diurnas || 0), 0),
-      total_he_50_noturnas: financial_stats.reduce((sum, p) => sum + (p.total_he_50_noturnas || 0), 0),
-      total_he_60: financial_stats.reduce((sum, p) => sum + (p.total_he_60 || 0), 0),
-      total_he_100_diurnas: financial_stats.reduce((sum, p) => sum + (p.total_he_100_diurnas || 0), 0),
-      total_he_100_noturnas: financial_stats.reduce((sum, p) => sum + (p.total_he_100_noturnas || 0), 0),
-      total_adicional_noturno: financial_stats.reduce((sum, p) => sum + (p.total_adicional_noturno || 0), 0),
-      total_gratificacoes: financial_stats.reduce((sum, p) => sum + (p.total_gratificacoes || 0), 0),
-      total_13_salario: financial_stats.reduce((sum, p) => sum + (p.total_13_salario || 0), 0),
-      total_ferias_pagas: financial_stats.reduce((sum, p) => sum + (p.total_ferias_pagas || 0), 0),
-      total_periculosidade: financial_stats.reduce((sum, p) => sum + (p.total_periculosidade || 0), 0),
-      total_insalubridade: financial_stats.reduce((sum, p) => sum + (p.total_insalubridade || 0), 0),
-      total_plano_saude: totals?.total_plano_saude || 0,
-      total_vale_transporte: financial_stats.reduce((sum, p) => sum + (p.total_vale_transporte || 0), 0),
-      trabalhando: Math.round(financial_stats.reduce((sum, p) => sum + (p.trabalhando || 0), 0) / financial_stats.length),
-      ferias: Math.round(financial_stats.reduce((sum, p) => sum + (p.ferias || 0), 0) / financial_stats.length),
-      afastados: Math.round(financial_stats.reduce((sum, p) => sum + (p.afastados || 0), 0) / financial_stats.length),
-      demitidos: Math.round(financial_stats.reduce((sum, p) => sum + (p.demitidos || 0), 0) / financial_stats.length),
-      contratados: financial_stats.reduce((sum, p) => sum + (p.contratados || 0), 0),
-    } : null);
-
-  const hasActiveFilters = selectedPeriods.length > 0 || selectedDepartments.length > 0 || selectedEmployees.length > 0;
-  const selectedPeriodNames = periods?.filter(p => selectedPeriods.includes(p.id)).map(p => p.period_name) || [];
-  const selectedEmployeeNames = availableEmployees?.filter(e => selectedEmployees.includes(e.id)).map(e => e.name) || [];
-  
-  const filteredEmployeesList = availableEmployees
-    .filter(emp => selectedDepartments.length === 0 || selectedDepartments.includes(emp.department))
-    .filter(emp => emp.name.toLowerCase().includes(employeeSearch.toLowerCase()) || emp.unique_id.includes(employeeSearch));
-
-  // Ajustar displayStats baseado nos filtros de 13º salário
-  const adjustedStats = React.useMemo(() => {
-    if (!displayStats) return null;
-    
-    const stats = { ...displayStats };
-    
-    // Se "Somente 13º" está ativo, zerar tudo exceto 13º e férias
-    if (only13Salary) {
-      // Zerar valores que NÃO são de 13º/férias
-      stats.total_salario_base = 0;
-      stats.total_gratificacoes = 0;
-      stats.total_periculosidade = 0;
-      stats.total_insalubridade = 0;
-      stats.total_adicional_noturno = 0;
-      stats.total_he_50_diurnas = 0;
-      stats.total_he_50_noturnas = 0;
-      stats.total_he_60 = 0;
-      stats.total_he_100_diurnas = 0;
-      stats.total_he_100_noturnas = 0;
-      stats.total_vale_transporte = 0;
-      stats.total_plano_saude = 0;
-      
-      // Manter apenas valores de 13º e férias
-      // (os campos total_13_* e total_ferias_* ficam intocados)
-    }
-    // Se "Incluir 13º" está DESATIVADO, zerar valores de 13º
-    else if (!include13Salary) {
-      stats.total_13_adiantamento = 0;
-      stats.total_13_integral = 0;
-      stats.total_13_maternidade_gps = 0;
-      stats.total_13_med_eventos = 0;
-      stats.total_13_med_horas_extras = 0;
-      stats.total_13_gratif_adiantamento = 0;
-      stats.total_13_gratif_integral = 0;
-      stats.total_13_salario = 0; // Gratificações antigas
-      stats.total_ferias_base = 0;
-      stats.total_ferias_abono_1_3 = 0;
-      stats.total_ferias_med_horas_extras = 0;
-      stats.total_ferias_pagas = 0; // Gratificações antigas
-      stats.total_desconto_13_adiantamento = 0;
-      stats.total_desconto_ferias_adiantamento = 0;
-    }
-    
-    return stats;
-  }, [displayStats, include13Salary, only13Salary]);
+  const { resumo_filtro, informacoes_salariais, adicionais_beneficios, encargos_trabalhistas, horas_extras, atestados_faltas, emprestimos } = data;
 
   return (
     <div className="space-y-6">
-      {/* Filtros */}
-      <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h3 className={`text-lg font-semibold ${config.classes.text}`}>🔍 Filtros de Análise</h3>
-            <p className={`text-sm ${config.classes.textSecondary} mt-1`}>
-              Selecione períodos, departamentos ou colaboradores
-            </p>
-          </div>
-          <div className="flex gap-3">
-            {/* Botão Exportar */}
-            <div className="relative" ref={exportDropdownRef}>
+      {/* Header com Filtros */}
+      <div className={`${config.classes.card} rounded-lg shadow`}>
+        {/* Cabeçalho dos Filtros */}
+        <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+          <div className="flex items-center justify-between">
+            <h2 className={`text-2xl font-bold ${config.classes.text}`}>
+              📊 Indicadores de Folha de Pagamento
+            </h2>
+            
+            <div className="flex items-center gap-3">
+              {totalActiveFilters > 0 && (
+                <>
+                  <span className="text-sm text-gray-600 dark:text-gray-400">
+                    {totalActiveFilters} {totalActiveFilters === 1 ? 'filtro ativo' : 'filtros ativos'}
+                  </span>
+                  <button
+                    onClick={clearAllFilters}
+                    className="text-sm text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 font-medium"
+                  >
+                    Limpar tudo
+                  </button>
+                </>
+              )}
               <button
-                onClick={() => setShowExportDropdown(!showExportDropdown)}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                onClick={() => setShowFilters(!showFilters)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+                  showFilters 
+                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200' 
+                    : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
+                }`}
               >
-                <DocumentArrowDownIcon className="w-5 h-5" />
-                Exportar
-                <ChevronDownIcon className={`w-4 h-4 transition-transform ${showExportDropdown ? 'rotate-180' : ''}`} />
+                {showFilters ? '🔽 Ocultar Filtros' : '🔼 Mostrar Filtros'}
               </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Grid de Filtros - Colapsável */}
+        {showFilters && (
+          <div className="p-6 bg-gray-50 dark:bg-gray-800/50">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+              {/* Filtro de Períodos */}
+              <MultiSelect
+                label="Períodos"
+                options={filteredPeriods.map(p => ({ value: p.id, label: p.period_name }))}
+                selected={selectedPeriods}
+                onChange={setSelectedPeriods}
+                placeholder="Todos os períodos"
+              />
+
+              {/* Filtro de Anos */}
+              <MultiSelect
+                label="Anos"
+                options={filteredYears.map(y => ({ value: y, label: y.toString() }))}
+                selected={selectedYears}
+                onChange={setSelectedYears}
+                placeholder="Todos os anos"
+              />
+
+              {/* Filtro de Meses */}
+              <MultiSelect
+                label="Meses"
+                options={filteredMonths.map(m => ({ value: m.number, label: m.name }))}
+                selected={selectedMonths}
+                onChange={setSelectedMonths}
+                placeholder="Todos os meses"
+              />
+
+              {/* Filtro de Setores */}
+              <MultiSelect
+                label="Setores"
+                options={filteredDepartments.map(d => ({ value: d.name, label: d.name }))}
+                selected={selectedDepartments}
+                onChange={setSelectedDepartments}
+                placeholder="Todos os setores"
+                searchable={true}
+              />
+
+              {/* Filtro de Colaboradores */}
+              <MultiSelect
+                label="Colaboradores"
+                options={filteredEmployees.map(e => ({ value: e.id, label: e.name }))}
+                selected={selectedEmployees}
+                onChange={setSelectedEmployees}
+                placeholder="Todos os colaboradores"
+                searchable={true}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Resumo Compacto dos Filtros Ativos - Sempre Visível */}
+        {totalActiveFilters > 0 && (
+          <div className="px-6 py-3 bg-blue-50 dark:bg-blue-900/20 border-t border-blue-100 dark:border-blue-800">
+            <div className="flex flex-wrap gap-2 items-center">
+              <span className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                Filtros aplicados:
+              </span>
               
-              {showExportDropdown && (
-                <div className={`absolute right-0 mt-2 w-64 ${config.classes.card} rounded-lg shadow-xl border ${config.classes.border} z-30`}>
-                  <div className="py-2">
-                    <button
-                      onClick={exportCurrentView}
-                      className={`w-full px-4 py-3 text-left hover:bg-gray-100 dark:hover:bg-gray-700 ${config.classes.text}`}
-                    >
-                      📄 Exportar PDF
-                    </button>
-                    <button
-                      onClick={exportToExcel}
-                      className={`w-full px-4 py-3 text-left hover:bg-gray-100 dark:hover:bg-gray-700 ${config.classes.text}`}
-                    >
-                      📗 Exportar Excel
-                    </button>
-                  </div>
+              {/* Períodos */}
+              {selectedPeriods.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {filteredPeriods.filter(p => selectedPeriods.includes(p.id)).slice(0, 2).map(p => (
+                    <span key={p.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200">
+                      {p.period_name}
+                    </span>
+                  ))}
+                  {selectedPeriods.length > 2 && (
+                    <span className="px-2 py-0.5 text-xs text-blue-700 dark:text-blue-300">
+                      +{selectedPeriods.length - 2} períodos
+                    </span>
+                  )}
                 </div>
               )}
-            </div>
-            
-            {hasActiveFilters && (
-              <button onClick={clearFilters} className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 rounded-lg">
-                ✕ Limpar Filtros
-              </button>
-            )}
-          </div>
-        </div>
 
-        {/* Dropdowns de Filtro */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Períodos */}
-          <div className="relative">
-            <button
-              onClick={() => { setShowPeriodDropdown(!showPeriodDropdown); setShowDepartmentDropdown(false); setShowEmployeeDropdown(false); }}
-              className={`w-full px-4 py-3 text-left rounded-lg border-2 transition-all ${
-                selectedPeriods.length > 0 ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : `${config.classes.border} ${config.classes.card}`
-              }`}
-            >
-              <span className={`text-sm font-medium ${config.classes.text}`}>📅 Períodos</span>
-              <p className={`text-xs ${config.classes.textSecondary} mt-1`}>
-                {selectedPeriods.length > 0 ? `${selectedPeriods.length} selecionado(s)` : 'Todos'}
-              </p>
-            </button>
-            
-            {showPeriodDropdown && (
-              <div className={`absolute z-20 w-full mt-2 ${config.classes.card} rounded-lg shadow-lg border ${config.classes.border} max-h-64 overflow-y-auto`}>
-                <div className="p-2 border-b sticky top-0 bg-white dark:bg-gray-800">
-                  <button onClick={() => setSelectedPeriods(periods?.map(p => p.id) || [])} className="text-xs text-blue-600 mr-3">
-                    Selecionar todos
-                  </button>
-                  <button onClick={() => setSelectedPeriods([])} className="text-xs text-gray-500">Limpar</button>
-                </div>
-                {periods?.map(period => (
-                  <label key={period.id} className={`flex items-center px-4 py-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 ${
-                    selectedPeriods.includes(period.id) ? 'bg-blue-50 dark:bg-blue-900/30' : ''
-                  }`}>
-                    <input type="checkbox" checked={selectedPeriods.includes(period.id)} onChange={() => togglePeriodSelection(period.id)} className="mr-3 h-4 w-4 text-blue-600 rounded" />
-                    <span className={`flex-1 text-sm ${config.classes.text}`}>{period.period_name}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Departamentos */}
-          <div className="relative">
-            <button
-              onClick={() => { setShowDepartmentDropdown(!showDepartmentDropdown); setShowPeriodDropdown(false); setShowEmployeeDropdown(false); }}
-              className={`w-full px-4 py-3 text-left rounded-lg border-2 transition-all ${
-                selectedDepartments.length > 0 ? 'border-green-500 bg-green-50 dark:bg-green-900/20' : `${config.classes.border} ${config.classes.card}`
-              }`}
-            >
-              <span className={`text-sm font-medium ${config.classes.text}`}>🏢 Departamentos</span>
-              <p className={`text-xs ${config.classes.textSecondary} mt-1`}>
-                {selectedDepartments.length > 0 ? `${selectedDepartments.length} selecionado(s)` : 'Todos'}
-              </p>
-            </button>
-            
-            {showDepartmentDropdown && (
-              <div className={`absolute z-20 w-full mt-2 ${config.classes.card} rounded-lg shadow-lg border ${config.classes.border} max-h-64 overflow-y-auto`}>
-                <div className="p-2 border-b sticky top-0 bg-white dark:bg-gray-800">
-                  <button onClick={() => setSelectedDepartments(availableDepartments?.map(d => d.name) || [])} className="text-xs text-green-600 mr-3">
-                    Selecionar todos
-                  </button>
-                  <button onClick={() => setSelectedDepartments([])} className="text-xs text-gray-500">Limpar</button>
-                </div>
-                {availableDepartments?.map(dept => (
-                  <label key={dept.name} className={`flex items-center px-4 py-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 ${
-                    selectedDepartments.includes(dept.name) ? 'bg-green-50 dark:bg-green-900/30' : ''
-                  }`}>
-                    <input type="checkbox" checked={selectedDepartments.includes(dept.name)} onChange={() => toggleDepartmentSelection(dept.name)} className="mr-3 h-4 w-4 text-green-600 rounded" />
-                    <span className={`flex-1 text-sm ${config.classes.text}`}>{dept.name}</span>
-                    <span className="text-xs text-gray-400">{dept.total_employees}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Colaboradores */}
-          <div className="relative">
-            <button
-              onClick={() => { setShowEmployeeDropdown(!showEmployeeDropdown); setShowPeriodDropdown(false); setShowDepartmentDropdown(false); }}
-              className={`w-full px-4 py-3 text-left rounded-lg border-2 transition-all ${
-                selectedEmployees.length > 0 ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20' : `${config.classes.border} ${config.classes.card}`
-              }`}
-            >
-              <span className={`text-sm font-medium ${config.classes.text}`}>👥 Colaboradores</span>
-              <p className={`text-xs ${config.classes.textSecondary} mt-1`}>
-                {selectedEmployees.length > 0 ? `${selectedEmployees.length} selecionado(s)` : 'Todos'}
-              </p>
-            </button>
-            
-            {showEmployeeDropdown && (
-              <div className={`absolute z-20 w-full mt-2 ${config.classes.card} rounded-lg shadow-lg border ${config.classes.border} max-h-80 overflow-hidden`}>
-                <div className="p-2 border-b sticky top-0 bg-white dark:bg-gray-800">
-                  <input
-                    type="text"
-                    placeholder="🔎 Buscar..."
-                    value={employeeSearch}
-                    onChange={(e) => setEmployeeSearch(e.target.value)}
-                    className={`w-full px-3 py-2 text-sm rounded border ${config.classes.border} ${config.classes.card}`}
-                  />
-                </div>
-                <div className="max-h-52 overflow-y-auto">
-                  {filteredEmployeesList.slice(0, 50).map(employee => (
-                    <label key={employee.id} className={`flex items-center px-4 py-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 ${
-                      selectedEmployees.includes(employee.id) ? 'bg-purple-50 dark:bg-purple-900/30' : ''
-                    }`}>
-                      <input type="checkbox" checked={selectedEmployees.includes(employee.id)} onChange={() => toggleEmployeeSelection(employee.id)} className="mr-3 h-4 w-4 text-purple-600 rounded" />
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-sm ${config.classes.text} truncate`}>{employee.name}</p>
-                        <p className="text-xs text-gray-400">{employee.department}</p>
-                      </div>
-                    </label>
+              {/* Anos */}
+              {selectedYears.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {selectedYears.map(y => (
+                    <span key={y} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 dark:bg-indigo-900 text-indigo-800 dark:text-indigo-200">
+                      {y}
+                    </span>
                   ))}
                 </div>
-              </div>
-            )}
-          </div>
-        </div>
+              )}
 
-        {/* Toggles de 13º Salário */}
-        <div className="mt-4 p-4 bg-gradient-to-r from-green-50 to-amber-50 dark:from-green-900/20 dark:to-amber-900/20 rounded-lg border border-green-200 dark:border-green-800">
-          <div className="flex flex-wrap gap-4 items-center">
-            <span className="text-sm font-semibold text-green-700 dark:text-green-300">🎄 Filtros de 13º e Férias:</span>
-            
-            {/* Toggle: Incluir valores de 13º */}
-            <label className="flex items-center gap-2 cursor-pointer">
-              <div className="relative">
-                <input
-                  type="checkbox"
-                  checked={include13Salary}
-                  onChange={(e) => {
-                    setInclude13Salary(e.target.checked);
-                    if (!e.target.checked) setOnly13Salary(false); // Desativa "somente 13º" se desmarcar
-                  }}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-green-300 dark:peer-focus:ring-green-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-green-600"></div>
-              </div>
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                {include13Salary ? '✅ Incluir valores de 13º e férias' : '❌ Excluir valores de 13º e férias'}
-              </span>
-            </label>
+              {/* Meses */}
+              {selectedMonths.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {filteredMonths.filter(m => selectedMonths.includes(m.number)).slice(0, 3).map(m => (
+                    <span key={m.number} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200">
+                      {m.name}
+                    </span>
+                  ))}
+                  {selectedMonths.length > 3 && (
+                    <span className="px-2 py-0.5 text-xs text-green-700 dark:text-green-300">
+                      +{selectedMonths.length - 3} meses
+                    </span>
+                  )}
+                </div>
+              )}
 
-            {/* Toggle: Exibir somente 13º */}
-            <label className="flex items-center gap-2 cursor-pointer">
-              <div className="relative">
-                <input
-                  type="checkbox"
-                  checked={only13Salary}
-                  onChange={(e) => {
-                    setOnly13Salary(e.target.checked);
-                    if (e.target.checked) setInclude13Salary(true); // Ativa "incluir" se marcar "somente"
-                  }}
-                  disabled={!include13Salary}
-                  className="sr-only peer disabled:opacity-50"
-                />
-                <div className={`w-11 h-6 ${!include13Salary ? 'opacity-50 cursor-not-allowed' : ''} bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-amber-300 dark:peer-focus:ring-amber-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-amber-600`}></div>
-              </div>
-              <span className={`text-sm font-medium ${!include13Salary ? 'opacity-50' : ''} text-gray-700 dark:text-gray-300`}>
-                {only13Salary ? '🎯 Exibindo somente 13º e férias' : '📊 Exibir somente 13º e férias'}
-              </span>
-            </label>
-          </div>
-          {only13Salary && (
-            <p className="mt-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 px-3 py-1.5 rounded">
-              ℹ️ Mostrando apenas valores relacionados a 13º salário e férias (todos os outros valores estão zerados)
-            </p>
-          )}
-          {!include13Salary && (
-            <p className="mt-2 text-xs text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-900/30 px-3 py-1.5 rounded">
-              ℹ️ Valores de 13º salário e férias foram excluídos dos totalizadores
-            </p>
-          )}
-        </div>
+              {/* Setores */}
+              {selectedDepartments.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200">
+                    {selectedDepartments.length} {selectedDepartments.length === 1 ? 'setor' : 'setores'}
+                  </span>
+                </div>
+              )}
 
-        {/* Tags de filtros ativos */}
-        {hasActiveFilters && (
-          <div className="mt-4 p-4 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 rounded-lg">
-            <div className="flex flex-wrap gap-2 items-center">
-              <span className="text-sm font-medium text-blue-700 dark:text-blue-300">📊 Filtros:</span>
-              {selectedPeriodNames.map(name => (
-                <span key={name} className="px-2 py-1 text-xs bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-200 rounded-full">{name}</span>
-              ))}
-              {selectedDepartments.map(name => (
-                <span key={name} className="px-2 py-1 text-xs bg-green-100 dark:bg-green-800 text-green-700 dark:text-green-200 rounded-full">{name}</span>
-              ))}
-              {selectedEmployeeNames.slice(0, 3).map(name => (
-                <span key={name} className="px-2 py-1 text-xs bg-purple-100 dark:bg-purple-800 text-purple-700 dark:text-purple-200 rounded-full">{name}</span>
-              ))}
-              {selectedEmployeeNames.length > 3 && (
-                <span className="px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-full">+{selectedEmployeeNames.length - 3}</span>
+              {/* Colaboradores */}
+              {selectedEmployees.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-teal-100 dark:bg-teal-900 text-teal-800 dark:text-teal-200">
+                    {selectedEmployees.length} {selectedEmployees.length === 1 ? 'colaborador' : 'colaboradores'}
+                  </span>
+                </div>
               )}
             </div>
           </div>
         )}
       </div>
 
-      {/* Área exportável */}
-      <div ref={exportRef} className="space-y-6">
-        {/* Totalizadores */}
-        {!hasActiveFilters && totals && (
-          <div className={`${config.classes.card} p-5 rounded-lg shadow ${config.classes.border}`}>
-            <h3 className={`text-sm font-semibold ${config.classes.text} mb-4 flex items-center gap-2`}>
-              📊 Totalizadores Consolidados
-              <span className="text-xs font-normal px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
-                {totals.total_periods || 0} períodos • {totals.total_employees || 0} colaboradores
-              </span>
-            </h3>
-            
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-              <div className="p-3 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
-                <p className="text-xs text-green-600 dark:text-green-400 font-medium">💰 Total Proventos</p>
-                <p className="text-lg font-bold text-green-700 dark:text-green-300 mt-1">R$ {formatCurrency(totals.total_proventos)}</p>
-              </div>
-              <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
-                <p className="text-xs text-red-600 dark:text-red-400 font-medium">📉 Total Descontos</p>
-                <p className="text-lg font-bold text-red-700 dark:text-red-300 mt-1">R$ {formatCurrency(totals.total_descontos)}</p>
-              </div>
-              <div className="p-3 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
-                <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">💵 Total Líquido</p>
-                <p className="text-lg font-bold text-emerald-700 dark:text-emerald-300 mt-1">R$ {formatCurrency(totals.total_liquido)}</p>
-              </div>
-              <div className="p-3 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800">
-                <p className="text-xs text-purple-600 dark:text-purple-400 font-medium">🏛️ Total INSS</p>
-                <p className="text-lg font-bold text-purple-700 dark:text-purple-300 mt-1">R$ {formatCurrency(totals.total_inss)}</p>
-              </div>
-              <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
-                <p className="text-xs text-blue-600 dark:text-blue-400 font-medium">🏦 Total FGTS</p>
-                <p className="text-lg font-bold text-blue-700 dark:text-blue-300 mt-1">R$ {formatCurrency(totals.total_fgts)}</p>
-              </div>
-              <div className="p-3 rounded-lg bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800">
-                <p className="text-xs text-orange-600 dark:text-orange-400 font-medium">📋 Total IRRF</p>
-                <p className="text-lg font-bold text-orange-700 dark:text-orange-300 mt-1">R$ {formatCurrency(totals.total_irrf)}</p>
-              </div>
-            </div>
+      {/* SEÇÃO 1: Resumo de Filtro */}
+      <div className={`${config.classes.card} p-6 rounded-lg shadow`}>
+        <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
+          📋 Resumo Filtrado
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <CardStat 
+            icon="👥"
+            label="Funcionários"
+            value={resumo_filtro.funcionarios}
+            color="blue"
+            isNumber
+          />
+          <CardStat 
+            icon="💰"
+            label="Total Proventos"
+            value={resumo_filtro.total_proventos}
+            color="green"
+            prefix="R$"
+          />
+          <CardStat 
+            icon="💸"
+            label="Total Descontos"
+            value={resumo_filtro.total_descontos}
+            color="red"
+            prefix="R$"
+          />
+          <CardStat 
+            icon="💵"
+            label="Total Líquido"
+            value={resumo_filtro.total_liquido}
+            color="teal"
+            prefix="R$"
+          />
+        </div>
+      </div>
+
+      {/* SEÇÃO 2: Informações Salariais */}
+      <div className={`${config.classes.card} p-6 rounded-lg shadow`}>
+        <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
+          💼 Informações Salariais
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <CardStat 
+            icon="💵"
+            label="Total Salários Base"
+            value={informacoes_salariais.total_salarios_base}
+            color="blue"
+            prefix="R$"
+            subtitle="Soma de todos os salários"
+          />
+          <CardStat 
+            icon="📊"
+            label="Salário Médio"
+            value={informacoes_salariais.salario_medio}
+            color="indigo"
+            prefix="R$"
+            subtitle="Média por funcionário"
+          />
+          <CardStat 
+            icon="💎"
+            label="Líquido Médio"
+            value={informacoes_salariais.liquido_medio}
+            color="purple"
+            prefix="R$"
+            subtitle="Média por funcionário"
+          />
+        </div>
+      </div>
+
+      {/* SEÇÃO 3: Adicionais e Benefícios */}
+      <div className={`${config.classes.card} p-6 rounded-lg shadow`}>
+        <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
+          💎 Adicionais e Benefícios
+        </h3>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          <CardStatMini icon="🎁" label="Gratificações" value={adicionais_beneficios.gratificacoes} color="amber" />
+          <CardStatMini icon="⚠️" label="Periculosidade" value={adicionais_beneficios.periculosidade} color="orange" />
+          <CardStatMini icon="🏥" label="Insalubridade" value={adicionais_beneficios.insalubridade} color="yellow" />
+          <CardStatMini icon="🚌" label="Vale Transporte" value={adicionais_beneficios.vale_transporte} color="gray" />
+          <CardStatMini icon="🏥" label="Plano de Saúde" value={adicionais_beneficios.plano_saude} color="blue" />
+          <CardStatMini icon="🚗" label="Vale Mobilidade" value={adicionais_beneficios.vale_mobilidade} color="gray" />
+          <CardStatMini icon="🍽️" label="Vale Refeição" value={adicionais_beneficios.vale_refeicao} color="gray" />
+          <CardStatMini icon="🛒" label="Vale Alimentação" value={adicionais_beneficios.vale_alimentacao} color="gray" />
+          <CardStatMini icon="💰" label="Saldo Livre" value={adicionais_beneficios.saldo_livre} color="gray" />
+          <CardStatMini icon="🔄" label="Transferência Filial" value={adicionais_beneficios.transferencia_filial} color="cyan" />
+          <CardStatMini icon="💵" label="Ajuda de Custo" value={adicionais_beneficios.ajuda_custo} color="teal" />
+          <CardStatMini icon="👶" label="Licença Paternidade" value={adicionais_beneficios.licenca_paternidade} color="pink" />
+        </div>
+      </div>
+
+      {/* SEÇÃO 4: Encargos Trabalhistas */}
+      <div className={`${config.classes.card} p-6 rounded-lg shadow`}>
+        <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
+          🏛️ Encargos Trabalhistas
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <CardStat icon="🏛️" label="INSS" value={encargos_trabalhistas.inss} color="blue" prefix="R$" />
+          <CardStat icon="📝" label="IRRF" value={encargos_trabalhistas.irrf} color="indigo" prefix="R$" />
+          <CardStat icon="🏦" label="FGTS" value={encargos_trabalhistas.fgts} color="green" prefix="R$" />
+        </div>
+      </div>
+
+      {/* SEÇÃO 5: Horas Extras */}
+      <div className={`${config.classes.card} p-6 rounded-lg shadow`}>
+        <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
+          ⏰ Horas Extras
+        </h3>
+        
+        {/* Horas Extras Diurnas */}
+        <div className="mb-4">
+          <h4 className={`text-sm font-medium ${config.classes.text} mb-2`}>☀️ Diurnas</h4>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <CardStatMini icon="☀️" label="DSR Diurno" value={horas_extras.dsr_diurno} color="yellow" />
+            <CardStatMini icon="⏰" label="HE 50% Diurno" value={horas_extras.he50_diurno} color="amber" />
+            <CardStatMini icon="⏰⏰" label="HE 100% Diurno" value={horas_extras.he100_diurno} color="orange" />
           </div>
-        )}
-
-        {/* Estatísticas do período/filtro */}
-        {displayStats && (
-          <>
-            {/* Resumo Principal */}
-            <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
-              <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
-                📊 {hasActiveFilters ? 'Resumo Filtrado' : adjustedStats.period_name || 'Resumo'}
-              </h3>
-              {!hasActiveFilters && displayStats.total_periods > 1 && (
-                <p className={`text-xs ${config.classes.textSecondary} mb-4 flex items-center gap-2`}>
-                  <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full">
-                    {adjustedStats.total_periods} períodos consolidados
-                  </span>
-                  <span>• Médias calculadas por período</span>
-                </p>
-              )}
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="border rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20">
-                  <p className={`text-sm font-medium ${config.classes.textSecondary}`}>👥 Funcionários</p>
-                  <p className={`text-3xl font-bold ${config.classes.text} mt-2`}>{adjustedStats.total_employees}</p>
-                </div>
-                <div className="border rounded-lg p-4 bg-green-50 dark:bg-green-900/20">
-                  <p className={`text-sm font-medium ${config.classes.textSecondary}`}>💰 Total Proventos</p>
-                  <p className="text-2xl font-bold text-green-700 dark:text-green-400 mt-2">R$ {formatCurrency(adjustedStats.total_proventos)}</p>
-                </div>
-                <div className="border rounded-lg p-4 bg-red-50 dark:bg-red-900/20">
-                  <p className={`text-sm font-medium ${config.classes.textSecondary}`}>📉 Total Descontos</p>
-                  <p className="text-2xl font-bold text-red-700 dark:text-red-400 mt-2">R$ {formatCurrency(adjustedStats.total_descontos)}</p>
-                </div>
-                <div className="border rounded-lg p-4 bg-emerald-50 dark:bg-emerald-900/20">
-                  <p className={`text-sm font-medium ${config.classes.textSecondary}`}>💵 Total Líquido</p>
-                  <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-400 mt-2">R$ {formatCurrency(adjustedStats.total_liquido)}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Salários */}
-            <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
-              <h3 className={`text-lg font-semibold ${config.classes.text} mb-6`}>💼 Informações Salariais</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className={`border rounded-lg p-4 ${config.classes.border}`}>
-                  <p className={`text-sm font-medium ${config.classes.textSecondary}`}>💰 Total Salários Base</p>
-                  <p className={`text-2xl font-bold ${config.classes.text} mt-2`}>R$ {formatCurrency(adjustedStats.total_valor_salario)}</p>
-                  <p className="text-xs text-gray-400 mt-1">Soma de todos os salários</p>
-                </div>
-                <div className={`border rounded-lg p-4 ${config.classes.border}`}>
-                  <p className={`text-sm font-medium ${config.classes.textSecondary}`}>📊 Salário Médio</p>
-                  <p className={`text-2xl font-bold ${config.classes.text} mt-2`}>R$ {formatCurrency(adjustedStats.avg_salario)}</p>
-                  <p className="text-xs text-gray-400 mt-1">Média por funcionário</p>
-                </div>
-                <div className={`border rounded-lg p-4 ${config.classes.border}`}>
-                  <p className={`text-sm font-medium ${config.classes.textSecondary}`}>💵 Líquido Médio</p>
-                  <p className={`text-2xl font-bold ${config.classes.text} mt-2`}>R$ {formatCurrency(adjustedStats.avg_liquido)}</p>
-                  <p className="text-xs text-gray-400 mt-1">Média por funcionário</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Adicionais e Benefícios */}
-            <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
-              <h3 className={`text-lg font-semibold ${config.classes.text} mb-6`}>💎 Adicionais e Benefícios</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-                <div className="border rounded-lg p-4 bg-amber-50 dark:bg-amber-900/20">
-                  <p className="text-sm font-medium text-amber-700 dark:text-amber-400">🎁 Gratificações</p>
-                  <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 mt-2">R$ {formatCurrency(adjustedStats.total_gratificacoes)}</p>
-                  <p className="text-xs text-gray-400 mt-1">Função e cargo</p>
-                </div>
-                <div className="border rounded-lg p-4 bg-green-50 dark:bg-green-900/20">
-                  <p className="text-sm font-medium text-green-700 dark:text-green-400">🎄 13º Salário</p>
-                  <p className="text-2xl font-bold text-green-700 dark:text-green-300 mt-2">
-                    R$ {formatCurrency(
-                      (adjustedStats.total_13_adiantamento || 0) +
-                      (adjustedStats.total_13_integral || 0) +
-                      (adjustedStats.total_13_maternidade_gps || 0) +
-                      (adjustedStats.total_13_med_eventos || 0) +
-                      (adjustedStats.total_13_med_horas_extras || 0) +
-                      (adjustedStats.total_13_gratif_adiantamento || 0) +
-                      (adjustedStats.total_13_gratif_integral || 0) +
-                      (adjustedStats.total_13_salario || 0)
-                    )}
-                  </p>
-                  {/* Breakdown detalhado */}
-                  {(adjustedStats.total_13_adiantamento > 0 || displayStats.total_13_integral > 0) && (
-                    <div className="mt-3 pt-3 border-t border-green-200 dark:border-green-800">
-                      <p className="text-xs text-gray-600 dark:text-gray-400 mb-2 font-semibold">Detalhamento:</p>
-                      {adjustedStats.total_13_adiantamento > 0 && (
-                        <p className="text-xs text-gray-600 dark:text-gray-400">
-                          • Adiant: <span className="font-medium">R$ {formatCurrency(adjustedStats.total_13_adiantamento)}</span>
-                        </p>
-                      )}
-                      {adjustedStats.total_13_integral > 0 && (
-                        <p className="text-xs text-gray-600 dark:text-gray-400">
-                          • Integral: <span className="font-medium">R$ {formatCurrency(adjustedStats.total_13_integral)}</span>
-                        </p>
-                      )}
-                      {adjustedStats.total_13_maternidade_gps > 0 && (
-                        <p className="text-xs text-green-700 dark:text-green-400">
-                          • Matern (GPS): <span className="font-medium">R$ {formatCurrency(adjustedStats.total_13_maternidade_gps)}</span>
-                          <span className="text-[10px] ml-1">Gov</span>
-                        </p>
-                      )}
-                      {adjustedStats.total_13_med_eventos > 0 && (
-                        <p className="text-xs text-gray-600 dark:text-gray-400">
-                          • Méd. Eventos: <span className="font-medium">R$ {formatCurrency(adjustedStats.total_13_med_eventos)}</span>
-                        </p>
-                      )}
-                      {adjustedStats.total_13_med_horas_extras > 0 && (
-                        <p className="text-xs text-gray-600 dark:text-gray-400">
-                          • Méd. HE: <span className="font-medium">R$ {formatCurrency(adjustedStats.total_13_med_horas_extras)}</span>
-                        </p>
-                      )}
-                      {(adjustedStats.total_13_gratif_adiantamento > 0 || displayStats.total_13_gratif_integral > 0) && (
-                        <p className="text-xs text-gray-600 dark:text-gray-400">
-                          • Gratif: <span className="font-medium">R$ {formatCurrency(
-                            (adjustedStats.total_13_gratif_adiantamento || 0) + 
-                            (adjustedStats.total_13_gratif_integral || 0)
-                          )}</span>
-                        </p>
-                      )}
-                    </div>
-                  )}
-                  {!(adjustedStats.total_13_adiantamento > 0 || displayStats.total_13_integral > 0) && (
-                    <p className="text-xs text-gray-400 mt-1">Proporcional e abono</p>
-                  )}
-                </div>
-                <div className="border rounded-lg p-4 bg-sky-50 dark:bg-sky-900/20">
-                  <p className="text-sm font-medium text-sky-700 dark:text-sky-400">🏖️ Férias</p>
-                  <p className="text-2xl font-bold text-sky-700 dark:text-sky-300 mt-2">
-                    R$ {formatCurrency(
-                      (adjustedStats.total_ferias_base || 0) +
-                      (adjustedStats.total_ferias_abono_1_3 || 0) +
-                      (adjustedStats.total_ferias_med_horas_extras || 0) +
-                      (adjustedStats.total_ferias_pagas || 0)
-                    )}
-                  </p>
-                  {/* Breakdown detalhado */}
-                  {(adjustedStats.total_ferias_base > 0 || displayStats.total_ferias_abono_1_3 > 0) && (
-                    <div className="mt-3 pt-3 border-t border-sky-200 dark:border-sky-800">
-                      <p className="text-xs text-gray-600 dark:text-gray-400 mb-2 font-semibold">Detalhamento:</p>
-                      {adjustedStats.total_ferias_base > 0 && (
-                        <p className="text-xs text-gray-600 dark:text-gray-400">
-                          • Base: <span className="font-medium">R$ {formatCurrency(adjustedStats.total_ferias_base)}</span>
-                        </p>
-                      )}
-                      {adjustedStats.total_ferias_abono_1_3 > 0 && (
-                        <p className="text-xs text-sky-700 dark:text-sky-400">
-                          • Abono 1/3: <span className="font-medium">R$ {formatCurrency(adjustedStats.total_ferias_abono_1_3)}</span>
-                          <span className="text-[10px] ml-1">CF/88</span>
-                        </p>
-                      )}
-                      {adjustedStats.total_ferias_med_horas_extras > 0 && (
-                        <p className="text-xs text-gray-600 dark:text-gray-400">
-                          • Méd. HE: <span className="font-medium">R$ {formatCurrency(adjustedStats.total_ferias_med_horas_extras)}</span>
-                        </p>
-                      )}
-                      {adjustedStats.total_ferias_pagas > 0 && (
-                        <p className="text-xs text-gray-600 dark:text-gray-400">
-                          • Gratif: <span className="font-medium">R$ {formatCurrency(adjustedStats.total_ferias_pagas)}</span>
-                        </p>
-                      )}
-                      {adjustedStats.total_desconto_ferias_adiantamento > 0 && (
-                        <p className="text-xs text-red-600 dark:text-red-400">
-                          • Desc. Adiant: <span className="font-medium">-R$ {formatCurrency(adjustedStats.total_desconto_ferias_adiantamento)}</span>
-                        </p>
-                      )}
-                    </div>
-                  )}
-                  {!(adjustedStats.total_ferias_base > 0 || displayStats.total_ferias_abono_1_3 > 0) && (
-                    <p className="text-xs text-gray-400 mt-1">Férias e proporcionais</p>
-                  )}
-                </div>
-                <div className="border rounded-lg p-4 bg-orange-50 dark:bg-orange-900/20">
-                  <p className="text-sm font-medium text-orange-700 dark:text-orange-400">⚠️ Periculosidade</p>
-                  <p className="text-2xl font-bold text-orange-700 dark:text-orange-300 mt-2">R$ {formatCurrency(adjustedStats.total_periculosidade)}</p>
-                  <p className="text-xs text-gray-400 mt-1">Adicional de risco</p>
-                </div>
-                <div className="border rounded-lg p-4 bg-yellow-50 dark:bg-yellow-900/20">
-                  <p className="text-sm font-medium text-yellow-700 dark:text-yellow-400">🏥 Insalubridade</p>
-                  <p className="text-2xl font-bold text-yellow-700 dark:text-yellow-300 mt-2">R$ {formatCurrency(adjustedStats.total_insalubridade)}</p>
-                  <p className="text-xs text-gray-400 mt-1">Condições adversas</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Benefícios */}
-            <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
-              <h3 className={`text-lg font-semibold ${config.classes.text} mb-6`}>🎫 Benefícios</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="border rounded-lg p-4 bg-cyan-50 dark:bg-cyan-900/20">
-                  <p className="text-sm font-medium text-cyan-700 dark:text-cyan-400">🚌 Vale Transporte</p>
-                  <p className="text-2xl font-bold text-cyan-700 dark:text-cyan-300 mt-2">R$ {formatCurrency(adjustedStats.total_vale_transporte)}</p>
-                </div>
-                <div className="border rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20">
-                  <p className="text-sm font-medium text-blue-700 dark:text-blue-400">💊 Plano de Saúde</p>
-                  <p className="text-2xl font-bold text-blue-700 dark:text-blue-300 mt-2">R$ {formatCurrency(adjustedStats.total_plano_saude)}</p>
-                  <p className="text-xs text-gray-400 mt-1">Assistência médica</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Status dos Colaboradores */}
-            <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
-              <h3 className={`text-lg font-semibold ${config.classes.text} mb-6`}>👥 Status dos Colaboradores</h3>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="border rounded-lg p-4 bg-green-50 dark:bg-green-900/20">
-                  <p className="text-sm font-medium text-green-700 dark:text-green-400">👷 Trabalhando</p>
-                  <p className="text-3xl font-bold text-green-700 dark:text-green-300 mt-2">{adjustedStats.trabalhando || 0}</p>
-                  <p className="text-xs text-gray-500 mt-1">{calcPercentage(adjustedStats.trabalhando, displayStats.total_employees)}% do total</p>
-                </div>
-                <div className="border rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20">
-                  <p className="text-sm font-medium text-blue-700 dark:text-blue-400">🏖️ Férias</p>
-                  <p className="text-3xl font-bold text-blue-700 dark:text-blue-300 mt-2">{adjustedStats.ferias || 0}</p>
-                  <p className="text-xs text-gray-500 mt-1">{calcPercentage(adjustedStats.ferias, displayStats.total_employees)}% do total</p>
-                </div>
-                <div className="border rounded-lg p-4 bg-yellow-50 dark:bg-yellow-900/20">
-                  <p className="text-sm font-medium text-yellow-700 dark:text-yellow-400">🏥 Afastados</p>
-                  <p className="text-3xl font-bold text-yellow-700 dark:text-yellow-300 mt-2">{adjustedStats.afastados || 0}</p>
-                  <p className="text-xs text-gray-500 mt-1">{calcPercentage(adjustedStats.afastados, displayStats.total_employees)}% do total</p>
-                </div>
-                <div className="border rounded-lg p-4 bg-red-50 dark:bg-red-900/20">
-                  <p className="text-sm font-medium text-red-700 dark:text-red-400">📤 Desligados</p>
-                  <p className="text-3xl font-bold text-red-700 dark:text-red-300 mt-2">{adjustedStats.demitidos || 0}</p>
-                  <p className="text-xs text-gray-500 mt-1">{calcPercentage(adjustedStats.demitidos, displayStats.total_employees)}% do total</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Encargos */}
-            <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
-              <h3 className={`text-lg font-semibold ${config.classes.text} mb-6`}>📑 Encargos Trabalhistas</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="border rounded-lg p-4 bg-purple-50 dark:bg-purple-900/20">
-                  <p className="text-sm font-medium text-purple-700 dark:text-purple-400">🏛️ INSS</p>
-                  <p className="text-2xl font-bold text-purple-700 dark:text-purple-300 mt-2">R$ {formatCurrency(adjustedStats.total_inss)}</p>
-                  <p className="text-xs text-gray-400 mt-1">Previdência social</p>
-                </div>
-                <div className="border rounded-lg p-4 bg-orange-50 dark:bg-orange-900/20">
-                  <p className="text-sm font-medium text-orange-700 dark:text-orange-400">📋 IRRF</p>
-                  <p className="text-2xl font-bold text-orange-700 dark:text-orange-300 mt-2">R$ {formatCurrency(adjustedStats.total_irrf)}</p>
-                  <p className="text-xs text-gray-400 mt-1">Imposto de renda</p>
-                </div>
-                <div className="border rounded-lg p-4 bg-indigo-50 dark:bg-indigo-900/20">
-                  <p className="text-sm font-medium text-indigo-700 dark:text-indigo-400">🏦 FGTS</p>
-                  <p className="text-2xl font-bold text-indigo-700 dark:text-indigo-300 mt-2">R$ {formatCurrency(adjustedStats.total_fgts)}</p>
-                  <p className="text-xs text-gray-400 mt-1">Fundo de garantia</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Horas Extras */}
-            <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
-              <h3 className={`text-lg font-semibold ${config.classes.text} mb-6`}>⏰ Horas Extras</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="border rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20">
-                  <p className="text-sm font-medium text-blue-700 dark:text-blue-400 mb-2">⏰ HE 50%</p>
-                  <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">
-                    R$ {formatCurrency((adjustedStats.total_he_50_diurnas || 0) + (adjustedStats.total_he_50_noturnas || 0))}
-                  </p>
-                </div>
-                <div className="border rounded-lg p-4 bg-purple-50 dark:bg-purple-900/20">
-                  <p className="text-sm font-medium text-purple-700 dark:text-purple-400 mb-2">⏰ HE 60%</p>
-                  <p className="text-2xl font-bold text-purple-700 dark:text-purple-300">R$ {formatCurrency(adjustedStats.total_he_60)}</p>
-                </div>
-                <div className="border rounded-lg p-4 bg-orange-50 dark:bg-orange-900/20">
-                  <p className="text-sm font-medium text-orange-700 dark:text-orange-400 mb-2">⏰ HE 100%</p>
-                  <p className="text-2xl font-bold text-orange-700 dark:text-orange-300">
-                    R$ {formatCurrency((adjustedStats.total_he_100_diurnas || 0) + (adjustedStats.total_he_100_noturnas || 0))}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-
-        {/* Tabela Comparativa */}
-        {financial_stats && financial_stats.length > 0 && (
-          <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
-            <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>📈 Comparativo de Períodos</h3>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className={config.classes.background}>
-                  <tr>
-                    <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase`}>Período</th>
-                    <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase`}>Funcionários</th>
-                    <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase`}>Proventos</th>
-                    <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase`}>Descontos</th>
-                    <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase`}>Líquido</th>
-                  </tr>
-                </thead>
-                <tbody className={`${config.classes.card} divide-y ${config.classes.border}`}>
-                  {[...financial_stats].reverse().map((period, index) => {
-                    // Inverter índice para comparar corretamente (do mais antigo para o mais novo)
-                    const reversedIndex = financial_stats.length - 1 - index;
-                    const prevPeriod = reversedIndex > 0 ? financial_stats[reversedIndex - 1] : null;
-                    
-                    // Calcular variações percentuais
-                    const getVariation = (current, previous) => {
-                      if (!previous || previous === 0) return null;
-                      return ((current - previous) / previous) * 100;
-                    };
-                    
-                    const empVariation = prevPeriod ? getVariation(period.total_employees, prevPeriod.total_employees) : null;
-                    const proventosVariation = prevPeriod ? getVariation(period.total_proventos, prevPeriod.total_proventos) : null;
-                    const descontosVariation = prevPeriod ? getVariation(period.total_descontos, prevPeriod.total_descontos) : null;
-                    const liquidoVariation = prevPeriod ? getVariation(period.total_liquido, prevPeriod.total_liquido) : null;
-                    
-                    const TrendIndicator = ({ variation }) => {
-                      if (variation === null) return null;
-                      const isPositive = variation > 0;
-                      const isNeutral = Math.abs(variation) < 0.5;
-                      
-                      if (isNeutral) {
-                        return <span className="text-xs text-gray-400 ml-1">→</span>;
-                      }
-                      
-                      return (
-                        <span className={`text-xs ml-1 ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
-                          {isPositive ? '↑' : '↓'} {Math.abs(variation).toFixed(1)}%
-                        </span>
-                      );
-                    };
-                    
-                    return (
-                      <tr key={period.period_id} className={config.classes.cardHover}>
-                        <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${config.classes.text}`}>
-                          {period.period_name}
-                        </td>
-                        <td className={`px-6 py-4 whitespace-nowrap text-sm ${config.classes.textSecondary}`}>
-                          {period.total_employees}
-                          <TrendIndicator variation={empVariation} />
-                        </td>
-                        <td className={`px-6 py-4 whitespace-nowrap text-sm ${config.classes.textSecondary}`}>
-                          R$ {formatCurrency(period.total_proventos)}
-                          <TrendIndicator variation={proventosVariation} />
-                        </td>
-                        <td className={`px-6 py-4 whitespace-nowrap text-sm ${config.classes.textSecondary}`}>
-                          R$ {formatCurrency(period.total_descontos)}
-                          <TrendIndicator variation={descontosVariation} />
-                        </td>
-                        <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${config.classes.text}`}>
-                          R$ {formatCurrency(period.total_liquido)}
-                          <TrendIndicator variation={liquidoVariation} />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+        </div>
+        
+        {/* Horas Extras Noturnas */}
+        <div>
+          <h4 className={`text-sm font-medium ${config.classes.text} mb-2`}>🌙 Noturnas</h4>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <CardStatMini icon="🌙" label="Adicional Noturno" value={horas_extras.adicional_noturno} color="indigo" />
+            <CardStatMini icon="🌙" label="DSR Noturno" value={horas_extras.dsr_noturno} color="blue" />
+            <CardStatMini icon="🌙⏰" label="HE 50% Noturno" value={horas_extras.he50_noturno} color="purple" />
+            <CardStatMini icon="🌙⏰⏰" label="HE 100% Noturno" value={horas_extras.he100_noturno} color="violet" />
           </div>
-        )}
+        </div>
+      </div>
+
+      {/* SEÇÃO 6: Atestados Médicos e Horas Faltas */}
+      <div className={`${config.classes.card} p-6 rounded-lg shadow`}>
+        <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
+          🏥 Atestados Médicos e Horas Faltas
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <CardStat icon="❌" label="Horas Faltas" value={atestados_faltas.horas_faltas} color="red" prefix="R$" />
+          <CardStat icon="🏥" label="Atestados Médicos" value={atestados_faltas.atestados_medicos} color="blue" prefix="R$" />
+        </div>
+      </div>
+
+      {/* SEÇÃO 7: Empréstimos */}
+      <div className={`${config.classes.card} p-6 rounded-lg shadow`}>
+        <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
+          💳 Empréstimos
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <CardStat icon="💳" label="Empréstimo do Trabalhador" value={emprestimos.emprestimo_trabalhador} color="orange" prefix="R$" />
+          <CardStat icon="💰" label="Adiantamentos" value={emprestimos.adiantamentos} color="amber" prefix="R$" />
+        </div>
       </div>
     </div>
   );
 };
 
-export default Payroll;
+// Componente para cards grandes
+const CardStat = ({ icon, label, value, color, prefix = '', subtitle = '', isNumber = false }) => {
+  const colorClasses = {
+    blue: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',
+    green: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800',
+    red: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',
+    teal: 'bg-teal-50 dark:bg-teal-900/20 border-teal-200 dark:border-teal-800',
+    indigo: 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800',
+    purple: 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-800',
+    amber: 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800',
+    orange: 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800',
+  };
+
+  const formatValue = (val) => {
+    if (isNumber) return val;
+    return new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val || 0);
+  };
+
+  return (
+    <div className={`border rounded-lg p-4 ${colorClasses[color] || colorClasses.blue}`}>
+      <p className="text-sm font-medium text-gray-600 dark:text-gray-400 flex items-center gap-2">
+        <span>{icon}</span>
+        {label}
+      </p>
+      <p className="text-2xl font-bold text-gray-900 dark:text-white mt-2">
+        {prefix && <span className="text-lg">{prefix} </span>}
+        {formatValue(value)}
+      </p>
+      {subtitle && (
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{subtitle}</p>
+      )}
+    </div>
+  );
+};
+
+// Componente para cards pequenos
+const CardStatMini = ({ icon, label, value, color }) => {
+  const colorClasses = {
+    amber: 'bg-amber-50 dark:bg-amber-900/20',
+    orange: 'bg-orange-50 dark:bg-orange-900/20',
+    yellow: 'bg-yellow-50 dark:bg-yellow-900/20',
+    blue: 'bg-blue-50 dark:bg-blue-900/20',
+    indigo: 'bg-indigo-50 dark:bg-indigo-900/20',
+    purple: 'bg-purple-50 dark:bg-purple-900/20',
+    violet: 'bg-violet-50 dark:bg-violet-900/20',
+    cyan: 'bg-cyan-50 dark:bg-cyan-900/20',
+    teal: 'bg-teal-50 dark:bg-teal-900/20',
+    pink: 'bg-pink-50 dark:bg-pink-900/20',
+    gray: 'bg-gray-50 dark:bg-gray-800/50',
+    green: 'bg-green-50 dark:bg-green-900/20',
+    red: 'bg-red-50 dark:bg-red-900/20',
+  };
+
+  const formatValue = (val) => {
+    return new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val || 0);
+  };
+
+  return (
+    <div className={`border rounded-lg p-3 ${colorClasses[color] || colorClasses.gray}`}>
+      <p className="text-xs font-medium text-gray-600 dark:text-gray-400 flex items-center gap-1">
+        <span>{icon}</span>
+        {label}
+      </p>
+      <p className="text-lg font-bold text-gray-900 dark:text-white mt-1">
+        R$ {formatValue(value)}
+      </p>
+    </div>
+  );
+};
+
+export default PayrollV2;
