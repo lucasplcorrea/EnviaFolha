@@ -32,6 +32,7 @@ const PayrollDataProcessor = () => {
   
   // Estados para benefícios
   const [benefitsPeriods, setBenefitsPeriods] = useState([]);
+  const [benefitsProcessingHistory, setBenefitsProcessingHistory] = useState([]);
   const [xlsxFile, setXlsxFile] = useState(null);
   const [xlsxYear, setXlsxYear] = useState(new Date().getFullYear());
   const [xlsxMonth, setXlsxMonth] = useState(new Date().getMonth() + 1);
@@ -48,6 +49,7 @@ const PayrollDataProcessor = () => {
     loadPeriods();
     loadProcessingHistory();
     loadBenefitsPeriods();
+    loadBenefitsProcessingHistory();
   }, []);
 
   const loadPeriods = async () => {
@@ -77,6 +79,15 @@ const PayrollDataProcessor = () => {
       }
     } catch (error) {
       console.error('Erro ao carregar histórico:', error);
+    }
+  };
+
+  const loadBenefitsProcessingHistory = async () => {
+    try {
+      const response = await api.get('/benefits/processing-logs');
+      setBenefitsProcessingHistory(response.data.logs || []);
+    } catch (error) {
+      console.error('Erro ao carregar histórico de benefícios:', error);
     }
   };
 
@@ -257,6 +268,7 @@ const PayrollDataProcessor = () => {
         toast.success('Benefícios processados com sucesso!', { id: 'xlsx-upload' });
         setXlsxResult(result);
         loadBenefitsPeriods();
+        loadBenefitsProcessingHistory();
         setXlsxFile(null);
       } else {
         toast.error(result.error || 'Erro ao processar benefícios', { id: 'xlsx-upload' });
@@ -873,6 +885,68 @@ const PayrollDataProcessor = () => {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+
+          {/* Benefits Processing History */}
+          <div className="bg-white shadow rounded-lg p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Histórico de Processamento</h2>
+            
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Data/Hora</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Arquivo</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Período</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Registros</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tempo</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {benefitsProcessingHistory.length > 0 ? (
+                    benefitsProcessingHistory.map((log, idx) => (
+                      <tr key={idx} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          {log.created_at ? new Date(log.created_at).toLocaleString('pt-BR') : '-'}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900 truncate max-w-xs" title={log.filename}>
+                          {log.filename || '-'}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-600">
+                          {log.year}/{log.month}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-600">
+                          {log.processed_rows || 0}/{log.total_rows || 0}
+                          {log.error_rows > 0 && <span className="text-red-600 ml-1">({log.error_rows} erros)</span>}
+                        </td>
+                        <td className="px-4 py-3 text-sm">
+                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                            log.status === 'completed' 
+                              ? 'bg-green-100 text-green-800' 
+                              : log.status === 'failed'
+                              ? 'bg-red-100 text-red-800'
+                              : 'bg-yellow-100 text-yellow-800'
+                          }`}>
+                            {log.status === 'completed' ? '✓ Concluído' : log.status === 'failed' ? '✗ Erro' : log.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-600">
+                          {log.processing_time ? `${parseFloat(log.processing_time).toFixed(2)}s` : '-'}
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="6" className="px-4 py-8 text-center text-gray-500">
+                        <p className="text-sm">Nenhum histórico de processamento disponível</p>
+                        <p className="text-xs mt-1">Os uploads aparecerão aqui após serem processados</p>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>

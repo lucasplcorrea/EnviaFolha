@@ -28,6 +28,7 @@ const BenefitsUpload = () => {
   useEffect(() => {
     loadBenefitsPeriods();
     loadProcessingHistory();
+    console.log('✅ BenefitsUpload montado - verificar se seção de histórico está visível');
   }, []);
 
   const loadBenefitsPeriods = async () => {
@@ -42,10 +43,12 @@ const BenefitsUpload = () => {
 
   const loadProcessingHistory = async () => {
     try {
+      console.log('🔍 Carregando histórico de processamento de benefícios...');
       const response = await api.get('/benefits/processing-logs');
+      console.log('✅ Histórico recebido:', response.data);
       setProcessingHistory(response.data.logs || []);
     } catch (error) {
-      console.error('Erro ao carregar histórico:', error);
+      console.error('❌ Erro ao carregar histórico:', error);
     }
   };
 
@@ -137,6 +140,8 @@ const BenefitsUpload = () => {
       setDeleting(false);
     }
   };
+
+  console.log('🎯 BenefitsUpload renderizando - processingHistory:', processingHistory.length);
 
   return (
     <div className="space-y-6">
@@ -364,7 +369,7 @@ const BenefitsUpload = () => {
         </div>
       </div>
 
-      {/* Processing History */}
+      {/* Processing History Section */}
       <div className="bg-white shadow rounded-lg p-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Histórico de Processamento</h2>
         
