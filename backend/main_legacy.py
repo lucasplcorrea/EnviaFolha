@@ -5363,46 +5363,75 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     # ==========================================
     
     def handle_indicators_overview(self):
-        """Retorna visão geral dos indicadores de RH com filtros de empresa e período"""
+        """Retorna visão geral dos indicadores de RH com filtros de mês/ano/empresa/setor"""
         try:
             # Parse query params
             query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             company = query_params.get('company', ['all'])[0]
-            period_id = query_params.get('period_id', [None])[0]
+            division = query_params.get('division', ['all'])[0]
+            year = query_params.get('year', [None])[0]
+            month = query_params.get('month', [None])[0]
             
             if SessionLocal:
                 from app.models.payroll import PayrollPeriod, PayrollData
                 from app.models.employee import Employee
-                from sqlalchemy import func
+                from sqlalchemy import func, or_, and_
                 from decimal import Decimal
+                from datetime import date, datetime
                 
                 db = SessionLocal()
                 
-                # Buscar período específico ou mais recente
-                if period_id:
-                    period = db.query(PayrollPeriod).filter(PayrollPeriod.id == int(period_id)).first()
-                else:
-                    period = db.query(PayrollPeriod).order_by(
+                # Se não especificou ano/mês, pegar o mais recente
+                if not year or not month:
+                    latest_period = db.query(PayrollPeriod).order_by(
                         PayrollPeriod.year.desc(),
                         PayrollPeriod.month.desc()
                     ).first()
+                    
+                    if not latest_period:
+                        db.close()
+                        self.send_json_response({"error": "Nenhum período encontrado"}, 404)
+                        return
+                    
+                    year = latest_period.year
+                    month = latest_period.month
+                else:
+                    year = int(year)
+                    month = int(month)
                 
-                if not period:
+                # Buscar todos os períodos do mês/ano especificado (mensal e 13º)
+                periods = db.query(PayrollPeriod).filter(
+                    PayrollPeriod.year == year,
+                    PayrollPeriod.month == month
+                ).all()
+                
+                if not periods:
                     db.close()
-                    self.send_json_response({"error": "Nenhum período encontrado"}, 404)
+                    self.send_json_response({"error": f"Nenhum período encontrado para {month:02d}/{year}"}, 404)
                     return
                 
-                # Query base para dados de folha do período
+                period_ids = [p.id for p in periods]
+                
+                # Query base para dados de folha dos períodos
                 payroll_query = db.query(PayrollData).filter(
-                    PayrollData.period_id == period.id
+                    PayrollData.period_id.in_(period_ids)
                 )
+                
+                # Buscar employees para aplicar filtros
+                employee_query = db.query(Employee)
                 
                 # Filtrar por empresa se especificado
                 if company != 'all':
-                    employee_ids = db.query(Employee.id).filter(
-                        Employee.company == company
-                    ).all()
-                    employee_ids = [emp[0] for emp in employee_ids]
+                    employee_query = employee_query.filter(Employee.company == company)
+                
+                # Filtrar por setor se especificado
+                if division != 'all':
+                    employee_query = employee_query.filter(Employee.division == division)
+                
+                filtered_employees = employee_query.all()
+                employee_ids = [emp.id for emp in filtered_employees]
+                
+                if employee_ids:
                     payroll_query = payroll_query.filter(
                         PayrollData.employee_id.in_(employee_ids)
                     )
@@ -5410,34 +5439,131 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 payroll_records = payroll_query.all()
                 
                 # Calcular métricas principais
-                total_employees = len(set([r.employee_id for r in payroll_records]))
+                unique_employee_ids = set([r.employee_id for r in payroll_records])
+                total_employees = len(unique_employee_ids)
                 total_cost = sum([Decimal(str(r.net_salary or 0)) for r in payroll_records])
                 
-                # Buscar período anterior para calcular variação
-                prev_period = db.query(PayrollPeriod).filter(
-                    func.or_(
-                        PayrollPeriod.year < period.year,
-                        func.and_(
-                            PayrollPeriod.year == period.year,
-                            PayrollPeriod.month < period.month
-                        )
-                    )
-                ).order_by(
-                    PayrollPeriod.year.desc(),
-                    PayrollPeriod.month.desc()
-                ).first()
+                # Buscar mês anterior para calcular variação
+                if month == 1:
+                    prev_year = year - 1
+                    prev_month = 12
+                else:
+                    prev_year = year
+                    prev_month = month - 1
+                
+                prev_periods = db.query(PayrollPeriod).filter(
+                    PayrollPeriod.year == prev_year,
+                    PayrollPeriod.month == prev_month
+                ).all()
                 
                 employee_variation = None
                 cost_variation = None
                 
-                if prev_period:
+                if prev_periods:
+                    prev_period_ids = [p.id for p in prev_periods]
                     prev_query = db.query(PayrollData).filter(
-                        PayrollData.period_id == prev_period.id
+                        PayrollData.period_id.in_(prev_period_ids)
                     )
-                    if company != 'all':
+                    
+                    if employee_ids:
                         prev_query = prev_query.filter(
                             PayrollData.employee_id.in_(employee_ids)
                         )
+                    
+                    prev_records = prev_query.all()
+                    prev_employees = len(set([r.employee_id for r in prev_records]))
+                    prev_cost = sum([Decimal(str(r.net_salary or 0)) for r in prev_records])
+                    
+                    if prev_employees > 0:
+                        employee_variation = ((total_employees - prev_employees) / prev_employees) * 100
+                    if prev_cost > 0:
+                        cost_variation = ((total_cost - prev_cost) / prev_cost) * 100
+                
+                # Distribuição por empresa
+                by_company = []
+                if company == 'all':
+                    for comp_code in ['0060', '0059']:
+                        comp_emps = [e for e in filtered_employees if e.company == comp_code]
+                        comp_emp_ids = [e.id for e in comp_emps]
+                        comp_records = [r for r in payroll_records if r.employee_id in comp_emp_ids]
+                        comp_count = len(set([r.employee_id for r in comp_records]))
+                        comp_cost = sum([Decimal(str(r.net_salary or 0)) for r in comp_records])
+                        by_company.append({
+                            'company': comp_code,
+                            'count': comp_count,
+                            'total_cost': float(comp_cost)
+                        })
+                
+                # Top 5 setores
+                employees_by_division = {}
+                for emp in filtered_employees:
+                    if emp.id in unique_employee_ids:
+                        div = emp.division or 'Não informado'
+                        if div not in employees_by_division:
+                            employees_by_division[div] = set()
+                        employees_by_division[div].add(emp.id)
+                
+                top_divisions = sorted(
+                    [{'division': k, 'count': len(v)} for k, v in employees_by_division.items()],
+                    key=lambda x: x['count'],
+                    reverse=True
+                )[:5]
+                
+                # Contar admissões e desligamentos no mês
+                period_start = date(year, month, 1)
+                if month == 12:
+                    period_end = date(year + 1, 1, 1)
+                else:
+                    period_end = date(year, month + 1, 1)
+                
+                admissions_query = db.query(Employee).filter(
+                    Employee.admission_date >= period_start,
+                    Employee.admission_date < period_end
+                )
+                terminations_query = db.query(Employee).filter(
+                    Employee.termination_date >= period_start,
+                    Employee.termination_date < period_end
+                )
+                
+                if company != 'all':
+                    admissions_query = admissions_query.filter(Employee.company == company)
+                    terminations_query = terminations_query.filter(Employee.company == company)
+                
+                if division != 'all':
+                    admissions_query = admissions_query.filter(Employee.division == division)
+                    terminations_query = terminations_query.filter(Employee.division == division)
+                
+                admissions = admissions_query.count()
+                terminations = terminations_query.count()
+                
+                result = {
+                    'filters': {
+                        'year': year,
+                        'month': month,
+                        'company': company,
+                        'division': division
+                    },
+                    'total_employees': total_employees,
+                    'total_payroll_cost': float(total_cost),
+                    'employee_variation': float(employee_variation) if employee_variation is not None else None,
+                    'cost_variation': float(cost_variation) if cost_variation is not None else None,
+                    'admissions': admissions,
+                    'terminations': terminations,
+                    'by_company': by_company,
+                    'top_divisions': top_divisions
+                }
+                
+                db.close()
+                self.send_json_response(result)
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar overview de indicadores: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": str(e)}, 500)
                     prev_records = prev_query.all()
                     prev_employees = len(set([r.employee_id for r in prev_records]))
                     prev_cost = sum([Decimal(str(r.net_salary or 0)) for r in prev_records])

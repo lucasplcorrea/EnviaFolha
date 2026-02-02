@@ -16,37 +16,50 @@ const Overview = () => {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [selectedCompany, setSelectedCompany] = useState('all');
-  const [selectedPeriod, setSelectedPeriod] = useState('');
-  const [availablePeriods, setAvailablePeriods] = useState([]);
+  const [selectedDivision, setSelectedDivision] = useState('all');
+  const [selectedYear, setSelectedYear] = useState('');
+  const [selectedMonth, setSelectedMonth] = useState('');
+  const [availableYears, setAvailableYears] = useState([]);
+  const [availableMonths, setAvailableMonths] = useState([]);
+  const [availableDivisions, setAvailableDivisions] = useState([]);
 
   useEffect(() => {
-    loadAvailablePeriods();
+    loadFilters();
   }, []);
 
   useEffect(() => {
-    if (selectedPeriod || availablePeriods.length > 0) {
+    if (selectedYear && selectedMonth) {
       loadOverviewData();
     }
-  }, [selectedCompany, selectedPeriod, availablePeriods]);
+  }, [selectedCompany, selectedDivision, selectedYear, selectedMonth]);
 
-  const loadAvailablePeriods = async () => {
+  const loadFilters = async () => {
     try {
-      const response = await api.get('/payroll/periods');
-      const periods = response.data.periods || [];
-      setAvailablePeriods(periods);
+      // Carregar anos disponíveis
+      const yearsResponse = await api.get('/payroll/years');
+      const years = yearsResponse.data.years || [];
+      setAvailableYears(years);
       
-      // Selecionar o período mais recente por padrão
-      if (periods.length > 0 && !selectedPeriod) {
-        const mostRecent = periods.reduce((latest, p) => {
-          const latestDate = new Date(latest.year, latest.month - 1);
-          const currentDate = new Date(p.year, p.month - 1);
-          return currentDate > latestDate ? p : latest;
-        });
-        setSelectedPeriod(mostRecent.id);
+      // Carregar meses disponíveis
+      const monthsResponse = await api.get('/payroll/months');
+      const months = monthsResponse.data.months || [];
+      setAvailableMonths(months);
+      
+      // Carregar divisões/setores
+      const divisionsResponse = await api.get('/payroll/divisions');
+      const divisions = divisionsResponse.data.divisions || [];
+      setAvailableDivisions(divisions);
+      
+      // Selecionar o mais recente por padrão
+      if (years.length > 0 && !selectedYear) {
+        setSelectedYear(Math.max(...years).toString());
+      }
+      if (months.length > 0 && !selectedMonth) {
+        setSelectedMonth(Math.max(...months).toString());
       }
     } catch (error) {
-      console.error('Erro ao carregar períodos:', error);
-      toast.error('Erro ao carregar períodos disponíveis');
+      console.error('Erro ao carregar filtros:', error);
+      toast.error('Erro ao carregar filtros disponíveis');
     }
   };
 
@@ -55,7 +68,9 @@ const Overview = () => {
       setLoading(true);
       const params = { 
         company: selectedCompany,
-        period_id: selectedPeriod
+        division: selectedDivision,
+        year: selectedYear,
+        month: selectedMonth
       };
       
       const response = await api.get('/indicators/overview', { params });
@@ -79,8 +94,12 @@ const Overview = () => {
     return `${(value || 0).toFixed(1)}%`;
   };
 
-  const getCurrentPeriod = () => {
-    return availablePeriods.find(p => p.id === parseInt(selectedPeriod));
+  const getMonthName = (month) => {
+    const months = [
+      'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+      'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+    ];
+    return months[parseInt(month) - 1];
   };
 
   const renderMetricCard = (title, value, icon: any, color, trend = null) => {
@@ -128,8 +147,6 @@ const Overview = () => {
     );
   }
 
-  const currentPeriod = getCurrentPeriod();
-
   return (
     <div className="space-y-6">
       {/* Header com filtros */}
@@ -139,37 +156,73 @@ const Overview = () => {
             <ChartBarIcon className="h-8 w-8 mr-3 text-indigo-600" />
             Visão Geral - Indicadores RH
           </h1>
-          {currentPeriod && (
+          {selectedYear && selectedMonth && (
             <p className="text-gray-600 mt-1">
-              Período: {currentPeriod.period_name} ({String(currentPeriod.month).padStart(2, '0')}/{currentPeriod.year})
+              Período: {getMonthName(selectedMonth)} de {selectedYear}
             </p>
           )}
         </div>
+      </div>
 
-        <div className="flex items-center space-x-3">
-          <label className="text-sm font-medium text-gray-700">Período:</label>
-          <select
-            value={selectedPeriod}
-            onChange={(e) => setSelectedPeriod(e.target.value)}
-            className="border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          >
-            {availablePeriods.map(period => (
-              <option key={period.id} value={period.id}>
-                {period.period_name} - {String(period.month).padStart(2, '0')}/{period.year}
-              </option>
-            ))}
-          </select>
+      {/* Filtros */}
+      <div className="bg-white rounded-lg shadow-md p-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Ano</label>
+            <select
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">Selecione...</option>
+              {availableYears.map(year => (
+                <option key={year} value={year}>{year}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Mês</label>
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">Selecione...</option>
+              {availableMonths.map(month => (
+                <option key={month} value={month}>
+                  {getMonthName(month.toString())}
+                </option>
+              ))}
+            </select>
+          </div>
           
-          <label className="text-sm font-medium text-gray-700">Empresa:</label>
-          <select
-            value={selectedCompany}
-            onChange={(e) => setSelectedCompany(e.target.value)}
-            className="border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          >
-            <option value="all">Todas</option>
-            <option value="0060">0060 - Empreendimentos</option>
-            <option value="0059">0059 - Infraestrutura</option>
-          </select>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Empresa</label>
+            <select
+              value={selectedCompany}
+              onChange={(e) => setSelectedCompany(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="all">Todas</option>
+              <option value="0060">0060 - Empreendimentos</option>
+              <option value="0059">0059 - Infraestrutura</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Setor</label>
+            <select
+              value={selectedDivision}
+              onChange={(e) => setSelectedDivision(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="all">Todos</option>
+              {availableDivisions.map((division, idx) => (
+                <option key={idx} value={division}>{division}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
