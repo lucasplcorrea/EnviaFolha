@@ -1410,6 +1410,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         # Rotas de benefícios
         elif path == '/api/v1/benefits/periods':
             self.handle_benefits_periods_list()
+        elif path == '/api/v1/benefits/processing-logs':
+            self.handle_benefits_processing_logs()
         elif path.startswith('/api/v1/benefits/periods/'):
             period_id = path.split('/')[-1]
             self.handle_benefits_period_detail(period_id)
@@ -1417,6 +1419,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         # Rotas de cartão ponto
         elif path == '/api/v1/timecard/periods':
             self.handle_timecard_periods_list()
+        elif path == '/api/v1/timecard/processing-logs':
+            self.handle_timecard_processing_logs()
         elif path.startswith('/api/v1/timecard/periods/'):
             period_id = path.split('/')[-1]
             self.handle_timecard_period_detail(period_id)
@@ -7543,6 +7547,52 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 "error": f"Erro interno: {str(e)}"
             }, 500)
     
+    def handle_benefits_processing_logs(self):
+        """Retorna histórico de processamento de arquivos de benefícios"""
+        try:
+            if SessionLocal:
+                from app.models.benefits import BenefitsProcessingLog
+                from app.models.payroll import BenefitsPeriod
+                
+                db = SessionLocal()
+                logs = db.query(
+                    BenefitsProcessingLog,
+                    BenefitsPeriod.year,
+                    BenefitsPeriod.month
+                ).join(
+                    BenefitsPeriod,
+                    BenefitsProcessingLog.period_id == BenefitsPeriod.id
+                ).order_by(
+                    BenefitsProcessingLog.created_at.desc()
+                ).limit(50).all()
+                
+                logs_data = []
+                for log, year, month in logs:
+                    logs_data.append({
+                        "id": log.id,
+                        "filename": log.filename,
+                        "year": year,
+                        "month": month,
+                        "status": log.status,
+                        "total_rows": log.total_rows,
+                        "processed_rows": log.processed_rows,
+                        "error_rows": log.error_rows,
+                        "processing_time": float(log.processing_time) if log.processing_time else 0,
+                        "created_at": log.created_at.isoformat() if log.created_at else None
+                    })
+                
+                db.close()
+                self.send_json_response({"logs": logs_data, "total": len(logs_data)})
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar histórico de processamento: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
     # ============================
     # TIMECARD HANDLERS
     # ============================
@@ -7864,6 +7914,51 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
         except Exception as e:
             print(f"❌ Erro ao buscar estatísticas: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_timecard_processing_logs(self):
+        """Retorna histórico de processamento de arquivos de cartão ponto"""
+        try:
+            if SessionLocal:
+                from app.models.timecard import TimecardProcessingLog, TimecardPeriod
+                
+                db = SessionLocal()
+                logs = db.query(
+                    TimecardProcessingLog,
+                    TimecardPeriod.year,
+                    TimecardPeriod.month
+                ).join(
+                    TimecardPeriod,
+                    TimecardProcessingLog.period_id == TimecardPeriod.id
+                ).order_by(
+                    TimecardProcessingLog.created_at.desc()
+                ).limit(50).all()
+                
+                logs_data = []
+                for log, year, month in logs:
+                    logs_data.append({
+                        "id": log.id,
+                        "filename": log.filename,
+                        "year": year,
+                        "month": month,
+                        "status": log.status,
+                        "total_rows": log.total_rows,
+                        "processed_rows": log.processed_rows,
+                        "error_rows": log.error_rows,
+                        "processing_time": float(log.processing_time) if log.processing_time else 0,
+                        "created_at": log.created_at.isoformat() if log.created_at else None
+                    })
+                
+                db.close()
+                self.send_json_response({"logs": logs_data, "total": len(logs_data)})
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar histórico de processamento: {e}")
             import traceback
             traceback.print_exc()
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
