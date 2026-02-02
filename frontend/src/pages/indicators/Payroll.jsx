@@ -15,6 +15,7 @@ const PayrollV2 = () => {
   
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
+  const [timecardStats, setTimecardStats] = useState(null);
   const [showFilters, setShowFilters] = useState(true); // Controle de expansão dos filtros
   
   // Dados brutos dos filtros (ordem: Empresa, Anos, Meses, Período, Setores, Colaboradores)
@@ -154,6 +155,9 @@ const PayrollV2 = () => {
       
       const response = await api.get(`/payroll/statistics?${params}`);
       setData(response.data);
+      
+      // Carregar estatísticas do cartão ponto
+      await loadTimecardStats();
     } catch (error) {
       console.error('Erro ao carregar estatísticas:', error);
       toast.error('Erro ao carregar estatísticas');
@@ -162,11 +166,77 @@ const PayrollV2 = () => {
     }
   };
 
+  const loadTimecardStats = async () => {
+    try {
+      const params = new URLSearchParams();
+      
+      console.log('🔍 DEBUG loadTimecardStats:', {
+        selectedPeriods,
+        selectedYears,
+        selectedMonths,
+        selectedEmployees,
+        allPeriods
+      });
+      
+      // Prioridade 1: Se há período específico selecionado, usar ele
+      if (selectedPeriods.length > 0) {
+        const period = allPeriods.find(p => p.id === selectedPeriods[0]);
+        if (period) {
+          params.append('year', period.year);
+          params.append('month', period.month);
+          console.log('✅ Usando período selecionado:', period.year, '/', period.month);
+        }
+      }
+      // Prioridade 2: Se há ano E mês selecionados, usar eles
+      else if (selectedYears.length > 0 && selectedMonths.length > 0) {
+        params.append('year', selectedYears[0]);
+        params.append('month', selectedMonths[0]);
+        console.log('✅ Usando ano + mês selecionados:', selectedYears[0], '/', selectedMonths[0]);
+      }
+      // Prioridade 3: Se há apenas ano, usar o ano com o mês mais recente disponível
+      else if (selectedYears.length > 0) {
+        const yearPeriods = allPeriods.filter(p => p.year === selectedYears[0]);
+        if (yearPeriods.length > 0) {
+          const latestPeriod = yearPeriods.sort((a, b) => b.month - a.month)[0];
+          params.append('year', latestPeriod.year);
+          params.append('month', latestPeriod.month);
+          console.log('✅ Usando ano com mês mais recente:', latestPeriod.year, '/', latestPeriod.month);
+        }
+      } else {
+        console.log('⚠️ Sem filtros - carregando TODOS os dados de timecard');
+      }
+      
+      // Filtrar por colaboradores
+      if (selectedEmployees.length > 0) {
+        params.append('employees', selectedEmployees.join(','));
+        console.log('✅ Filtrando por colaboradores:', selectedEmployees);
+      }
+      
+      const url = `/timecard/stats?${params}`;
+      console.log('📡 Chamando API:', url);
+      const response = await api.get(url);
+      console.log('📊 Resposta da API timecard/stats:', response.data);
+      setTimecardStats(response.data);
+    } catch (error) {
+      console.error('Erro ao carregar estatísticas do cartão ponto:', error);
+      // Não mostrar toast de erro, apenas log (é opcional)
+      setTimecardStats(null);
+    }
+  };
+
   const formatCurrency = (value) => {
     return new Intl.NumberFormat('pt-BR', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2
     }).format(value || 0);
+  };
+
+  // Função para converter horas decimais para formato HH:MM
+  const formatHoursMinutes = (decimalHours) => {
+    if (!decimalHours || isNaN(decimalHours)) return '00:00';
+    const hours = Math.floor(decimalHours);
+    const minutes = Math.round((decimalHours - hours) * 60);
+    return `${hours}:${minutes.toString().padStart(2, '0')}`;
   };
 
   // Contar total de filtros ativos (ordem: Empresa, Anos, Meses, Período, Setores, Colaboradores)
@@ -558,6 +628,88 @@ const PayrollV2 = () => {
             prefix="R$" 
           />
         </div>
+
+        {/* Cartão Ponto - Horas por Tipo (Período Mais Recente) */}
+        {timecardStats && (
+          <div className="mb-4">
+            <h4 className={`text-sm font-medium ${config.classes.text} mb-2`}>📋 Cartão Ponto - Horas por Tipo</h4>
+            
+            {/* Linha 1: Horas Extras Diurnas */}
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+              <CardStatMini 
+                icon="⏰" 
+                label="HE 50%" 
+                value={parseFloat(timecardStats.overtime_50 || 0)} 
+                color="amber" 
+                isTime={true}
+              />
+              <CardStatMini 
+                icon="⏰⏰" 
+                label="HE 100%" 
+                value={parseFloat(timecardStats.overtime_100 || 0)} 
+                color="orange" 
+                isTime={true}
+              />
+              <CardStatMini 
+                icon="📊" 
+                label="Total HE Diurnas" 
+                value={parseFloat(timecardStats.total_overtime_hours || 0)} 
+                color="red" 
+                isTime={true}
+              />
+            </div>
+            
+            {/* Linha 2: Horas Extras Noturnas */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+              <CardStatMini 
+                icon="🌙⏰" 
+                label="HE Noturna 50%" 
+                value={parseFloat(timecardStats.night_overtime_50 || 0)} 
+                color="purple" 
+                isTime={true}
+              />
+              <CardStatMini 
+                icon="🌙⏰⏰" 
+                label="HE Noturna 100%" 
+                value={parseFloat(timecardStats.night_overtime_100 || 0)} 
+                color="violet" 
+                isTime={true}
+              />
+              <CardStatMini 
+                icon="🌙" 
+                label="Adic. Noturno" 
+                value={parseFloat(timecardStats.night_hours || 0)} 
+                color="indigo" 
+                isTime={true}
+              />
+              <CardStatMini 
+                icon="📊" 
+                label="Total Noturnas" 
+                value={parseFloat(timecardStats.total_night_hours || 0)} 
+                color="blue" 
+                isTime={true}
+              />
+            </div>
+            
+            {/* Linha 3: Resumo */}
+            <div className="grid grid-cols-2 gap-3">
+              <CardStatMini 
+                icon="👤⏰" 
+                label="Colab. com HE" 
+                value={timecardStats.employees_with_overtime || 0} 
+                color="cyan" 
+                isNumber={true}
+              />
+              <CardStatMini 
+                icon="📈" 
+                label="Média HE/Colab." 
+                value={parseFloat(timecardStats.average_overtime || 0)} 
+                color="teal" 
+                isTime={true}
+              />
+            </div>
+          </div>
+        )}
         
         {/* Horas Extras Diurnas */}
         <div className="mb-4">
@@ -666,7 +818,7 @@ const CardStat = ({ icon, label, value, color, prefix = '', subtitle = '', isNum
 };
 
 // Componente para cards pequenos
-const CardStatMini = ({ icon, label, value, color }) => {
+const CardStatMini = ({ icon, label, value, color, isTime = false, isNumber = false }) => {
   const colorClasses = {
     amber: 'bg-amber-50 dark:bg-amber-900/20',
     orange: 'bg-orange-50 dark:bg-orange-900/20',
@@ -687,6 +839,21 @@ const CardStatMini = ({ icon, label, value, color }) => {
     return new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val || 0);
   };
 
+  // Função para formatar horas decimais em HH:MM
+  const formatTimeValue = (decimalHours) => {
+    if (!decimalHours || isNaN(decimalHours)) return '00:00';
+    const hours = Math.floor(decimalHours);
+    const minutes = Math.round((decimalHours - hours) * 60);
+    return `${hours}:${minutes.toString().padStart(2, '0')}`;
+  };
+
+  // Determinar como exibir o valor
+  const displayValue = () => {
+    if (isTime) return formatTimeValue(value);
+    if (isNumber) return value;
+    return `R$ ${formatValue(value)}`;
+  };
+
   return (
     <div className={`border rounded-lg p-3 ${colorClasses[color] || colorClasses.gray}`}>
       <p className="text-xs font-medium text-gray-600 dark:text-gray-400 flex items-center gap-1">
@@ -694,7 +861,7 @@ const CardStatMini = ({ icon, label, value, color }) => {
         {label}
       </p>
       <p className="text-lg font-bold text-gray-900 dark:text-white mt-1">
-        R$ {formatValue(value)}
+        {displayValue()}
       </p>
     </div>
   );

@@ -1413,6 +1413,15 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         elif path.startswith('/api/v1/benefits/periods/'):
             period_id = path.split('/')[-1]
             self.handle_benefits_period_detail(period_id)
+        
+        # Rotas de cartão ponto
+        elif path == '/api/v1/timecard/periods':
+            self.handle_timecard_periods_list()
+        elif path.startswith('/api/v1/timecard/periods/'):
+            period_id = path.split('/')[-1]
+            self.handle_timecard_period_detail(period_id)
+        elif path == '/api/v1/timecard/stats':
+            self.handle_timecard_stats()
         elif path.startswith('/api/v1/employees/'):
             # IMPORTANTE: Verificar PRIMEIRO se é rota de leaves
             parts = path.split('/')
@@ -1600,6 +1609,9 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         elif path == '/api/v1/benefits/upload-xlsx':
             self.handle_upload_benefits_xlsx()  # Upload de XLSX de benefícios
             return
+        elif path == '/api/v1/timecard/upload-xlsx':
+            self.handle_upload_timecard_xlsx()  # Upload de XLSX de cartão ponto
+            return
         elif path == '/api/v1/uploads/csv':
             self.handle_csv_file_upload()  # 🆕 Upload de arquivo CSV
             return
@@ -1683,6 +1695,9 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         elif path.startswith('/api/v1/benefits/periods/'):
             period_id = path.split('/')[-1]
             self.handle_delete_benefits_period(period_id)
+        elif path.startswith('/api/v1/timecard/periods/'):
+            period_id = path.split('/')[-1]
+            self.handle_delete_timecard_period(period_id)
         else:
             self.send_json_response({"error": "Endpoint não encontrado"}, 404)
     
@@ -7494,6 +7509,507 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
                 db = SessionLocal()
                 period = db.query(BenefitsPeriod).filter(BenefitsPeriod.id == int(period_id)).first()
+                
+                if not period:
+                    db.close()
+                    self.send_json_response({
+                        "success": False,
+                        "error": "Período não encontrado"
+                    }, 404)
+                    return
+                
+                period_name = period.period_name
+                
+                # Deletar período (cascade vai deletar dados e logs)
+                db.delete(period)
+                db.commit()
+                db.close()
+                
+                print(f"✅ Período deletado: {period_name}")
+                self.send_json_response({
+                    "success": True,
+                    "message": f"Período '{period_name}' deletado com sucesso"
+                })
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao deletar período: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({
+                "success": False,
+                "error": f"Erro interno: {str(e)}"
+            }, 500)
+    
+    # ============================
+    # TIMECARD HANDLERS
+    # ============================
+    
+    def handle_timecard_periods_list(self):
+        """Lista períodos de cartão ponto"""
+        try:
+            if SessionLocal:
+                from app.models.timecard import TimecardPeriod, TimecardData
+                from sqlalchemy import func
+                from decimal import Decimal
+                
+                db = SessionLocal()
+                periods = db.query(TimecardPeriod).filter(
+                    TimecardPeriod.is_active == True
+                ).order_by(
+                    TimecardPeriod.year.desc(), 
+                    TimecardPeriod.month.desc()
+                ).all()
+                
+                periods_data = []
+                for period in periods:
+                    # Contar funcionários
+                    employee_count = db.query(TimecardData).filter(
+                        TimecardData.period_id == period.id
+                    ).count()
+                    
+                    # Calcular totais detalhados por tipo de hora
+                    totals = db.query(
+                        func.sum(TimecardData.overtime_50).label('overtime_50'),
+                        func.sum(TimecardData.overtime_100).label('overtime_100'),
+                        func.sum(TimecardData.night_overtime_50).label('night_overtime_50'),
+                        func.sum(TimecardData.night_overtime_100).label('night_overtime_100'),
+                        func.sum(TimecardData.night_hours).label('night_hours')
+                    ).filter(
+                        TimecardData.period_id == period.id
+                    ).first()
+                    
+                    # Converter para Decimal com valores default
+                    ot50 = totals.overtime_50 or Decimal('0')
+                    ot100 = totals.overtime_100 or Decimal('0')
+                    not50 = totals.night_overtime_50 or Decimal('0')
+                    not100 = totals.night_overtime_100 or Decimal('0')
+                    nh = totals.night_hours or Decimal('0')
+                    
+                    periods_data.append({
+                        "id": period.id,
+                        "year": period.year,
+                        "month": period.month,
+                        "period_name": period.period_name,
+                        "start_date": period.start_date.isoformat() if period.start_date else None,
+                        "end_date": period.end_date.isoformat() if period.end_date else None,
+                        "description": period.description,
+                        "is_active": period.is_active,
+                        "employee_count": employee_count,
+                        # Campos individuais
+                        "overtime_50": float(ot50),
+                        "overtime_100": float(ot100),
+                        "night_overtime_50": float(not50),
+                        "night_overtime_100": float(not100),
+                        "night_hours": float(nh),
+                        # Totais agregados
+                        "total_overtime": float(ot50 + ot100),
+                        "total_night_hours": float(not50 + not100 + nh),
+                        "created_at": period.created_at.isoformat() if hasattr(period, 'created_at') and period.created_at else None
+                    })
+                
+                db.close()
+                self.send_json_response({"periods": periods_data, "total": len(periods_data)})
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao listar períodos de cartão ponto: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_timecard_period_detail(self, period_id: str):
+        """Detalhes de um período de cartão ponto"""
+        try:
+            if SessionLocal:
+                from app.models.timecard import TimecardPeriod, TimecardData, TimecardProcessingLog
+                from decimal import Decimal
+                
+                db = SessionLocal()
+                period = db.query(TimecardPeriod).filter(TimecardPeriod.id == int(period_id)).first()
+                
+                if not period:
+                    db.close()
+                    self.send_json_response({"error": "Período não encontrado"}, 404)
+                    return
+                
+                # Buscar dados de cartão ponto
+                timecard_records = db.query(TimecardData).filter(
+                    TimecardData.period_id == period.id
+                ).order_by(TimecardData.employee_name).all()
+                
+                records_data = []
+                for record in timecard_records:
+                    records_data.append({
+                        "id": record.id,
+                        "employee_number": record.employee_number,
+                        "employee_name": record.employee_name,
+                        "company": record.company,
+                        "normal_hours": float(record.normal_hours or Decimal('0')),
+                        "overtime_50": float(record.overtime_50 or Decimal('0')),
+                        "overtime_100": float(record.overtime_100 or Decimal('0')),
+                        "night_overtime_50": float(record.night_overtime_50 or Decimal('0')),
+                        "night_overtime_100": float(record.night_overtime_100 or Decimal('0')),
+                        "night_hours": float(record.night_hours or Decimal('0')),
+                        "absences": float(record.absences or Decimal('0')),
+                        "dsr_debit": float(record.dsr_debit or Decimal('0')),
+                        "bonus_hours": float(record.bonus_hours or Decimal('0')),
+                        "total_overtime": float(record.get_total_overtime()),
+                        "total_night_hours": float(record.get_total_night_hours())
+                    })
+                
+                # Buscar logs de processamento
+                logs = db.query(TimecardProcessingLog).filter(
+                    TimecardProcessingLog.period_id == period.id
+                ).order_by(TimecardProcessingLog.created_at.desc()).all()
+                
+                logs_data = []
+                for log in logs:
+                    logs_data.append({
+                        "id": log.id,
+                        "filename": log.filename,
+                        "status": log.status,
+                        "total_rows": log.total_rows,
+                        "processed_rows": log.processed_rows,
+                        "error_rows": log.error_rows,
+                        "processing_time": float(log.processing_time) if log.processing_time else 0,
+                        "created_at": log.created_at.isoformat() if log.created_at else None
+                    })
+                
+                db.close()
+                
+                self.send_json_response({
+                    "period": {
+                        "id": period.id,
+                        "year": period.year,
+                        "month": period.month,
+                        "period_name": period.period_name,
+                        "start_date": period.start_date.isoformat() if period.start_date else None,
+                        "end_date": period.end_date.isoformat() if period.end_date else None,
+                        "description": period.description
+                    },
+                    "records": records_data,
+                    "logs": logs_data,
+                    "total_records": len(records_data)
+                })
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar detalhes do período: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_timecard_stats(self):
+        """Retorna estatísticas de cartão ponto"""
+        try:
+            if SessionLocal:
+                from app.models.timecard import TimecardData, TimecardPeriod
+                from decimal import Decimal
+                
+                # Obter parâmetros da query string
+                query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                period_id = query_params.get('period_id', [None])[0]
+                year = query_params.get('year', [None])[0]
+                month = query_params.get('month', [None])[0]
+                employees_param = query_params.get('employees', [None])[0]
+                
+                db = SessionLocal()
+                query = db.query(TimecardData)
+                
+                # Filtrar por período
+                if period_id:
+                    query = query.filter(TimecardData.period_id == int(period_id))
+                    print(f"🔍 Filtrando por period_id: {period_id}")
+                elif year and month:
+                    period = db.query(TimecardPeriod).filter(
+                        TimecardPeriod.year == int(year),
+                        TimecardPeriod.month == int(month)
+                    ).first()
+                    if period:
+                        query = query.filter(TimecardData.period_id == period.id)
+                        print(f"✅ Período encontrado: {period.period_name} (ID: {period.id})")
+                    else:
+                        print(f"❌ Período NÃO encontrado para year={year}, month={month}")
+                        # IMPORTANTE: Retornar dados zerados se não encontrar período
+                        db.close()
+                        self.send_json_response({
+                            "total_employees": 0,
+                            "overtime_50": 0,
+                            "overtime_100": 0,
+                            "night_overtime_50": 0,
+                            "night_overtime_100": 0,
+                            "night_hours": 0,
+                            "total_overtime_hours": 0,
+                            "total_night_hours": 0,
+                            "employees_with_overtime": 0,
+                            "employees_with_night_hours": 0,
+                            "average_overtime": 0,
+                            "average_night_hours": 0,
+                            "by_company": {}
+                        })
+                        return
+                else:
+                    print(f"⚠️ Sem filtros de período - retornando TODOS os dados de timecard")
+                
+                # Filtrar por colaboradores (employee_id do banco de employees)
+                if employees_param:
+                    employee_ids = employees_param.split(',')
+                    print(f"🔍 DEBUG: employees_param recebido: '{employees_param}'")
+                    print(f"🔍 DEBUG: employee_ids split: {employee_ids}")
+                    
+                    # O frontend envia os IDs da tabela employees (employee.id)
+                    # Precisamos filtrar por employee_id (FK para employees)
+                    employee_ids_int = [int(emp_id) for emp_id in employee_ids]
+                    
+                    query = query.filter(TimecardData.employee_id.in_(employee_ids_int))
+                    print(f"✅ Filtrando por {len(employee_ids_int)} colaboradores (employee_id)")
+                    print(f"   IDs: {employee_ids_int}")
+                
+                timecard_data = query.all()
+                print(f"📊 Total de registros retornados: {len(timecard_data)}")
+                
+                # DEBUG: Mostrar alguns employee_numbers encontrados
+                if employees_param and len(timecard_data) > 0:
+                    sample = timecard_data[:5]
+                    print(f"🔍 DEBUG: Primeiros employee_numbers encontrados:")
+                    for d in sample:
+                        print(f"   employee_number='{d.employee_number}', nome='{d.employee_name}'")
+                elif employees_param and len(timecard_data) == 0:
+                    # Verificar se há ALGUM registro no período
+                    all_in_period = db.query(TimecardData).filter(
+                        TimecardData.period_id == query.whereclause.right.value if hasattr(query.whereclause, 'right') else None
+                    ).limit(5).all()
+                    if all_in_period:
+                        print(f"⚠️ DEBUG: Há {len(all_in_period)} registros no período, mas nenhum match. Exemplos:")
+                        for d in all_in_period:
+                            print(f"   employee_number='{d.employee_number}', nome='{d.employee_name}'")
+                
+                if not timecard_data:
+                    db.close()
+                    self.send_json_response({
+                        "total_employees": 0,
+                        "total_overtime_hours": 0,
+                        "total_night_hours": 0,
+                        "employees_with_overtime": 0,
+                        "employees_with_night_hours": 0,
+                        "average_overtime": 0,
+                        "average_night_hours": 0,
+                        "by_company": {}
+                    })
+                    return
+                
+                # Calcular estatísticas detalhadas por tipo de hora
+                total_employees = len(timecard_data)
+                
+                # Somar cada tipo de hora separadamente
+                sum_overtime_50 = sum((d.overtime_50 or Decimal('0') for d in timecard_data), Decimal('0'))
+                sum_overtime_100 = sum((d.overtime_100 or Decimal('0') for d in timecard_data), Decimal('0'))
+                sum_night_overtime_50 = sum((d.night_overtime_50 or Decimal('0') for d in timecard_data), Decimal('0'))
+                sum_night_overtime_100 = sum((d.night_overtime_100 or Decimal('0') for d in timecard_data), Decimal('0'))
+                sum_night_hours = sum((d.night_hours or Decimal('0') for d in timecard_data), Decimal('0'))
+                
+                # Totais agregados
+                total_overtime = sum_overtime_50 + sum_overtime_100
+                total_night = sum_night_overtime_50 + sum_night_overtime_100 + sum_night_hours
+                
+                employees_with_overtime = sum(1 for d in timecard_data if d.get_total_overtime() > 0)
+                employees_with_night = sum(1 for d in timecard_data if d.get_total_night_hours() > 0)
+                
+                avg_overtime = total_overtime / total_employees if total_employees > 0 else Decimal('0')
+                avg_night = total_night / total_employees if total_employees > 0 else Decimal('0')
+                
+                # Estatísticas por empresa
+                by_company = {}
+                for company in ['0059', '0060']:
+                    company_data = [d for d in timecard_data if d.company == company]
+                    if company_data:
+                        by_company[company] = {
+                            'employees': len(company_data),
+                            'total_overtime': float(sum((d.get_total_overtime() for d in company_data), Decimal('0'))),
+                            'total_night_hours': float(sum((d.get_total_night_hours() for d in company_data), Decimal('0'))),
+                            'average_overtime': float(sum((d.get_total_overtime() for d in company_data), Decimal('0')) / len(company_data)),
+                            'average_night_hours': float(sum((d.get_total_night_hours() for d in company_data), Decimal('0')) / len(company_data))
+                        }
+                
+                db.close()
+                
+                self.send_json_response({
+                    "total_employees": total_employees,
+                    # Horas extras detalhadas
+                    "overtime_50": float(sum_overtime_50),
+                    "overtime_100": float(sum_overtime_100),
+                    "night_overtime_50": float(sum_night_overtime_50),
+                    "night_overtime_100": float(sum_night_overtime_100),
+                    "night_hours": float(sum_night_hours),
+                    # Totais agregados
+                    "total_overtime_hours": float(total_overtime),
+                    "total_night_hours": float(total_night),
+                    # Contadores
+                    "employees_with_overtime": employees_with_overtime,
+                    "employees_with_night_hours": employees_with_night,
+                    "average_overtime": float(avg_overtime),
+                    "average_night_hours": float(avg_night),
+                    "by_company": by_company
+                })
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar estatísticas: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_upload_timecard_xlsx(self):
+        """Handle upload e processamento de arquivo XLSX de cartão ponto"""
+        try:
+            from app.services.timecard_xlsx_processor import TimecardXLSXProcessor
+            import tempfile
+            
+            # Parse multipart form data
+            content_type = self.headers.get('Content-Type', '')
+            if 'multipart/form-data' not in content_type:
+                self.send_json_response({"error": "Content-Type deve ser multipart/form-data"}, 400)
+                return
+            
+            # Obter boundary
+            boundary = content_type.split('boundary=')[1].strip()
+            
+            # Ler corpo da requisição
+            content_length = int(self.headers.get('Content-Length', 0))
+            raw_data = self.rfile.read(content_length)
+            
+            # Parsear multipart data
+            parts = raw_data.split(f'--{boundary}'.encode())
+            
+            file_content = None
+            year = None
+            month = None
+            start_date = None
+            end_date = None
+            filename = None
+            
+            for part in parts:
+                if b'Content-Disposition' in part:
+                    # Extrair nome do campo
+                    if b'name="file"' in part:
+                        # Extrair filename
+                        filename_match = re.search(b'filename="([^"]+)"', part)
+                        if filename_match:
+                            filename = filename_match.group(1).decode('utf-8')
+                        
+                        # Extrair conteúdo do arquivo
+                        file_start = part.find(b'\r\n\r\n') + 4
+                        file_end = len(part) - 2  # Remove trailing \r\n
+                        file_content = part[file_start:file_end]
+                    
+                    elif b'name="year"' in part:
+                        value_start = part.find(b'\r\n\r\n') + 4
+                        year = int(part[value_start:].strip())
+                    
+                    elif b'name="month"' in part:
+                        value_start = part.find(b'\r\n\r\n') + 4
+                        month = int(part[value_start:].strip())
+                    
+                    elif b'name="start_date"' in part:
+                        value_start = part.find(b'\r\n\r\n') + 4
+                        start_date_bytes = part[value_start:].strip()
+                        start_date = start_date_bytes.decode('utf-8') if start_date_bytes else None
+                    
+                    elif b'name="end_date"' in part:
+                        value_start = part.find(b'\r\n\r\n') + 4
+                        end_date_bytes = part[value_start:].strip()
+                        end_date = end_date_bytes.decode('utf-8') if end_date_bytes else None
+            
+            if not file_content or not year or not month:
+                self.send_json_response({
+                    "error": "Arquivo, ano e mês são obrigatórios"
+                }, 400)
+                return
+            
+            # Validar extensão
+            if not filename or not filename.endswith(('.xlsx', '.xls')):
+                self.send_json_response({
+                    "error": "Arquivo deve ser no formato XLSX ou XLS"
+                }, 400)
+                return
+            
+            # Salvar arquivo temporariamente
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+                tmp_file.write(file_content)
+                tmp_path = tmp_file.name
+            
+            print(f"📁 Arquivo temporário salvo: {tmp_path}")
+            
+            # Processar arquivo
+            db = SessionLocal()
+            current_user = getattr(self, 'current_user', None)
+            user_id = current_user.get('id') if current_user else None
+            
+            processor = TimecardXLSXProcessor(db=db, user_id=user_id)
+            result = processor.process_xlsx_file(
+                file_path=tmp_path,
+                year=year,
+                month=month,
+                start_date=start_date,
+                end_date=end_date
+            )
+            
+            db.close()
+            
+            # Remover arquivo temporário
+            try:
+                os.remove(tmp_path)
+            except:
+                pass
+            
+            if not result['success']:
+                self.send_json_response({
+                    "success": False,
+                    "error": result.get('error', 'Erro ao processar arquivo')
+                }, 400)
+                return
+            
+            self.send_json_response({
+                "success": True,
+                "message": "Arquivo processado com sucesso",
+                "period_id": result['period_id'],
+                "period_name": result['period_name'],
+                "total_rows": result['total_rows'],
+                "processed_rows": result['processed_rows'],
+                "error_rows": result['error_rows'],
+                "warnings": result.get('warnings', []),
+                "errors": result.get('errors', []),
+                "processing_time": result.get('processing_time', 0)
+            })
+            
+        except Exception as e:
+            print(f"❌ Erro ao processar upload de cartão ponto: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({
+                "success": False,
+                "error": f"Erro interno: {str(e)}"
+            }, 500)
+    
+    def handle_delete_timecard_period(self, period_id: str):
+        """Deleta um período de cartão ponto e todos os dados relacionados"""
+        try:
+            print(f"🗑️ Deletando período de cartão ponto ID: {period_id}")
+            
+            if SessionLocal:
+                from app.models.timecard import TimecardPeriod
+                
+                db = SessionLocal()
+                period = db.query(TimecardPeriod).filter(TimecardPeriod.id == int(period_id)).first()
                 
                 if not period:
                     db.close()
