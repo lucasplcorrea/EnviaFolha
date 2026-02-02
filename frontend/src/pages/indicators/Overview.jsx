@@ -47,7 +47,11 @@ const Overview = () => {
       
       // Carregar divisões/setores
       const divisionsResponse = await api.get('/payroll/divisions');
-      const divisions = divisionsResponse.data.divisions || [];
+      // Backend retorna "departments", não "divisions"
+      const divisionsData = divisionsResponse.data.departments || [];
+      console.log('Departamentos carregados:', divisionsData);
+      // Extrair apenas os nomes dos departamentos
+      const divisions = divisionsData.map(d => d.name);
       setAvailableDivisions(divisions);
       
       // Selecionar o mais recente por padrão
@@ -238,7 +242,7 @@ const Overview = () => {
           data?.employee_variation
         )}
         {renderMetricCard(
-          'Custo de Folha Total',
+          'Custo Total (Salário Líquido)',
           formatCurrency(data?.total_payroll_cost || 0),
           CurrencyDollarIcon,
           'green',

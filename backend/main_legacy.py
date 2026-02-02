@@ -5400,10 +5400,18 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     month = int(month)
                 
                 # Buscar todos os períodos do mês/ano especificado (mensal e 13º)
-                periods = db.query(PayrollPeriod).filter(
+                # FILTRAR POR EMPRESA AQUI - usando payroll_periods.company
+                period_query = db.query(PayrollPeriod).filter(
                     PayrollPeriod.year == year,
                     PayrollPeriod.month == month
-                ).all()
+                )
+                
+                # Filtrar por empresa no período (NÃO no employee, pois company_code pode ser NULL)
+                if company != 'all':
+                    period_query = period_query.filter(PayrollPeriod.company == company)
+                    print(f"🔍 Filtrando períodos por empresa: '{company}'")
+                
+                periods = period_query.all()
                 
                 if not periods:
                     db.close()
@@ -5411,35 +5419,39 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     return
                 
                 period_ids = [p.id for p in periods]
+                print(f"📊 Períodos encontrados: {[(p.id, p.company, p.period_name) for p in periods]}")
                 
-                # Query base para dados de folha dos períodos
+                # Buscar dados de folha dos períodos
                 payroll_query = db.query(PayrollData).filter(
                     PayrollData.period_id.in_(period_ids)
                 )
                 
-                # Buscar employees para aplicar filtros
-                employee_query = db.query(Employee)
-                
-                # Filtrar por empresa se especificado
-                if company != 'all':
-                    employee_query = employee_query.filter(Employee.company == company)
-                
-                # Filtrar por setor se especificado
-                if division != 'all':
-                    employee_query = employee_query.filter(Employee.division == division)
-                
-                filtered_employees = employee_query.all()
-                employee_ids = [emp.id for emp in filtered_employees]
-                
-                if employee_ids:
-                    payroll_query = payroll_query.filter(
-                        PayrollData.employee_id.in_(employee_ids)
-                    )
-                
                 payroll_records = payroll_query.all()
+                print(f"📊 Payroll records encontrados: {len(payroll_records)}")
+                
+                # Obter employee_ids dos registros de folha
+                unique_employee_ids = set([r.employee_id for r in payroll_records])
+                print(f"📊 Unique employee IDs em payroll: {len(unique_employee_ids)}")
+                
+                # Buscar dados dos employees para filtro por departamento
+                employee_map = {}
+                if unique_employee_ids:
+                    employees = db.query(Employee).filter(
+                        Employee.id.in_(unique_employee_ids)
+                    ).all()
+                    employee_map = {e.id: e for e in employees}
+                    print(f"📊 Employees encontrados: {len(employees)}")
+                
+                # Filtrar por departamento/setor se especificado
+                if division != 'all':
+                    print(f"🔍 Filtrando por departamento: '{division}'")
+                    # Filtrar payroll_records apenas para employees do departamento
+                    dept_employee_ids = [e.id for e in employee_map.values() if e.department == division]
+                    payroll_records = [r for r in payroll_records if r.employee_id in dept_employee_ids]
+                    unique_employee_ids = set([r.employee_id for r in payroll_records])
+                    print(f"📊 Após filtro de departamento: {len(payroll_records)} records, {len(unique_employee_ids)} employees")
                 
                 # Calcular métricas principais
-                unique_employee_ids = set([r.employee_id for r in payroll_records])
                 total_employees = len(unique_employee_ids)
                 total_cost = sum([Decimal(str(r.net_salary or 0)) for r in payroll_records])
                 
@@ -5451,26 +5463,29 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     prev_year = year
                     prev_month = month - 1
                 
-                prev_periods = db.query(PayrollPeriod).filter(
+                prev_period_query = db.query(PayrollPeriod).filter(
                     PayrollPeriod.year == prev_year,
                     PayrollPeriod.month == prev_month
-                ).all()
+                )
+                if company != 'all':
+                    prev_period_query = prev_period_query.filter(PayrollPeriod.company == company)
+                
+                prev_periods = prev_period_query.all()
                 
                 employee_variation = None
                 cost_variation = None
                 
                 if prev_periods:
                     prev_period_ids = [p.id for p in prev_periods]
-                    prev_query = db.query(PayrollData).filter(
+                    prev_records = db.query(PayrollData).filter(
                         PayrollData.period_id.in_(prev_period_ids)
-                    )
+                    ).all()
                     
-                    if employee_ids:
-                        prev_query = prev_query.filter(
-                            PayrollData.employee_id.in_(employee_ids)
-                        )
+                    # Aplicar filtro de departamento se necessário
+                    if division != 'all':
+                        dept_employee_ids = [e.id for e in employee_map.values() if e.department == division]
+                        prev_records = [r for r in prev_records if r.employee_id in dept_employee_ids]
                     
-                    prev_records = prev_query.all()
                     prev_employees = len(set([r.employee_id for r in prev_records]))
                     prev_cost = sum([Decimal(str(r.net_salary or 0)) for r in prev_records])
                     
@@ -5479,13 +5494,18 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     if prev_cost > 0:
                         cost_variation = ((total_cost - prev_cost) / prev_cost) * 100
                 
-                # Distribuição por empresa
+                # Distribuição por empresa (só faz sentido quando company='all')
                 by_company = []
                 if company == 'all':
-                    for comp_code in ['0060', '0059']:
-                        comp_emps = [e for e in filtered_employees if e.company == comp_code]
-                        comp_emp_ids = [e.id for e in comp_emps]
-                        comp_records = [r for r in payroll_records if r.employee_id in comp_emp_ids]
+                    # Agrupar por company do período
+                    periods_by_company = {}
+                    for p in periods:
+                        if p.company not in periods_by_company:
+                            periods_by_company[p.company] = []
+                        periods_by_company[p.company].append(p.id)
+                    
+                    for comp_code, comp_period_ids in periods_by_company.items():
+                        comp_records = [r for r in payroll_records if r.period_id in comp_period_ids]
                         comp_count = len(set([r.employee_id for r in comp_records]))
                         comp_cost = sum([Decimal(str(r.net_salary or 0)) for r in comp_records])
                         by_company.append({
@@ -5496,12 +5516,13 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
                 # Top 5 setores
                 employees_by_division = {}
-                for emp in filtered_employees:
-                    if emp.id in unique_employee_ids:
-                        div = emp.division or 'Não informado'
+                for emp_id in unique_employee_ids:
+                    emp = employee_map.get(emp_id)
+                    if emp:
+                        div = emp.department or 'Não informado'
                         if div not in employees_by_division:
                             employees_by_division[div] = set()
-                        employees_by_division[div].add(emp.id)
+                        employees_by_division[div].add(emp_id)
                 
                 top_divisions = sorted(
                     [{'division': k, 'count': len(v)} for k, v in employees_by_division.items()],
@@ -5516,22 +5537,22 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 else:
                     period_end = date(year, month + 1, 1)
                 
+                # Contar admissões e desligamentos - restringir aos employees que estão no payroll
                 admissions_query = db.query(Employee).filter(
                     Employee.admission_date >= period_start,
-                    Employee.admission_date < period_end
+                    Employee.admission_date < period_end,
+                    Employee.id.in_(unique_employee_ids) if unique_employee_ids else False
                 )
                 terminations_query = db.query(Employee).filter(
                     Employee.termination_date >= period_start,
-                    Employee.termination_date < period_end
+                    Employee.termination_date < period_end,
+                    Employee.id.in_(unique_employee_ids) if unique_employee_ids else False
                 )
                 
-                if company != 'all':
-                    admissions_query = admissions_query.filter(Employee.company == company)
-                    terminations_query = terminations_query.filter(Employee.company == company)
-                
+                # Filtro por departamento se aplicável
                 if division != 'all':
-                    admissions_query = admissions_query.filter(Employee.division == division)
-                    terminations_query = terminations_query.filter(Employee.division == division)
+                    admissions_query = admissions_query.filter(Employee.department == division)
+                    terminations_query = terminations_query.filter(Employee.department == division)
                 
                 admissions = admissions_query.count()
                 terminations = terminations_query.count()
