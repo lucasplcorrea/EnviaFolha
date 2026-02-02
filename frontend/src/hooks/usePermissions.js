@@ -2,10 +2,10 @@ import { useAuth } from '../contexts/AuthContext';
 
 // Mapeamento de páginas permitidas por role
 const ROLE_PAGES = {
-  admin: ['dashboard', 'employees', 'payroll', 'communications', 'reports', 'users', 'settings'],
-  manager: ['dashboard', 'employees', 'payroll', 'communications', 'reports', 'settings'],
-  operator: ['dashboard', 'payroll', 'communications', 'reports'],
-  viewer: ['reports']
+  admin: ['dashboard', 'employees', 'payroll', 'communications', 'reports', 'users', 'settings', 'profile'],
+  manager: ['dashboard', 'employees', 'payroll', 'communications', 'reports', 'settings', 'profile'],
+  operator: ['dashboard', 'payroll', 'communications', 'reports', 'profile'],
+  viewer: ['reports', 'profile']
 };
 
 // Mapeamento de rotas para páginas
@@ -26,7 +26,8 @@ const ROUTE_TO_PAGE = {
   '/reports': 'reports',
   '/users': 'users',
   '/settings': 'settings',
-  '/system-logs': 'settings'  // Logs fazem parte de settings (admin only)
+  '/system-logs': 'settings',  // Logs fazem parte de settings (admin only)
+  '/profile': 'profile'  // Perfil do usuário
 };
 
 export const usePermissions = () => {

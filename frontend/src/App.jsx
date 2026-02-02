@@ -22,6 +22,7 @@ import SystemLogs from './pages/SystemLogs.jsx';
 import Endomarketing from './pages/Endomarketing.jsx';
 import RHIndicators from './pages/RHIndicators.jsx';
 import QueueManagement from './pages/QueueManagement.jsx';
+import Profile from './pages/Profile.jsx';
 
 // Indicadores Refatorados
 import {
@@ -102,6 +103,7 @@ function AppContent() {
                     <Route path="settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
                     <Route path="system-logs" element={<ProtectedRoute><SystemLogs /></ProtectedRoute>} />
                     <Route path="payroll-data" element={<ProtectedRoute><PayrollDataProcessor /></ProtectedRoute>} />
+                    <Route path="profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
                   </Routes>
                 </Layout>
               </AuthProtectedRoute>

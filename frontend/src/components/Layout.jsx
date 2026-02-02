@@ -18,6 +18,7 @@ import {
   PaperAirplaneIcon,
   PresentationChartLineIcon,
   QueueListIcon,
+  UserCircleIcon,
 } from '@heroicons/react/24/outline';
 
 const navigation = [
@@ -39,13 +40,14 @@ const navigation = [
     name: 'Dados de Folha', 
     href: '/payroll-data', 
     icon: ChartBarIcon,
-    description: 'Processamento de planilhas'
+    description: 'Processamento de planilhas e benefícios'
   },
   { name: 'Comunicados', href: '/communications', icon: ChatBubbleLeftRightIcon },
   { name: 'Endomarketing', href: '/endomarketing', icon: HeartIcon },
   { name: 'Indicadores RH', href: '/indicators', icon: PresentationChartLineIcon },
   { name: 'Filas de Envio', href: '/queue-management', icon: QueueListIcon },
   { name: 'Relatórios', href: '/reports', icon: ChartBarIcon },
+  { name: 'Meu Perfil', href: '/profile', icon: UserCircleIcon },
   { name: 'Configurações', href: '/settings', icon: CogIcon },
 ];
 
