@@ -3572,7 +3572,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             if SessionLocal:
                 from app.models.payroll import PayrollPeriod, PayrollData
                 from app.models.employee import Employee
-                from sqlalchemy import func
+                from sqlalchemy import func, or_, and_
                 from decimal import Decimal
                 from collections import defaultdict
                 
@@ -3596,9 +3596,9 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 if start_month:
                     start_year, start_mon = map(int, start_month.split('-'))
                     periods_query = periods_query.filter(
-                        func.or_(
+                        or_(
                             PayrollPeriod.year > start_year,
-                            func.and_(
+                            and_(
                                 PayrollPeriod.year == start_year,
                                 PayrollPeriod.month >= start_mon
                             )
@@ -3608,9 +3608,9 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 if end_month:
                     end_year, end_mon = map(int, end_month.split('-'))
                     periods_query = periods_query.filter(
-                        func.or_(
+                        or_(
                             PayrollPeriod.year < end_year,
-                            func.and_(
+                            and_(
                                 PayrollPeriod.year == end_year,
                                 PayrollPeriod.month <= end_mon
                             )
