@@ -3573,48 +3573,60 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
                 db = SessionLocal()
                 
-                # Query base para períodos
-                query = db.query(
-                    PayrollPeriod.id,
-                    PayrollPeriod.year,
-                    PayrollPeriod.month,
-                    PayrollPeriod.period_name,
-                    func.count(PayrollData.id).label('employee_count'),
-                    func.sum(PayrollData.total_earnings).label('total_earnings'),
-                    func.sum(PayrollData.total_deductions).label('total_deductions'),
-                    func.sum(PayrollData.net_pay).label('total_net')
-                ).join(
-                    PayrollData,
-                    PayrollPeriod.id == PayrollData.period_id
-                )
-                
-                # Filtrar por empresa se especificado
-                if company != 'all':
-                    query = query.filter(PayrollData.company == company)
-                
-                # Agrupar por período e ordenar do mais antigo para o mais novo
-                periods = query.group_by(
-                    PayrollPeriod.id,
-                    PayrollPeriod.year,
-                    PayrollPeriod.month,
-                    PayrollPeriod.period_name
-                ).order_by(
+                # Query para buscar períodos
+                periods_query = db.query(PayrollPeriod).order_by(
                     PayrollPeriod.year.asc(),
                     PayrollPeriod.month.asc()
                 ).all()
                 
-                # Formatar resultado
                 periods_data = []
-                for period in periods:
+                for period in periods_query:
+                    # Query para dados de folha do período
+                    payroll_query = db.query(PayrollData).filter(
+                        PayrollData.period_id == period.id
+                    )
+                    
+                    # Filtrar por empresa se especificado
+                    if company != 'all':
+                        # Buscar employees da empresa específica
+                        from app.models.employee import Employee
+                        employee_ids = db.query(Employee.id).filter(
+                            Employee.company == company
+                        ).all()
+                        employee_ids = [emp[0] for emp in employee_ids]
+                        payroll_query = payroll_query.filter(
+                            PayrollData.employee_id.in_(employee_ids)
+                        )
+                    
+                    payroll_records = payroll_query.all()
+                    
+                    # Calcular totais
+                    employee_count = len(payroll_records)
+                    total_earnings = Decimal('0')
+                    total_deductions = Decimal('0')
+                    total_net = Decimal('0')
+                    
+                    for record in payroll_records:
+                        # Somar gross_salary como proventos
+                        if record.gross_salary:
+                            total_earnings += Decimal(str(record.gross_salary))
+                        
+                        # net_salary já é o líquido
+                        if record.net_salary:
+                            total_net += Decimal(str(record.net_salary))
+                    
+                    # Descontos = Proventos - Líquido
+                    total_deductions = total_earnings - total_net
+                    
                     periods_data.append({
                         "id": period.id,
                         "year": period.year,
                         "month": period.month,
                         "period_name": period.period_name,
-                        "employee_count": period.employee_count or 0,
-                        "total_earnings": float(period.total_earnings or Decimal('0')),
-                        "total_deductions": float(period.total_deductions or Decimal('0')),
-                        "total_net": float(period.total_net or Decimal('0'))
+                        "employee_count": employee_count,
+                        "total_earnings": float(total_earnings),
+                        "total_deductions": float(total_deductions),
+                        "total_net": float(total_net)
                     })
                 
                 db.close()
