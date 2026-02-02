@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { UserGroupIcon, ChartBarIcon, CurrencyDollarIcon, TrendingUpIcon, BuildingOfficeIcon } from '@heroicons/react/24/outline';
+import { UserGroupIcon, ChartBarIcon, CurrencyDollarIcon, ArrowTrendingUpIcon, BuildingOfficeIcon } from '@heroicons/react/24/outline';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
 
@@ -199,7 +199,7 @@ export default function Headcount() {
             {renderMetricCard('Headcount Atual', data.current?.headcount || 0, UserGroupIcon, 'blue', data.current?.variation_vs_previous)}
             {renderMetricCard('Custo Total (Salário Líquido)', formatCurrency(data.current?.total_cost || 0), CurrencyDollarIcon, 'green')}
             {renderMetricCard('Custo Médio por Colaborador', formatCurrency(data.current?.avg_cost_per_employee || 0), ChartBarIcon, 'indigo')}
-            {renderMetricCard('Setor com Mais Colaboradores', data.top_divisions?.[0]?.division || 'N/A', TrendingUpIcon, 'yellow')}
+            {renderMetricCard('Setor com Mais Colaboradores', data.top_divisions?.[0]?.division || 'N/A', ArrowTrendingUpIcon, 'yellow')}
           </div>
 
           {data.evolution && data.evolution.length > 0 && (
@@ -209,7 +209,7 @@ export default function Headcount() {
                 Evolução do Headcount (Últimos {monthsRange} meses)
               </h3>
               <div className="space-y-2">
-                {data.evolution.map((item, idx) => (
+                {[...data.evolution].reverse().map((item, idx) => (
                   <div key={idx} className="flex items-center justify-between py-2 border-b">
                     <span className="font-medium text-gray-700">{item.month_name}</span>
                     <div className="flex items-center space-x-4">

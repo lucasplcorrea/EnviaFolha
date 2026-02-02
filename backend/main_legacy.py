@@ -5633,6 +5633,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
                 # EVOLUÇÃO TEMPORAL (últimos N meses)
                 evolution_data = []
+                month_names_pt = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 
+                                  'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
                 for i in range(months_range - 1, -1, -1):
                     period_date = current_date - relativedelta(months=i)
                     p_year = period_date.year
@@ -5642,7 +5644,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     evolution_data.append({
                         'year': p_year,
                         'month': p_month,
-                        'month_name': period_date.strftime('%b/%y'),
+                        'month_name': f"{month_names_pt[p_month-1]}/{str(p_year)[2:]}",
                         'headcount': metrics['headcount'],
                         'total_cost': metrics['total_cost'],
                         'avg_cost_per_employee': metrics['avg_cost_per_employee']
