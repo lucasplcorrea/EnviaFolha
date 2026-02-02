@@ -5363,21 +5363,167 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     # ==========================================
     
     def handle_indicators_overview(self):
-        """Retorna visão geral dos indicadores de RH"""
+        """Retorna visão geral dos indicadores de RH com filtros de empresa e período"""
         try:
-            from app.services.hr_indicators import HRIndicatorsService
-            
-            # Parse query params para controle de cache
+            # Parse query params
             query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            use_cache = query_params.get('use_cache', ['true'])[0].lower() != 'false'
+            company = query_params.get('company', ['all'])[0]
+            period_id = query_params.get('period_id', [None])[0]
             
-            db = SessionLocal()
-            try:
-                service = HRIndicatorsService(db)
-                result = service.get_overview_metrics(use_cache=use_cache)
-                self.send_json_response(result)
-            finally:
+            if SessionLocal:
+                from app.models.payroll import PayrollPeriod, PayrollData
+                from app.models.employee import Employee
+                from sqlalchemy import func
+                from decimal import Decimal
+                
+                db = SessionLocal()
+                
+                # Buscar período específico ou mais recente
+                if period_id:
+                    period = db.query(PayrollPeriod).filter(PayrollPeriod.id == int(period_id)).first()
+                else:
+                    period = db.query(PayrollPeriod).order_by(
+                        PayrollPeriod.year.desc(),
+                        PayrollPeriod.month.desc()
+                    ).first()
+                
+                if not period:
+                    db.close()
+                    self.send_json_response({"error": "Nenhum período encontrado"}, 404)
+                    return
+                
+                # Query base para dados de folha do período
+                payroll_query = db.query(PayrollData).filter(
+                    PayrollData.period_id == period.id
+                )
+                
+                # Filtrar por empresa se especificado
+                if company != 'all':
+                    employee_ids = db.query(Employee.id).filter(
+                        Employee.company == company
+                    ).all()
+                    employee_ids = [emp[0] for emp in employee_ids]
+                    payroll_query = payroll_query.filter(
+                        PayrollData.employee_id.in_(employee_ids)
+                    )
+                
+                payroll_records = payroll_query.all()
+                
+                # Calcular métricas principais
+                total_employees = len(set([r.employee_id for r in payroll_records]))
+                total_cost = sum([Decimal(str(r.net_salary or 0)) for r in payroll_records])
+                
+                # Buscar período anterior para calcular variação
+                prev_period = db.query(PayrollPeriod).filter(
+                    func.or_(
+                        PayrollPeriod.year < period.year,
+                        func.and_(
+                            PayrollPeriod.year == period.year,
+                            PayrollPeriod.month < period.month
+                        )
+                    )
+                ).order_by(
+                    PayrollPeriod.year.desc(),
+                    PayrollPeriod.month.desc()
+                ).first()
+                
+                employee_variation = None
+                cost_variation = None
+                
+                if prev_period:
+                    prev_query = db.query(PayrollData).filter(
+                        PayrollData.period_id == prev_period.id
+                    )
+                    if company != 'all':
+                        prev_query = prev_query.filter(
+                            PayrollData.employee_id.in_(employee_ids)
+                        )
+                    prev_records = prev_query.all()
+                    prev_employees = len(set([r.employee_id for r in prev_records]))
+                    prev_cost = sum([Decimal(str(r.net_salary or 0)) for r in prev_records])
+                    
+                    if prev_employees > 0:
+                        employee_variation = ((total_employees - prev_employees) / prev_employees) * 100
+                    if prev_cost > 0:
+                        cost_variation = ((total_cost - prev_cost) / prev_cost) * 100
+                
+                # Distribuição por empresa
+                by_company = []
+                if company == 'all':
+                    for comp_code in ['0060', '0059']:
+                        comp_emp_ids = [e[0] for e in db.query(Employee.id).filter(Employee.company == comp_code).all()]
+                        comp_records = [r for r in payroll_records if r.employee_id in comp_emp_ids]
+                        comp_count = len(set([r.employee_id for r in comp_records]))
+                        comp_cost = sum([Decimal(str(r.net_salary or 0)) for r in comp_records])
+                        by_company.append({
+                            'company': comp_code,
+                            'count': comp_count,
+                            'total_cost': float(comp_cost)
+                        })
+                
+                # Top 5 setores
+                employees_dict = {}
+                for record in payroll_records:
+                    employee = db.query(Employee).filter(Employee.id == record.employee_id).first()
+                    if employee:
+                        division = employee.division or 'Não informado'
+                        if division not in employees_dict:
+                            employees_dict[division] = set()
+                        employees_dict[division].add(employee.id)
+                
+                top_divisions = sorted(
+                    [{'division': k, 'count': len(v)} for k, v in employees_dict.items()],
+                    key=lambda x: x['count'],
+                    reverse=True
+                )[:5]
+                
+                # Contar admissões e desligamentos no período
+                # Considerando employees com admission_date ou termination_date no período
+                from datetime import date
+                period_start = date(period.year, period.month, 1)
+                if period.month == 12:
+                    period_end = date(period.year + 1, 1, 1)
+                else:
+                    period_end = date(period.year, period.month + 1, 1)
+                
+                admissions_query = db.query(Employee).filter(
+                    Employee.admission_date >= period_start,
+                    Employee.admission_date < period_end
+                )
+                terminations_query = db.query(Employee).filter(
+                    Employee.termination_date >= period_start,
+                    Employee.termination_date < period_end
+                )
+                
+                if company != 'all':
+                    admissions_query = admissions_query.filter(Employee.company == company)
+                    terminations_query = terminations_query.filter(Employee.company == company)
+                
+                admissions = admissions_query.count()
+                terminations = terminations_query.count()
+                
+                result = {
+                    'period': {
+                        'id': period.id,
+                        'year': period.year,
+                        'month': period.month,
+                        'period_name': period.period_name
+                    },
+                    'total_employees': total_employees,
+                    'total_payroll_cost': float(total_cost),
+                    'employee_variation': float(employee_variation) if employee_variation is not None else None,
+                    'cost_variation': float(cost_variation) if cost_variation is not None else None,
+                    'admissions': admissions,
+                    'terminations': terminations,
+                    'by_company': by_company,
+                    'top_divisions': top_divisions
+                }
+                
                 db.close()
+                self.send_json_response(result)
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
                 
         except Exception as e:
             print(f"❌ Erro ao buscar overview de indicadores: {e}")
