@@ -42,8 +42,8 @@ const Overview = () => {
       
       // Carregar meses disponíveis
       const monthsResponse = await api.get('/payroll/months');
-      const months = monthsResponse.data.months || [];
-      setAvailableMonths(months);
+      const monthsData = monthsResponse.data.months || [];
+      setAvailableMonths(monthsData);
       
       // Carregar divisões/setores
       const divisionsResponse = await api.get('/payroll/divisions');
@@ -54,8 +54,10 @@ const Overview = () => {
       if (years.length > 0 && !selectedYear) {
         setSelectedYear(Math.max(...years).toString());
       }
-      if (months.length > 0 && !selectedMonth) {
-        setSelectedMonth(Math.max(...months).toString());
+      if (monthsData.length > 0 && !selectedMonth) {
+        // Pegar o número do último mês
+        const maxMonth = Math.max(...monthsData.map(m => m.number));
+        setSelectedMonth(maxMonth.toString());
       }
     } catch (error) {
       console.error('Erro ao carregar filtros:', error);
@@ -190,8 +192,8 @@ const Overview = () => {
             >
               <option value="">Selecione...</option>
               {availableMonths.map(month => (
-                <option key={month} value={month}>
-                  {getMonthName(month.toString())}
+                <option key={month.number} value={month.number}>
+                  {month.name}
                 </option>
               ))}
             </select>
