@@ -7551,8 +7551,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         """Retorna histórico de processamento de arquivos de benefícios"""
         try:
             if SessionLocal:
-                from app.models.benefits import BenefitsProcessingLog
-                from app.models.payroll import BenefitsPeriod
+                from app.models.payroll import BenefitsProcessingLog, BenefitsPeriod
                 
                 db = SessionLocal()
                 logs = db.query(
