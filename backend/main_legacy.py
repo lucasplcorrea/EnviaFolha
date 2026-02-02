@@ -3565,7 +3565,9 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             # Obter parâmetros da query string
             query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             company = query_params.get('company', ['all'])[0]
-            period_filter = query_params.get('period', ['all'])[0]  # mensal, 13, ferias, all
+            period_filter = query_params.get('period', ['all'])[0]  # mensal, 13, all
+            start_month = query_params.get('start_month', [None])[0]  # formato: YYYY-MM
+            end_month = query_params.get('end_month', [None])[0]  # formato: YYYY-MM
             
             if SessionLocal:
                 from app.models.payroll import PayrollPeriod, PayrollData
@@ -3589,6 +3591,31 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                         periods_query = periods_query.filter(
                             PayrollPeriod.period_name.ilike('%13%')
                         )
+                
+                # Filtrar por intervalo de datas se especificado
+                if start_month:
+                    start_year, start_mon = map(int, start_month.split('-'))
+                    periods_query = periods_query.filter(
+                        func.or_(
+                            PayrollPeriod.year > start_year,
+                            func.and_(
+                                PayrollPeriod.year == start_year,
+                                PayrollPeriod.month >= start_mon
+                            )
+                        )
+                    )
+                
+                if end_month:
+                    end_year, end_mon = map(int, end_month.split('-'))
+                    periods_query = periods_query.filter(
+                        func.or_(
+                            PayrollPeriod.year < end_year,
+                            func.and_(
+                                PayrollPeriod.year == end_year,
+                                PayrollPeriod.month <= end_mon
+                            )
+                        )
+                    )
                 
                 periods = periods_query.all()
                 
