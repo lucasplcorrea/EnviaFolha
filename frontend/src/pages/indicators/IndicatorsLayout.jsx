@@ -23,6 +23,7 @@ const IndicatorsLayout = () => {
     { path: '/indicators/tenure', name: 'Tempo de Casa', icon: ClockIcon },
     { path: '/indicators/leaves', name: 'Afastamentos', icon: ExclamationTriangleIcon },
     { path: '/indicators/payroll', name: 'Folha de Pagamento', icon: CurrencyDollarIcon },
+    { path: '/indicators/period-comparison', name: 'Comparativo Períodos', icon: CalendarDaysIcon },
   ];
 
   return (

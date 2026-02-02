@@ -1401,6 +1401,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         
         elif path == '/api/v1/payroll/periods':
             self.handle_payroll_periods_list()
+        elif path == '/api/v1/payroll/period-comparison':
+            self.handle_period_comparison()
         elif path == '/api/v1/payroll/templates':
             self.handle_payroll_templates_list()
         elif path.startswith('/api/v1/payroll/periods/'):
@@ -3555,6 +3557,76 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
         except Exception as e:
             print(f"❌ Erro ao obter resumo do período: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_period_comparison(self):
+        """Retorna comparativo de períodos de folha"""
+        try:
+            # Obter parâmetros da query string
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            company = query_params.get('company', ['all'])[0]
+            
+            if SessionLocal:
+                from app.models.payroll import PayrollPeriod, PayrollData
+                from sqlalchemy import func
+                from decimal import Decimal
+                
+                db = SessionLocal()
+                
+                # Query base para períodos
+                query = db.query(
+                    PayrollPeriod.id,
+                    PayrollPeriod.year,
+                    PayrollPeriod.month,
+                    PayrollPeriod.period_name,
+                    func.count(PayrollData.id).label('employee_count'),
+                    func.sum(PayrollData.total_earnings).label('total_earnings'),
+                    func.sum(PayrollData.total_deductions).label('total_deductions'),
+                    func.sum(PayrollData.net_pay).label('total_net')
+                ).join(
+                    PayrollData,
+                    PayrollPeriod.id == PayrollData.period_id
+                )
+                
+                # Filtrar por empresa se especificado
+                if company != 'all':
+                    query = query.filter(PayrollData.company == company)
+                
+                # Agrupar por período e ordenar do mais antigo para o mais novo
+                periods = query.group_by(
+                    PayrollPeriod.id,
+                    PayrollPeriod.year,
+                    PayrollPeriod.month,
+                    PayrollPeriod.period_name
+                ).order_by(
+                    PayrollPeriod.year.asc(),
+                    PayrollPeriod.month.asc()
+                ).all()
+                
+                # Formatar resultado
+                periods_data = []
+                for period in periods:
+                    periods_data.append({
+                        "id": period.id,
+                        "year": period.year,
+                        "month": period.month,
+                        "period_name": period.period_name,
+                        "employee_count": period.employee_count or 0,
+                        "total_earnings": float(period.total_earnings or Decimal('0')),
+                        "total_deductions": float(period.total_deductions or Decimal('0')),
+                        "total_net": float(period.total_net or Decimal('0'))
+                    })
+                
+                db.close()
+                self.send_json_response({"periods": periods_data})
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar comparativo de períodos: {e}")
+            import traceback
+            traceback.print_exc()
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
     
     def handle_create_payroll_period(self):
