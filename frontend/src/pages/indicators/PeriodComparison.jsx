@@ -12,16 +12,20 @@ const PeriodComparison = () => {
   const [periods, setPeriods] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedCompany, setSelectedCompany] = useState('all');
+  const [selectedPeriod, setSelectedPeriod] = useState('all');
 
   useEffect(() => {
     loadPeriodComparison();
-  }, [selectedCompany]);
+  }, [selectedCompany, selectedPeriod]);
 
   const loadPeriodComparison = async () => {
     try {
       setLoading(true);
       const response = await api.get('/payroll/period-comparison', {
-        params: { company: selectedCompany }
+        params: { 
+          company: selectedCompany,
+          period: selectedPeriod
+        }
       });
       setPeriods(response.data.periods || []);
     } catch (error) {
@@ -90,8 +94,20 @@ const PeriodComparison = () => {
           </p>
         </div>
 
-        {/* Company Filter */}
+        {/* Filters */}
         <div className="flex items-center space-x-3">
+          <label className="text-sm font-medium text-gray-700">Período:</label>
+          <select
+            value={selectedPeriod}
+            onChange={(e) => setSelectedPeriod(e.target.value)}
+            className="border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="all">Todos</option>
+            <option value="mensal">Mensal</option>
+            <option value="13">13º Salário</option>
+            <option value="ferias">Férias</option>
+          </select>
+          
           <label className="text-sm font-medium text-gray-700">Empresa:</label>
           <select
             value={selectedCompany}
@@ -120,7 +136,10 @@ const PeriodComparison = () => {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Período
+                    Mês/Ano
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Tipo
                   </th>
                   <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Colaboradores
@@ -138,15 +157,21 @@ const PeriodComparison = () => {
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {periods.map((period, index) => {
-                  const previousPeriod = index > 0 ? periods[index - 1] : null;
+                  const previousPeriod = index < periods.length - 1 ? periods[index + 1] : null;
                   
                   return (
-                    <tr key={period.id} className="hover:bg-gray-50 transition-colors">
+                    <tr key={`${period.year}-${period.month}`} className="hover:bg-gray-50 transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">{period.period_name}</div>
-                        <div className="text-xs text-gray-500">
-                          {period.year} - {new Date(2000, period.month - 1).toLocaleDateString('pt-BR', { month: 'long' })}
+                        <div className="text-sm font-medium text-gray-900">
+                          {String(period.month).padStart(2, '0')}/{period.year}
                         </div>
+                        <div className="text-xs text-gray-500">
+                          {new Date(2000, period.month - 1).toLocaleDateString('pt-BR', { month: 'long' })}
+                        </div>
+                      </td>
+                      
+                      <td className="px-6 py-4">
+                        <div className="text-xs text-gray-600">{period.period_names}</div>
                       </td>
                       
                       {/* Colaboradores */}
