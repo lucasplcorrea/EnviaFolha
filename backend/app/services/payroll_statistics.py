@@ -66,6 +66,7 @@ def calculate_payroll_statistics(
     
     # ===============================
     # QUERY ÚNICA PARA TODAS AS SEÇÕES
+    # Inclui LEFT JOIN com benefits_data para incluir valores de benefícios iFood
     # ===============================
     query = text(f"""
         SELECT 
@@ -87,6 +88,12 @@ def calculate_payroll_statistics(
             COALESCE(SUM((pd.earnings_data->>'TRANSFERENCIA_FILIAL')::numeric), 0) as total_transferencia_filial,
             COALESCE(SUM((pd.earnings_data->>'AJUDA_CUSTO')::numeric), 0) as total_ajuda_custo,
             COALESCE(SUM((pd.earnings_data->>'LICENCA_PATERNIDADE')::numeric), 0) as total_licenca_paternidade,
+            
+            -- Benefícios iFood (agregados por período)
+            COALESCE(SUM(bd.refeicao), 0) as total_vale_refeicao,
+            COALESCE(SUM(bd.alimentacao), 0) as total_vale_alimentacao,
+            COALESCE(SUM(bd.mobilidade), 0) as total_vale_mobilidade,
+            COALESCE(SUM(bd.livre), 0) as total_saldo_livre,
             
             -- Encargos Trabalhistas
             COALESCE(SUM((pd.deductions_data->>'INSS')::numeric), 0) as total_inss,
@@ -113,6 +120,11 @@ def calculate_payroll_statistics(
         FROM payroll_data pd
         INNER JOIN employees e ON e.id = pd.employee_id
         INNER JOIN payroll_periods pp ON pp.id = pd.period_id
+        LEFT JOIN benefits_data bd ON bd.employee_id = e.id 
+            AND bd.period_id IN (
+                SELECT bp.id FROM benefits_periods bp 
+                WHERE bp.year = pp.year AND bp.month = pp.month AND bp.company = pp.company
+            )
         WHERE {where_sql}
     """)
     
@@ -159,48 +171,52 @@ def calculate_payroll_statistics(
             "insalubridade": float(result[8]),
             "vale_transporte": 0.0,  # Zerado conforme solicitado
             "plano_saude": float(result[9]),
-            "vale_mobilidade": 0.0,  # Zerado conforme solicitado
-            "vale_refeicao": 0.0,  # Zerado conforme solicitado
-            "vale_alimentacao": 0.0,  # Zerado conforme solicitado
-            "saldo_livre": 0.0,  # Zerado conforme solicitado
+            "vale_mobilidade": float(result[16]),  # Benefícios iFood
+            "vale_refeicao": float(result[13]),     # Benefícios iFood
+            "vale_alimentacao": float(result[14]),  # Benefícios iFood
+            "saldo_livre": float(result[15]),       # Benefícios iFood
             "transferencia_filial": float(result[10]),
             "ajuda_custo": float(result[11]),
             "licenca_paternidade": float(result[12]),
-            "total": float(result[6]) + float(result[7]) + float(result[8]) + float(result[9]) + float(result[10]) + float(result[11]) + float(result[12])
+            "total": (
+                float(result[6]) + float(result[7]) + float(result[8]) + float(result[9]) + 
+                float(result[10]) + float(result[11]) + float(result[12]) +
+                float(result[13]) + float(result[14]) + float(result[15]) + float(result[16])  # Incluir benefícios no total
+            )
         },
         
         # Seção 4: Encargos Trabalhistas
         "encargos_trabalhistas": {
-            "inss": float(result[13]),
-            "irrf": float(result[14]),
-            "fgts": float(result[15]),
-            "total": float(result[13]) + float(result[14]) + float(result[15])
+            "inss": float(result[17]),
+            "irrf": float(result[18]),
+            "fgts": float(result[19]),
+            "total": float(result[17]) + float(result[18]) + float(result[19])
         },
         
         # Seção 5: Horas Extras
         "horas_extras": {
-            "dsr_diurno": float(result[16]),
-            "he50_diurno": float(result[17]),
-            "he100_diurno": float(result[18]),
-            "adicional_noturno": float(result[19]),
-            "dsr_noturno": float(result[20]),
-            "he50_noturno": float(result[21]),
-            "he100_noturno": float(result[22]),
-            "total": float(result[16]) + float(result[17]) + float(result[18]) + float(result[19]) + float(result[20]) + float(result[21]) + float(result[22])
+            "dsr_diurno": float(result[20]),
+            "he50_diurno": float(result[21]),
+            "he100_diurno": float(result[22]),
+            "adicional_noturno": float(result[23]),
+            "dsr_noturno": float(result[24]),
+            "he50_noturno": float(result[25]),
+            "he100_noturno": float(result[26]),
+            "total": float(result[20]) + float(result[21]) + float(result[22]) + float(result[23]) + float(result[24]) + float(result[25]) + float(result[26])
         },
         
         # Seção 6: Atestados e Faltas
         "atestados_faltas": {
-            "horas_faltas": float(result[23]),
-            "atestados_medicos": float(result[24]),
-            "total": float(result[23]) + float(result[24])
+            "horas_faltas": float(result[27]),
+            "atestados_medicos": float(result[28]),
+            "total": float(result[27]) + float(result[28])
         },
         
         # Seção 7: Empréstimos
         "emprestimos": {
-            "emprestimo_trabalhador": float(result[25]),
-            "adiantamentos": float(result[26]),
-            "total": float(result[25]) + float(result[26])
+            "emprestimo_trabalhador": float(result[29]),
+            "adiantamentos": float(result[30]),
+            "total": float(result[29]) + float(result[30])
         }
     }
 

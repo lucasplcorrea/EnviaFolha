@@ -10,10 +10,14 @@ import {
   XCircleIcon,
   TrashIcon,
   BuildingOfficeIcon,
-  UserPlusIcon
+  UserPlusIcon,
+  GiftIcon
 } from '@heroicons/react/24/outline';
 
 const PayrollDataProcessor = () => {
+  const [activeTab, setActiveTab] = useState('payroll'); // 'payroll' ou 'benefits'
+  
+  // Estados para CSVs de folha
   const [periods, setPeriods] = useState([]);
   const [csvFiles, setCsvFiles] = useState([]);
   const [csvDivision, setCsvDivision] = useState('0060');
@@ -21,14 +25,26 @@ const PayrollDataProcessor = () => {
   const [selectedPeriod, setSelectedPeriod] = useState('');
   const [csvUploading, setCsvUploading] = useState(false);
   const [csvResult, setCsvResult] = useState(null);
+  const [processingHistory, setProcessingHistory] = useState([]);
+  
+  // Estados para benefícios
+  const [benefitsPeriods, setBenefitsPeriods] = useState([]);
+  const [xlsxFile, setXlsxFile] = useState(null);
+  const [xlsxYear, setXlsxYear] = useState(new Date().getFullYear());
+  const [xlsxMonth, setXlsxMonth] = useState(new Date().getMonth() + 1);
+  const [xlsxCompany, setXlsxCompany] = useState('0060');
+  const [xlsxUploading, setXlsxUploading] = useState(false);
+  const [xlsxResult, setXlsxResult] = useState(null);
+  
+  // Estados para modal
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [periodToDelete, setPeriodToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
-  const [processingHistory, setProcessingHistory] = useState([]);
 
   useEffect(() => {
     loadPeriods();
     loadProcessingHistory();
+    loadBenefitsPeriods();
   }, []);
 
   const loadPeriods = async () => {
@@ -38,6 +54,15 @@ const PayrollDataProcessor = () => {
     } catch (error) {
       toast.error('Erro ao carregar períodos');
       console.error('Erro ao carregar períodos:', error);
+    }
+  };
+
+  const loadBenefitsPeriods = async () => {
+    try {
+      const response = await api.get('/benefits/periods');
+      setBenefitsPeriods(response.data.periods || []);
+    } catch (error) {
+      console.error('Erro ao carregar períodos de benefícios:', error);
     }
   };
 
@@ -53,7 +78,7 @@ const PayrollDataProcessor = () => {
   };
 
   const confirmDeletePeriod = (period) => {
-    setPeriodToDelete(period);
+    setPeriodToDelete({ ...period, type: 'payroll' });
     setShowDeleteModal(true);
   };
 
@@ -62,13 +87,24 @@ const PayrollDataProcessor = () => {
 
     setDeleting(true);
     try {
-      const response = await api.delete(`/payroll/periods/${periodToDelete.id}`);
+      // Determinar endpoint baseado no tipo
+      const endpoint = periodToDelete.type === 'benefits' 
+        ? `/benefits/periods/${periodToDelete.id}`
+        : `/payroll/periods/${periodToDelete.id}`;
+      
+      const response = await api.delete(endpoint);
       
       if (response.data.success) {
         toast.success(`Período "${periodToDelete.period_name}" deletado com sucesso!`);
         setShowDeleteModal(false);
         setPeriodToDelete(null);
-        loadPeriods();
+        
+        // Recarregar lista apropriada
+        if (periodToDelete.type === 'benefits') {
+          loadBenefitsPeriods();
+        } else {
+          loadPeriods();
+        }
       } else {
         toast.error(response.data.error || 'Erro ao deletar período');
       }
@@ -171,6 +207,98 @@ const PayrollDataProcessor = () => {
     }
   };
 
+  // ========================================
+  // FUNÇÕES DE BENEFÍCIOS
+  // ========================================
+  
+  const handleXlsxFileSelect = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.XLSX')) {
+      toast.error('Por favor, selecione apenas arquivos XLSX');
+      return;
+    }
+
+    setXlsxFile(file);
+    setXlsxResult(null);
+  };
+
+  const handleXlsxUpload = async () => {
+    if (!xlsxFile) {
+      toast.error('Selecione um arquivo XLSX');
+      return;
+    }
+
+    setXlsxUploading(true);
+    setXlsxResult(null);
+
+    try {
+      toast.loading('Processando arquivo de benefícios...', { id: 'xlsx-upload' });
+
+      const formData = new FormData();
+      formData.append('file', xlsxFile);
+      formData.append('year', xlsxYear);
+      formData.append('month', xlsxMonth);
+      formData.append('company', xlsxCompany);
+
+      const response = await api.post('/benefits/upload-xlsx', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      const result = response.data;
+
+      if (result.success) {
+        toast.success('Benefícios processados com sucesso!', { id: 'xlsx-upload' });
+        setXlsxResult(result);
+        loadBenefitsPeriods();
+        setXlsxFile(null);
+      } else {
+        toast.error(result.error || 'Erro ao processar benefícios', { id: 'xlsx-upload' });
+        setXlsxResult(result);
+      }
+    } catch (error) {
+      console.error('Erro ao fazer upload de XLSX:', error);
+      toast.error(error.response?.data?.error || 'Erro ao processar benefícios', { id: 'xlsx-upload' });
+      setXlsxResult({ 
+        success: false, 
+        error: error.response?.data?.error || error.message 
+      });
+    } finally {
+      setXlsxUploading(false);
+    }
+  };
+
+  const confirmDeleteBenefitsPeriod = (period) => {
+    setPeriodToDelete({ ...period, type: 'benefits' });
+    setShowDeleteModal(true);
+  };
+
+  const handleDeleteBenefitsPeriod = async () => {
+    if (!periodToDelete || periodToDelete.type !== 'benefits') return;
+
+    setDeleting(true);
+    try {
+      const response = await api.delete(`/benefits/periods/${periodToDelete.id}`);
+      
+      if (response.data.success) {
+        toast.success(`Período de benefícios "${periodToDelete.period_name}" deletado!`);
+        setShowDeleteModal(false);
+        setPeriodToDelete(null);
+        loadBenefitsPeriods();
+      } else {
+        toast.error(response.data.error || 'Erro ao deletar período');
+      }
+    } catch (error) {
+      console.error('Erro ao deletar período de benefícios:', error);
+      toast.error(error.response?.data?.error || 'Erro ao deletar período');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -178,18 +306,49 @@ const PayrollDataProcessor = () => {
         <div className="flex items-center space-x-3">
           <FolderOpenIcon className="h-8 w-8 text-blue-600" />
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Processamento de Folha de Pagamento</h1>
-            <p className="text-gray-600">Importe arquivos CSV da pasta Analíticos</p>
+            <h1 className="text-2xl font-bold text-gray-900">Processamento de Dados RH</h1>
+            <p className="text-gray-600">Importe arquivos de folha de pagamento e benefícios</p>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Upload Section */}
-        <div className="lg:col-span-2 bg-white shadow rounded-lg p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-6">Upload de Arquivo CSV</h2>
+      {/* Tabs */}
+      <div className="border-b border-gray-200">
+        <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+          <button
+            onClick={() => setActiveTab('payroll')}
+            className={`${
+              activeTab === 'payroll'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 transition-colors`}
+          >
+            <DocumentArrowUpIcon className="h-5 w-5" />
+            <span>Folha de Pagamento (CSV)</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('benefits')}
+            className={`${
+              activeTab === 'benefits'
+                ? 'border-green-500 text-green-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 transition-colors`}
+          >
+            <GiftIcon className="h-5 w-5" />
+            <span>Benefícios iFood (XLSX)</span>
+          </button>
+        </nav>
+      </div>
+
+      {/* Tab Content - Payroll */}
+      {activeTab === 'payroll' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Upload Section */}
+            <div className="lg:col-span-2 bg-white shadow rounded-lg p-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-6">Upload de Arquivo CSV</h2>
           
-          <div className="space-y-5">
+              <div className="space-y-5">
             {/* File Upload */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -490,6 +649,222 @@ const PayrollDataProcessor = () => {
           </table>
         </div>
       </div>
+        </div>
+      )}
+
+      {/* Tab Content - Benefits */}
+      {activeTab === 'benefits' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Upload Section */}
+            <div className="lg:col-span-2 bg-white shadow rounded-lg p-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-6 flex items-center">
+                <GiftIcon className="h-6 w-6 mr-2 text-green-600" />
+                Upload de Benefícios iFood
+              </h2>
+              
+              <div className="space-y-5">
+                {/* Company Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <BuildingOfficeIcon className="inline h-4 w-4 mr-1" />
+                    Empresa
+                  </label>
+                  <select
+                    value={xlsxCompany}
+                    onChange={(e) => setXlsxCompany(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-green-500"
+                  >
+                    <option value="0060">0060 - Empreendimentos</option>
+                    <option value="0059">0059 - Infraestrutura</option>
+                  </select>
+                </div>
+
+                {/* Month and Year Selection */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Mês
+                    </label>
+                    <select
+                      value={xlsxMonth}
+                      onChange={(e) => setXlsxMonth(parseInt(e.target.value))}
+                      className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    >
+                      {[...Array(12)].map((_, i) => (
+                        <option key={i + 1} value={i + 1}>
+                          {new Date(2000, i).toLocaleDateString('pt-BR', { month: 'long' })}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Ano
+                    </label>
+                    <select
+                      value={xlsxYear}
+                      onChange={(e) => setXlsxYear(parseInt(e.target.value))}
+                      className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    >
+                      {[...Array(5)].map((_, i) => {
+                        const year = new Date().getFullYear() - 2 + i;
+                        return <option key={year} value={year}>{year}</option>;
+                      })}
+                    </select>
+                  </div>
+                </div>
+
+                {/* File Upload */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Arquivo XLSX
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="file"
+                      accept=".xlsx,.XLSX"
+                      onChange={handleXlsxFileSelect}
+                      className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
+                    />
+                    {xlsxFile && (
+                      <button
+                        onClick={() => {
+                          setXlsxFile(null);
+                          setXlsxResult(null);
+                        }}
+                        className="text-red-600 hover:text-red-800"
+                      >
+                        <XCircleIcon className="h-5 w-5" />
+                      </button>
+                    )}
+                  </div>
+                  {xlsxFile && (
+                    <p className="mt-2 text-sm text-green-600">
+                      ✓ Arquivo selecionado: {xlsxFile.name} ({(xlsxFile.size / 1024).toFixed(2)} KB)
+                    </p>
+                  )}
+                </div>
+
+                {/* Upload Button */}
+                <button
+                  onClick={handleXlsxUpload}
+                  disabled={!xlsxFile || xlsxUploading}
+                  className={`w-full flex items-center justify-center space-x-2 py-3 px-4 rounded-lg font-medium transition-all ${
+                    !xlsxFile || xlsxUploading
+                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                      : 'bg-green-600 text-white hover:bg-green-700 shadow-md hover:shadow-lg'
+                  }`}
+                >
+                  {xlsxUploading ? (
+                    <>
+                      <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      <span>Processando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <DocumentArrowUpIcon className="h-5 w-5" />
+                      <span>Processar Benefícios</span>
+                    </>
+                  )}
+                </button>
+
+                {/* Result Display */}
+                {xlsxResult && (
+                  <div className={`p-4 rounded-lg border ${
+                    xlsxResult.success 
+                      ? 'bg-green-50 border-green-200' 
+                      : 'bg-red-50 border-red-200'
+                  }`}>
+                    <div className="flex items-start space-x-3">
+                      {xlsxResult.success ? (
+                        <CheckCircleIcon className="h-6 w-6 text-green-600 flex-shrink-0 mt-0.5" />
+                      ) : (
+                        <XCircleIcon className="h-6 w-6 text-red-600 flex-shrink-0 mt-0.5" />
+                      )}
+                      <div className="flex-1">
+                        <h4 className={`font-medium ${xlsxResult.success ? 'text-green-900' : 'text-red-900'}`}>
+                          {xlsxResult.success ? 'Processamento Concluído!' : 'Erro no Processamento'}
+                        </h4>
+                        {xlsxResult.success && (
+                          <div className="mt-2 text-sm text-green-800 space-y-1">
+                            <p>• Total de linhas: {xlsxResult.total_rows}</p>
+                            <p>• Processadas: {xlsxResult.processed_rows}</p>
+                            <p>• Erros: {xlsxResult.error_rows || 0}</p>
+                            {xlsxResult.period_name && (
+                              <p>• Período: {xlsxResult.period_name}</p>
+                            )}
+                          </div>
+                        )}
+                        {xlsxResult.error && (
+                          <p className="mt-2 text-sm text-red-800">{xlsxResult.error}</p>
+                        )}
+                        {xlsxResult.warnings && xlsxResult.warnings.length > 0 && (
+                          <div className="mt-3 p-2 bg-yellow-50 rounded text-xs text-yellow-800 max-h-40 overflow-y-auto">
+                            <p className="font-medium mb-1">Avisos:</p>
+                            {xlsxResult.warnings.map((warn, idx) => (
+                              <p key={idx}>• {warn}</p>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Benefits Periods List */}
+            <div className="bg-white shadow rounded-lg p-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Períodos de Benefícios</h2>
+              
+              <div className="space-y-2 max-h-[600px] overflow-y-auto">
+                {benefitsPeriods.map((period) => (
+                  <div key={period.id} className="border rounded-lg p-3 hover:bg-gray-50 transition-colors">
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-medium text-gray-900 text-sm">{period.period_name}</h3>
+                          {period.company_name && (
+                            <span className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded-full ${
+                              period.company === '0060' 
+                                ? 'bg-blue-100 text-blue-800' 
+                                : 'bg-purple-100 text-purple-800'
+                            }`}>
+                              {period.company_name}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {period.month}/{period.year} • {period.total_records || 0} registro(s)
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => confirmDeleteBenefitsPeriod(period)}
+                        className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"
+                        title="Deletar Período"
+                      >
+                        <TrashIcon className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                
+                {benefitsPeriods.length === 0 && (
+                  <div className="text-center py-8 text-gray-500">
+                    <GiftIcon className="mx-auto h-12 w-12 text-gray-300" />
+                    <p className="mt-2 text-sm">Nenhum período de benefícios encontrado</p>
+                    <p className="text-xs">Faça upload de um XLSX para criar</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {showDeleteModal && periodToDelete && (

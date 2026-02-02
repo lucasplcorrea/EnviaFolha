@@ -1406,6 +1406,13 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         elif path.startswith('/api/v1/payroll/periods/'):
             period_id = path.split('/')[-1]
             self.handle_payroll_period_summary(period_id)
+        
+        # Rotas de benefícios
+        elif path == '/api/v1/benefits/periods':
+            self.handle_benefits_periods_list()
+        elif path.startswith('/api/v1/benefits/periods/'):
+            period_id = path.split('/')[-1]
+            self.handle_benefits_period_detail(period_id)
         elif path.startswith('/api/v1/employees/'):
             # IMPORTANTE: Verificar PRIMEIRO se é rota de leaves
             parts = path.split('/')
@@ -1590,6 +1597,9 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         elif path == '/api/v1/payroll/upload-csv':
             self.handle_upload_payroll_csv()  # 🆕 Novo endpoint para CSVs da pasta Analiticos
             return
+        elif path == '/api/v1/benefits/upload-xlsx':
+            self.handle_upload_benefits_xlsx()  # Upload de XLSX de benefícios
+            return
         elif path == '/api/v1/uploads/csv':
             self.handle_csv_file_upload()  # 🆕 Upload de arquivo CSV
             return
@@ -1670,6 +1680,9 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         elif path.startswith('/api/v1/payroll/periods/'):
             period_id = path.split('/')[-1]
             self.handle_delete_payroll_period(period_id)
+        elif path.startswith('/api/v1/benefits/periods/'):
+            period_id = path.split('/')[-1]
+            self.handle_delete_benefits_period(period_id)
         else:
             self.send_json_response({"error": "Endpoint não encontrado"}, 404)
     
@@ -7187,6 +7200,333 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"❌ Erro ao invalidar cache: {e}")
             self.send_json_response({"error": str(e)}, 500)
+    
+    # ========================================
+    # HANDLERS DE BENEFÍCIOS (iFood)
+    # ========================================
+    
+    def handle_upload_benefits_xlsx(self):
+        """
+        Upload e processamento de arquivo XLSX de benefícios
+        Endpoint: POST /api/v1/benefits/upload-xlsx
+        """
+        try:
+            print("📊 === UPLOAD DE XLSX DE BENEFÍCIOS ===")
+            
+            # Parse multipart form data
+            content_type = self.headers.get('Content-Type', '')
+            if not content_type.startswith('multipart/form-data'):
+                self.send_json_response({"error": "Content-Type deve ser multipart/form-data"}, 400)
+                return
+            
+            # Get boundary
+            boundary = None
+            for part in content_type.split(';'):
+                if 'boundary=' in part:
+                    boundary = part.split('boundary=')[1].strip()
+                    break
+            
+            if not boundary:
+                self.send_json_response({"error": "Boundary não encontrado"}, 400)
+                return
+            
+            # Read body
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            
+            # Parse multipart data manualmente
+            import re
+            import tempfile
+            import shutil
+            
+            # Converter boundary para bytes
+            boundary_bytes = f'--{boundary}'.encode()
+            
+            # Dividir por boundary
+            parts = body.split(boundary_bytes)
+            
+            file_data = None
+            year = None
+            month = None
+            company = '0060'
+            
+            for part in parts:
+                if not part or part == b'--\r\n' or part == b'--':
+                    continue
+                    
+                # Procurar por headers
+                if b'Content-Disposition' in part:
+                    # Extrair nome do campo
+                    if b'name="file"' in part:
+                        # Extrair dados do arquivo
+                        # Formato: headers\r\n\r\nbody
+                        split_point = part.find(b'\r\n\r\n')
+                        if split_point != -1:
+                            file_data = part[split_point + 4:].rstrip(b'\r\n')
+                    
+                    elif b'name="year"' in part:
+                        split_point = part.find(b'\r\n\r\n')
+                        if split_point != -1:
+                            year = int(part[split_point + 4:].strip())
+                    
+                    elif b'name="month"' in part:
+                        split_point = part.find(b'\r\n\r\n')
+                        if split_point != -1:
+                            month = int(part[split_point + 4:].strip())
+                    
+                    elif b'name="company"' in part:
+                        split_point = part.find(b'\r\n\r\n')
+                        if split_point != -1:
+                            company = part[split_point + 4:].strip().decode('utf-8')
+            
+            # Validar dados extraídos
+            if not file_data:
+                self.send_json_response({"error": "Arquivo não enviado"}, 400)
+                return
+            
+            if not year or not month:
+                self.send_json_response({"error": "Ano e mês são obrigatórios"}, 400)
+                return
+            
+            # Validar parâmetros
+            if not (1 <= month <= 12):
+                self.send_json_response({"error": "Mês deve estar entre 1 e 12"}, 400)
+                return
+            
+            if company not in ['0060', '0059']:
+                self.send_json_response({"error": "Empresa deve ser '0060' ou '0059'"}, 400)
+                return
+            
+            # Salvar arquivo temporariamente
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+                tmp_file.write(file_data)
+                tmp_filepath = tmp_file.name
+            
+            print(f"📁 Arquivo temporário: {tmp_filepath}")
+            print(f"📅 Período: {month}/{year}")
+            print(f"🏢 Empresa: {company}")
+            
+            try:
+                # Criar sessão do banco
+                db = SessionLocal()
+                
+                # Obter user_id do usuário autenticado
+                user_id = None
+                authenticated_user = self.get_authenticated_user(db)
+                if authenticated_user:
+                    user_id = authenticated_user.id
+                    print(f"👤 Processado por: {authenticated_user.username} (ID: {user_id})")
+                
+                # Processar arquivo
+                from app.services.benefits_xlsx_processor import BenefitsXLSXProcessor
+                processor = BenefitsXLSXProcessor(db, user_id=user_id)
+                
+                result = processor.process_xlsx_file(
+                    file_path=tmp_filepath,
+                    year=year,
+                    month=month,
+                    company=company
+                )
+                
+                db.close()
+                
+                # Remover arquivo temporário
+                import os
+                os.unlink(tmp_filepath)
+                
+                if result['success']:
+                    print(f"✅ XLSX processado com sucesso!")
+                    self.send_json_response(result, 200)
+                else:
+                    print(f"❌ Erro ao processar XLSX: {result.get('error')}")
+                    self.send_json_response(result, 400)
+                    
+            except Exception as e:
+                # Limpar arquivo temporário em caso de erro
+                import os
+                if os.path.exists(tmp_filepath):
+                    os.unlink(tmp_filepath)
+                raise
+                
+        except Exception as e:
+            print(f"❌ Erro crítico ao processar XLSX: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({
+                "success": False,
+                "error": f"Erro interno: {str(e)}"
+            }, 500)
+    
+    def handle_benefits_periods_list(self):
+        """Lista períodos de benefícios"""
+        try:
+            if SessionLocal:
+                from app.models.payroll import BenefitsPeriod
+                
+                db = SessionLocal()
+                periods = db.query(BenefitsPeriod).filter(
+                    BenefitsPeriod.is_active == True
+                ).order_by(
+                    BenefitsPeriod.year.desc(), 
+                    BenefitsPeriod.month.desc()
+                ).all()
+                
+                periods_data = []
+                for period in periods:
+                    # Mapear código da empresa para nome
+                    company_name = "Empreendimentos" if period.company == "0060" else "Infraestrutura" if period.company == "0059" else period.company
+                    
+                    # Contar registros
+                    from app.models.payroll import BenefitsData
+                    total_records = db.query(BenefitsData).filter(
+                        BenefitsData.period_id == period.id
+                    ).count()
+                    
+                    periods_data.append({
+                        "id": period.id,
+                        "year": period.year,
+                        "month": period.month,
+                        "period_name": period.period_name,
+                        "company": period.company,
+                        "company_name": company_name,
+                        "description": period.description,
+                        "total_records": total_records,
+                        "created_at": period.created_at.isoformat() if hasattr(period, 'created_at') and period.created_at else None
+                    })
+                
+                db.close()
+                self.send_json_response({"periods": periods_data, "total": len(periods_data)})
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao listar períodos de benefícios: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_benefits_period_detail(self, period_id: str):
+        """Detalhes de um período de benefícios"""
+        try:
+            if SessionLocal:
+                from app.models.payroll import BenefitsPeriod, BenefitsData, BenefitsProcessingLog
+                from app.models.employee import Employee
+                
+                db = SessionLocal()
+                period = db.query(BenefitsPeriod).filter(BenefitsPeriod.id == int(period_id)).first()
+                
+                if not period:
+                    db.close()
+                    self.send_json_response({"error": "Período não encontrado"}, 404)
+                    return
+                
+                # Buscar dados de benefícios
+                benefits_records = db.query(BenefitsData, Employee).join(
+                    Employee, BenefitsData.employee_id == Employee.id
+                ).filter(BenefitsData.period_id == period.id).all()
+                
+                records_data = []
+                for benefit, employee in benefits_records:
+                    records_data.append({
+                        "id": benefit.id,
+                        "employee_id": employee.id,
+                        "employee_name": employee.name,
+                        "cpf": benefit.cpf,
+                        "refeicao": float(benefit.refeicao) if benefit.refeicao else 0,
+                        "alimentacao": float(benefit.alimentacao) if benefit.alimentacao else 0,
+                        "mobilidade": float(benefit.mobilidade) if benefit.mobilidade else 0,
+                        "livre": float(benefit.livre) if benefit.livre else 0,
+                        "total": benefit.get_total_benefits()
+                    })
+                
+                # Buscar logs de processamento
+                logs = db.query(BenefitsProcessingLog).filter(
+                    BenefitsProcessingLog.period_id == period.id
+                ).order_by(BenefitsProcessingLog.created_at.desc()).all()
+                
+                logs_data = []
+                for log in logs:
+                    logs_data.append({
+                        "id": log.id,
+                        "filename": log.filename,
+                        "status": log.status,
+                        "total_rows": log.total_rows,
+                        "processed_rows": log.processed_rows,
+                        "error_rows": log.error_rows,
+                        "processing_time": float(log.processing_time) if log.processing_time else 0,
+                        "created_at": log.created_at.isoformat() if log.created_at else None
+                    })
+                
+                db.close()
+                
+                self.send_json_response({
+                    "period": {
+                        "id": period.id,
+                        "year": period.year,
+                        "month": period.month,
+                        "period_name": period.period_name,
+                        "company": period.company,
+                        "company_name": "Empreendimentos" if period.company == "0060" else "Infraestrutura",
+                        "description": period.description
+                    },
+                    "records": records_data,
+                    "logs": logs_data,
+                    "total_records": len(records_data)
+                })
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar detalhes do período: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_delete_benefits_period(self, period_id: str):
+        """Deleta um período de benefícios e todos os dados relacionados"""
+        try:
+            print(f"🗑️ Deletando período de benefícios ID: {period_id}")
+            
+            if SessionLocal:
+                from app.models.payroll import BenefitsPeriod
+                
+                db = SessionLocal()
+                period = db.query(BenefitsPeriod).filter(BenefitsPeriod.id == int(period_id)).first()
+                
+                if not period:
+                    db.close()
+                    self.send_json_response({
+                        "success": False,
+                        "error": "Período não encontrado"
+                    }, 404)
+                    return
+                
+                period_name = period.period_name
+                
+                # Deletar período (cascade vai deletar dados e logs)
+                db.delete(period)
+                db.commit()
+                db.close()
+                
+                print(f"✅ Período deletado: {period_name}")
+                self.send_json_response({
+                    "success": True,
+                    "message": f"Período '{period_name}' deletado com sucesso"
+                })
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao deletar período: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({
+                "success": False,
+                "error": f"Erro interno: {str(e)}"
+            }, 500)
 
 if __name__ == "__main__":
     import time

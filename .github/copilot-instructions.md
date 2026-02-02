@@ -37,15 +37,22 @@ frontend/src/
 
 ### Development Commands
 ```bash
-# Backend development
-cd backend && uvicorn main:app --reload
+# Backend development (IMPORTANT: Use main.py, NOT main_legacy.py)
+cd backend && python main.py
 
 # Frontend development  
-cd frontend && npm start
+cd frontend && npm run start
 
 # Full stack with Docker
 docker-compose up --build
 ```
+
+**⚠️ CRITICAL STARTUP NOTES:**
+- **Backend**: ALWAYS use `python main.py` (NOT main_legacy.py or uvicorn)
+- **Frontend**: ALWAYS use `npm run start` (NOT just `npm start`)
+- The backend runs on `http://localhost:8002` by default
+- The frontend runs on `http://localhost:3000` by default
+- main_legacy.py is a backup file, do NOT use it for development
 
 ### Database Management
 - SQLAlchemy models auto-create tables on startup via `Base.metadata.create_all()`
