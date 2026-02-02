@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.employee import Employee
-from app.models.benefits import BenefitsPeriod, BenefitsData, BenefitsProcessingLog
+from app.models.payroll import BenefitsPeriod, BenefitsData, BenefitsProcessingLog
 
 logger = logging.getLogger(__name__)
 
