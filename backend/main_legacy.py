@@ -3583,20 +3583,11 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 if period_filter != 'all':
                     if period_filter == 'mensal':
                         periods_query = periods_query.filter(
-                            ~PayrollPeriod.period_name.ilike('%13%'),
-                            ~PayrollPeriod.period_name.ilike('%férias%'),
-                            ~PayrollPeriod.period_name.ilike('%ferias%')
+                            ~PayrollPeriod.period_name.ilike('%13%')
                         )
                     elif period_filter == '13':
                         periods_query = periods_query.filter(
                             PayrollPeriod.period_name.ilike('%13%')
-                        )
-                    elif period_filter == 'ferias':
-                        periods_query = periods_query.filter(
-                            func.or_(
-                                PayrollPeriod.period_name.ilike('%férias%'),
-                                PayrollPeriod.period_name.ilike('%ferias%')
-                            )
                         )
                 
                 periods = periods_query.all()

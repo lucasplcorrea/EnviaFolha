@@ -105,7 +105,6 @@ const PeriodComparison = () => {
             <option value="all">Todos</option>
             <option value="mensal">Mensal</option>
             <option value="13">13º Salário</option>
-            <option value="ferias">Férias</option>
           </select>
           
           <label className="text-sm font-medium text-gray-700">Empresa:</label>
