@@ -5587,6 +5587,279 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json_response({"error": str(e)}, 500)
     
     def handle_indicators_headcount(self):
+        """Retorna métricas de headcount com evolução temporal e distribuições"""
+        try:
+            # Parse query params
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            company = query_params.get('company', ['all'])[0]
+            division = query_params.get('division', ['all'])[0]
+            year = query_params.get('year', [None])[0]
+            month = query_params.get('month', [None])[0]
+            months_range = int(query_params.get('months_range', ['12'])[0])  # Últimos N meses
+            
+            if SessionLocal:
+                from app.models.payroll import PayrollPeriod, PayrollData
+                from app.models.employee import Employee
+                from sqlalchemy import func, or_, and_
+                from decimal import Decimal
+                from datetime import date, datetime
+                from dateutil.relativedelta import relativedelta
+                
+                db = SessionLocal()
+                
+                # Se não especificou período, usar o mais recente
+                if not year or not month:
+                    latest_period = db.query(PayrollPeriod).order_by(
+                        PayrollPeriod.year.desc(),
+                        PayrollPeriod.month.desc()
+                    ).first()
+                    
+                    if not latest_period:
+                        db.close()
+                        self.send_json_response({"error": "Nenhum período encontrado"}, 404)
+                        return
+                    
+                    year = latest_period.year
+                    month = latest_period.month
+                else:
+                    year = int(year)
+                    month = int(month)
+                
+                # Calcular período atual
+                current_date = date(year, month, 1)
+                
+                # MÉTRICA ATUAL (mês selecionado)
+                current_metrics = self._get_headcount_for_period(db, year, month, company, division)
+                
+                # EVOLUÇÃO TEMPORAL (últimos N meses)
+                evolution_data = []
+                for i in range(months_range - 1, -1, -1):
+                    period_date = current_date - relativedelta(months=i)
+                    p_year = period_date.year
+                    p_month = period_date.month
+                    
+                    metrics = self._get_headcount_for_period(db, p_year, p_month, company, division)
+                    evolution_data.append({
+                        'year': p_year,
+                        'month': p_month,
+                        'month_name': period_date.strftime('%b/%y'),
+                        'headcount': metrics['headcount'],
+                        'total_cost': metrics['total_cost'],
+                        'avg_cost_per_employee': metrics['avg_cost_per_employee']
+                    })
+                
+                # DISTRIBUIÇÃO POR EMPRESA (só se company='all')
+                by_company = current_metrics.get('by_company', [])
+                
+                # TOP 10 SETORES
+                top_divisions = current_metrics.get('top_divisions', [])[:10]
+                
+                # TOP 10 CARGOS
+                top_positions = self._get_top_positions(
+                    db, year, month, company, division, limit=10
+                )
+                
+                result = {
+                    'filters': {
+                        'year': year,
+                        'month': month,
+                        'company': company,
+                        'division': division,
+                        'months_range': months_range
+                    },
+                    'current': {
+                        'headcount': current_metrics['headcount'],
+                        'total_cost': current_metrics['total_cost'],
+                        'avg_cost_per_employee': current_metrics['avg_cost_per_employee'],
+                        'variation_vs_previous': current_metrics['variation_vs_previous']
+                    },
+                    'evolution': evolution_data,
+                    'by_company': by_company,
+                    'top_divisions': top_divisions,
+                    'top_positions': top_positions
+                }
+                
+                db.close()
+                self.send_json_response(result)
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar headcount: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": str(e)}, 500)
+    
+    def _get_headcount_for_period(self, db, year, month, company='all', division='all'):
+        """Helper para calcular headcount de um período específico"""
+        from app.models.payroll import PayrollPeriod, PayrollData
+        from app.models.employee import Employee
+        from decimal import Decimal
+        
+        # Buscar períodos do mês/ano filtrado por empresa
+        period_query = db.query(PayrollPeriod).filter(
+            PayrollPeriod.year == year,
+            PayrollPeriod.month == month
+        )
+        
+        if company != 'all':
+            period_query = period_query.filter(PayrollPeriod.company == company)
+        
+        periods = period_query.all()
+        
+        if not periods:
+            return {
+                'headcount': 0,
+                'total_cost': 0.0,
+                'avg_cost_per_employee': 0.0,
+                'variation_vs_previous': None,
+                'by_company': [],
+                'top_divisions': []
+            }
+        
+        period_ids = [p.id for p in periods]
+        
+        # Buscar dados de folha
+        payroll_records = db.query(PayrollData).filter(
+            PayrollData.period_id.in_(period_ids)
+        ).all()
+        
+        unique_employee_ids = set([r.employee_id for r in payroll_records])
+        
+        # Buscar dados dos employees
+        employee_map = {}
+        if unique_employee_ids:
+            employees = db.query(Employee).filter(
+                Employee.id.in_(unique_employee_ids)
+            ).all()
+            employee_map = {e.id: e for e in employees}
+        
+        # Filtrar por departamento se especificado
+        if division != 'all':
+            dept_employee_ids = [e.id for e in employee_map.values() if e.department == division]
+            payroll_records = [r for r in payroll_records if r.employee_id in dept_employee_ids]
+            unique_employee_ids = set([r.employee_id for r in payroll_records])
+        
+        headcount = len(unique_employee_ids)
+        total_cost = sum([Decimal(str(r.net_salary or 0)) for r in payroll_records])
+        avg_cost = float(total_cost / headcount) if headcount > 0 else 0.0
+        
+        # Calcular variação vs mês anterior
+        if month == 1:
+            prev_year = year - 1
+            prev_month = 12
+        else:
+            prev_year = year
+            prev_month = month - 1
+        
+        prev_metrics = self._get_headcount_for_period(db, prev_year, prev_month, company, division)
+        prev_headcount = prev_metrics['headcount']
+        variation = None
+        if prev_headcount > 0:
+            variation = ((headcount - prev_headcount) / prev_headcount) * 100
+        
+        # Distribuição por empresa
+        by_company = []
+        if company == 'all':
+            periods_by_company = {}
+            for p in periods:
+                if p.company not in periods_by_company:
+                    periods_by_company[p.company] = []
+                periods_by_company[p.company].append(p.id)
+            
+            for comp_code, comp_period_ids in periods_by_company.items():
+                comp_records = [r for r in payroll_records if r.period_id in comp_period_ids]
+                comp_count = len(set([r.employee_id for r in comp_records]))
+                comp_cost = sum([Decimal(str(r.net_salary or 0)) for r in comp_records])
+                by_company.append({
+                    'company': comp_code,
+                    'headcount': comp_count,
+                    'total_cost': float(comp_cost)
+                })
+        
+        # Top setores
+        employees_by_division = {}
+        for emp_id in unique_employee_ids:
+            emp = employee_map.get(emp_id)
+            if emp:
+                div = emp.department or 'Não informado'
+                if div not in employees_by_division:
+                    employees_by_division[div] = set()
+                employees_by_division[div].add(emp_id)
+        
+        top_divisions = sorted(
+            [{'division': k, 'count': len(v)} for k, v in employees_by_division.items()],
+            key=lambda x: x['count'],
+            reverse=True
+        )
+        
+        return {
+            'headcount': headcount,
+            'total_cost': float(total_cost),
+            'avg_cost_per_employee': avg_cost,
+            'variation_vs_previous': float(variation) if variation is not None else None,
+            'by_company': by_company,
+            'top_divisions': top_divisions
+        }
+    
+    def _get_top_positions(self, db, year, month, company='all', division='all', limit=10):
+        """Helper para calcular top cargos"""
+        from app.models.payroll import PayrollPeriod, PayrollData
+        from app.models.employee import Employee
+        
+        # Buscar períodos
+        period_query = db.query(PayrollPeriod).filter(
+            PayrollPeriod.year == year,
+            PayrollPeriod.month == month
+        )
+        
+        if company != 'all':
+            period_query = period_query.filter(PayrollPeriod.company == company)
+        
+        periods = period_query.all()
+        if not periods:
+            return []
+        
+        period_ids = [p.id for p in periods]
+        
+        # Buscar dados de folha
+        payroll_records = db.query(PayrollData).filter(
+            PayrollData.period_id.in_(period_ids)
+        ).all()
+        
+        unique_employee_ids = set([r.employee_id for r in payroll_records])
+        
+        # Buscar employees
+        if not unique_employee_ids:
+            return []
+        
+        employees = db.query(Employee).filter(
+            Employee.id.in_(unique_employee_ids)
+        ).all()
+        
+        # Filtrar por departamento se especificado
+        if division != 'all':
+            employees = [e for e in employees if e.department == division]
+        
+        # Agrupar por cargo
+        employees_by_position = {}
+        for emp in employees:
+            pos = emp.position or 'Não informado'
+            if pos not in employees_by_position:
+                employees_by_position[pos] = set()
+            employees_by_position[pos].add(emp.id)
+        
+        # Ordenar e limitar
+        top_positions = sorted(
+            [{'position': k, 'count': len(v)} for k, v in employees_by_position.items()],
+            key=lambda x: x['count'],
+            reverse=True
+        )[:limit]
+        
+        return top_positions
+    
+    def handle_indicators_demographics(self):
         """Retorna métricas de headcount (efetivo)"""
         try:
             from app.services.hr_indicators import HRIndicatorsService
