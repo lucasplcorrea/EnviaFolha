@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import toast from 'react-hot-toast';
+import ExportPDFButton from '../../components/ExportPDFButton';
 
 const Leaves = () => {
   const [loading, setLoading] = useState(true);
@@ -235,7 +236,10 @@ const Leaves = () => {
     <div className="space-y-6">
       {/* Filtros */}
       <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-xl font-semibold text-gray-900 mb-4">🏥 Afastamentos</h2>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-semibold text-gray-900">🏥 Afastamentos</h2>
+          <ExportPDFButton className="no-print" />
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Ano</label>

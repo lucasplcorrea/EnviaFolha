@@ -6,6 +6,7 @@ import {
   CalendarIcon
 } from '@heroicons/react/24/outline';
 import api from '../../services/api';
+import ExportPDFButton from '../../components/ExportPDFButton';
 import toast from 'react-hot-toast';
 import { MetricCard, LoadingSpinner, EmptyState } from './components';
 import {
@@ -161,7 +162,10 @@ const Demographics = () => {
     <div className="space-y-6">
       {/* Filtros */}
       <div className="bg-white rounded-lg shadow p-4">
-        <h2 className="text-lg font-semibold text-gray-900 mb-3">Filtros</h2>
+        <div className="flex justify-between items-center mb-3">
+          <h2 className="text-lg font-semibold text-gray-900">Filtros</h2>
+          <ExportPDFButton className="no-print" />
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Ano</label>

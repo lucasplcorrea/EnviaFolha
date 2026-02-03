@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { UserGroupIcon, ChartBarIcon, CurrencyDollarIcon, ArrowTrendingUpIcon, BuildingOfficeIcon } from '@heroicons/react/24/outline';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
+import ExportPDFButton from '../../components/ExportPDFButton';
 
 export default function Headcount() {
   const [loading, setLoading] = useState(false);
@@ -144,6 +145,7 @@ export default function Headcount() {
             </p>
           )}
         </div>
+        <ExportPDFButton className="no-print" />
       </div>
 
       <div className="bg-white rounded-lg shadow-md p-4">

@@ -25,13 +25,12 @@ const IndicatorsLayout = () => {
     { path: '/indicators/leaves', name: 'Afastamentos', icon: ExclamationTriangleIcon },
     { path: '/indicators/payroll', name: 'Folha de Pagamento', icon: CurrencyDollarIcon },
     { path: '/indicators/period-comparison', name: 'Comparativo Períodos', icon: CalendarDaysIcon },
-    { path: '/indicators/reports', name: 'Relatórios', icon: DocumentArrowDownIcon },
   ];
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen print:min-h-0">
       {/* Header */}
-      <div className={`${config.classes.card} border-b ${config.classes.border} px-6 py-4`}>
+      <div className={`no-print ${config.classes.card} border-b ${config.classes.border} px-6 py-4`}>
         <h1 className={`text-2xl font-bold ${config.classes.text}`}>
           📊 Indicadores de RH
         </h1>
@@ -41,7 +40,7 @@ const IndicatorsLayout = () => {
       </div>
 
       {/* Navigation Tabs */}
-      <div className={`${config.classes.card} border-b ${config.classes.border} px-6`}>
+      <div className={`no-print ${config.classes.card} border-b ${config.classes.border} px-6`}>
         <nav className="flex flex-wrap gap-1 -mb-px">
           {menuItems.map((item) => (
             <NavLink
@@ -64,7 +63,7 @@ const IndicatorsLayout = () => {
       </div>
 
       {/* Content */}
-      <div className="p-6">
+      <div className="p-6 print:p-0">
         <Outlet />
       </div>
     </div>

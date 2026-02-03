@@ -34,8 +34,7 @@ import {
   Tenure,
   Leaves,
   Payroll as PayrollIndicators,
-  PeriodComparison,
-  ReportGenerator
+  PeriodComparison
 } from './pages/indicators';
 
 const queryClient = new QueryClient({
@@ -99,7 +98,6 @@ function AppContent() {
                       <Route path="leaves" element={<Leaves />} />
                       <Route path="payroll" element={<PayrollIndicators />} />
                       <Route path="period-comparison" element={<PeriodComparison />} />
-                      <Route path="reports" element={<ReportGenerator />} />
                     </Route>
                     <Route path="queue-management" element={<ProtectedRoute><QueueManagement /></ProtectedRoute>} />
                     <Route path="reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />

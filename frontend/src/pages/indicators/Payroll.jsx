@@ -3,6 +3,7 @@ import { useTheme } from '../../contexts/ThemeContext';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
 import MultiSelect from '../../components/MultiSelect';
+import ExportPDFButton from '../../components/ExportPDFButton';
 
 /**
  * VERSÃO V2 - REFATORADA
@@ -284,6 +285,7 @@ const PayrollV2 = () => {
             </h2>
             
             <div className="flex items-center gap-3">
+              <ExportPDFButton className="no-print" />
               {totalActiveFilters > 0 && (
                 <>
                   <span className="text-sm text-gray-600 dark:text-gray-400">

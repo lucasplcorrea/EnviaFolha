@@ -11,6 +11,7 @@ import {
 } from '@heroicons/react/24/outline';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
+import ExportPDFButton from '../../components/ExportPDFButton';
 
 const Overview = () => {
   const [loading, setLoading] = useState(true);
@@ -168,6 +169,7 @@ const Overview = () => {
             </p>
           )}
         </div>
+        <ExportPDFButton className="no-print" />
       </div>
 
       {/* Filtros */}

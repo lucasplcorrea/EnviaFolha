@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { UserGroupIcon, UserPlusIcon, UserMinusIcon, ChartBarIcon, CalendarDaysIcon, CalendarIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
+import ExportPDFButton from '../../components/ExportPDFButton';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 function Turnover() {
@@ -213,11 +214,14 @@ function Turnover() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Turnover (Rotatividade)</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Métricas de entrada e saída de colaboradores
-        </p>
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Turnover (Rotatividade)</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Métricas de entrada e saída de colaboradores
+          </p>
+        </div>
+        <ExportPDFButton className="no-print" />
       </div>
       
       {/* Filtros */}

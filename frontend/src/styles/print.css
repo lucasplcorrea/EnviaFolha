@@ -1,0 +1,129 @@
+/* Print Styles - Esconde elementos desnecessários na impressão */
+@media print {
+  /* Ocultar elementos de navegação e UI */
+  .no-print,
+  nav,
+  aside,
+  header:not(.keep-print),
+  button:not(.keep-print),
+  .print-hide,
+  [class*="sidebar"],
+  [class*="Sidebar"],
+  [class*="nav"],
+  [class*="Nav"],
+  [class*="menu"],
+  [class*="Menu"],
+  [class*="navigation"],
+  [role="navigation"],
+  [class*="fixed"],
+  [class*="sticky"] {
+    display: none !important;
+  }
+  
+  /* Garantir que o conteúdo principal ocupe toda a largura */
+  main,
+  .main-content,
+  [role="main"] {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 1cm !important;
+  }
+  
+  /* Ajustar corpo da página para impressão completa */
+  html, body {
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    background: white !important;
+    color: black !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  
+  /* Forçar containers a expandirem totalmente */
+  div, section, article {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  
+  /* Remover sombras e bordas desnecessárias */
+  * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+  
+  /* Ajustar gráficos e imagens */
+  svg, img, canvas {
+    max-width: 100% !important;
+    page-break-inside: avoid;
+  }
+  
+  /* Evitar quebra de página em elementos importantes */
+  .bg-white,
+  .card,
+  table,
+  .metric-card,
+  .shadow,
+  .shadow-md,
+  .shadow-lg,
+  .rounded-lg {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  
+  /* Ajustar tamanho de fonte para impressão */
+  html {
+    font-size: 11pt;
+  }
+  
+  /* Ajustar links */
+  a {
+    text-decoration: none;
+    color: inherit;
+  }
+  
+  /* Ajustar margens da página */
+  @page {
+    size: A4 landscape;
+    margin: 1.5cm;
+  }
+  
+  /* Garantir que tabelas caibam */
+  table {
+    font-size: 9pt;
+    width: 100%;
+  }
+  
+  /* Títulos em nova página se necessário */
+  h1, h2, h3 {
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+  
+  /* Ajustar grid para impressão */
+  .grid {
+    page-break-inside: avoid;
+  }
+  
+  /* Forçar exibição de conteúdo oculto por scroll */
+  .overflow-auto,
+  .overflow-scroll,
+  .overflow-hidden {
+    overflow: visible !important;
+  }
+  
+  /* Ajustar altura de containers */
+  .h-screen,
+  .min-h-screen {
+    height: auto !important;
+    min-height: auto !important;
+  }
+  
+  /* Remover transformações que podem afetar layout */
+  .transform,
+  .transition {
+    transform: none !important;
+    transition: none !important;
+  }
+}
