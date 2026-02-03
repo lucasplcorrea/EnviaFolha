@@ -9,7 +9,8 @@ import {
   ClockIcon,
   ExclamationTriangleIcon,
   DocumentTextIcon,
-  CheckIcon
+  CheckIcon,
+  CurrencyDollarIcon
 } from '@heroicons/react/24/outline';
 
 const ReportGenerator = () => {
@@ -81,6 +82,14 @@ const ReportGenerator = () => {
       sections: ['leaves']
     },
     {
+      id: 'payroll',
+      name: 'Relatório de Folha de Pagamento',
+      description: 'Resumo de salários, proventos e descontos por setor',
+      icon: CurrencyDollarIcon,
+      color: 'bg-emerald-100 text-emerald-600',
+      sections: ['payroll']
+    },
+    {
       id: 'custom',
       name: 'Relatório Customizado',
       description: 'Monte seu relatório escolhendo as seções desejadas',
@@ -97,7 +106,8 @@ const ReportGenerator = () => {
     { id: 'turnover', name: 'Rotatividade', icon: ArrowPathIcon },
     { id: 'demographics', name: 'Demografia', icon: UsersIcon },
     { id: 'tenure', name: 'Tempo de Casa', icon: ClockIcon },
-    { id: 'leaves', name: 'Afastamentos', icon: ExclamationTriangleIcon }
+    { id: 'leaves', name: 'Afastamentos', icon: ExclamationTriangleIcon },
+    { id: 'payroll', name: 'Folha de Pagamento', icon: CurrencyDollarIcon }
   ];
 
   // Empresas fixas

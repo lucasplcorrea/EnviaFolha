@@ -6811,6 +6811,9 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 if 'leaves' in sections:
                     data['leaves'] = self._get_leaves_data_for_report(db, year, month, months_range, company, division)
                 
+                if 'payroll' in sections:
+                    data['payroll'] = self._get_payroll_data_for_report(db, year, month, company, division)
+                
                 # Gerar PDF
                 service = ReportGeneratorService(db)
                 pdf_bytes = service.generate_report(
@@ -6849,6 +6852,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     
     def _get_overview_data(self, db, year, month, company, division):
         """Coleta dados de overview para o relatório"""
+        from datetime import date
         from sqlalchemy import and_, func
         from app.models.payroll import PayrollData
         from app.models.employee import Employee
@@ -6931,6 +6935,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     
     def _get_turnover_data(self, db, year, month, months_range, company, division):
         """Coleta dados de turnover para o relatório"""
+        from datetime import date
         from sqlalchemy import func
         from app.models.payroll import PayrollData
         from app.models.employee import Employee
@@ -7055,6 +7060,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     
     def _get_tenure_data(self, db, year, month, company, division):
         """Coleta dados de tempo de casa para o relatório"""
+        from datetime import date
         from sqlalchemy import func, case
         from app.models.payroll import PayrollData
         from app.models.employee import Employee
@@ -7123,6 +7129,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     
     def _get_leaves_data_for_report(self, db, year, month, months_range, company, division):
         """Coleta dados de afastamentos para o relatório"""
+        from datetime import date
         from sqlalchemy import and_, func
         from app.models.employee import Employee
         from app.models.leave import LeaveRecord
@@ -7168,6 +7175,88 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             'current': {
                 'total': total,
                 'by_type': by_type
+            }
+        }
+    
+    def _get_payroll_data_for_report(self, db, year, month, company, division):
+        """Coleta dados de folha de pagamento para o relatório"""
+        from sqlalchemy import func
+        from app.models.payroll import PayrollData
+        from app.models.employee import Employee
+        
+        # Buscar período
+        period_query = db.query(PayrollData.period_id).filter(
+            func.extract('year', PayrollData.reference_month) == year,
+            func.extract('month', PayrollData.reference_month) == month
+        ).distinct()
+        
+        period_ids = [p[0] for p in period_query.all()]
+        
+        if not period_ids:
+            return {'current': {}}
+        
+        # Query base
+        base_query = db.query(PayrollData).join(Employee).filter(
+            PayrollData.period_id.in_(period_ids)
+        )
+        if company and company != 'all':
+            base_query = base_query.filter(Employee.company_code == company)
+        if division and division != 'all':
+            base_query = base_query.filter(Employee.department == division)
+        
+        payroll_records = base_query.all()
+        
+        if not payroll_records:
+            return {'current': {}}
+        
+        # Totais gerais
+        total_salary = sum(float(p.salary or 0) for p in payroll_records)
+        total_earnings = sum(float(p.total_earnings or 0) for p in payroll_records)
+        total_deductions = sum(float(p.total_deductions or 0) for p in payroll_records)
+        total_net = sum(float(p.net_salary or 0) for p in payroll_records)
+        
+        employee_count = len(set(p.employee_id for p in payroll_records))
+        avg_salary = total_salary / employee_count if employee_count > 0 else 0
+        
+        # Por setor
+        by_department_query = db.query(
+            Employee.department,
+            func.count(PayrollData.id).label('count'),
+            func.sum(PayrollData.salary).label('total_salary'),
+            func.sum(PayrollData.total_earnings).label('total_earnings'),
+            func.sum(PayrollData.net_salary).label('total_net')
+        ).join(Employee).filter(
+            PayrollData.period_id.in_(period_ids)
+        )
+        if company and company != 'all':
+            by_department_query = by_department_query.filter(Employee.company_code == company)
+        if division and division != 'all':
+            by_department_query = by_department_query.filter(Employee.department == division)
+        
+        by_department_results = by_department_query.group_by(Employee.department).all()
+        
+        by_department = []
+        for dept, count, dept_salary, dept_earnings, dept_net in by_department_results:
+            by_department.append({
+                'department': dept or 'Não especificado',
+                'employee_count': count,
+                'total_salary': float(dept_salary or 0),
+                'total_earnings': float(dept_earnings or 0),
+                'total_net': float(dept_net or 0)
+            })
+        
+        # Ordenar por total de salários (maior primeiro)
+        by_department.sort(key=lambda x: x['total_salary'], reverse=True)
+        
+        return {
+            'current': {
+                'employee_count': employee_count,
+                'total_salary': total_salary,
+                'total_earnings': total_earnings,
+                'total_deductions': total_deductions,
+                'total_net': total_net,
+                'average_salary': avg_salary,
+                'by_department': by_department
             }
         }
     

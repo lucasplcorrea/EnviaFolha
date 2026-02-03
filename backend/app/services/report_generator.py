@@ -165,6 +165,8 @@ class ReportGeneratorService:
                 story.extend(self._build_tenure_section(data['tenure']))
             elif section == 'leaves' and data and 'leaves' in data:
                 story.extend(self._build_leaves_section(data['leaves']))
+            elif section == 'payroll' and data and 'payroll' in data:
+                story.extend(self._build_payroll_section(data['payroll']))
         
         # Footer
         story.extend(self._build_footer())
@@ -197,6 +199,7 @@ class ReportGeneratorService:
             'demographics': 'Relatório Demográfico',
             'tenure': 'Relatório de Tempo de Casa',
             'leaves': 'Relatório de Afastamentos',
+            'payroll': 'Relatório de Folha de Pagamento',
             'custom': 'Relatório Customizado'
         }
         
@@ -558,6 +561,90 @@ class ReportGeneratorService:
                 ('ALIGN', (0, 1), (0, -1), 'LEFT'),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
                 ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.white),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, self.COLORS['light_gray']]),
+            ]))
+            
+            elements.append(table)
+        
+        elements.append(Spacer(1, 1*cm))
+        
+        return elements
+    
+    def _build_payroll_section(self, data: Dict) -> List:
+        """Build payroll section"""
+        elements = []
+        
+        elements.append(Paragraph("💰 Folha de Pagamento", self.styles['Section']))
+        elements.append(HRFlowable(width="100%", color=self.COLORS['light_gray']))
+        
+        current = data.get('current', {})
+        
+        if not current:
+            elements.append(Paragraph("Sem dados de folha de pagamento para o período.", self.styles['BodyText_Custom']))
+            return elements
+        
+        # Format currency helper
+        def fmt_currency(value):
+            return f"R$ {value:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+        
+        # Summary metrics
+        metrics_data = [
+            ['Indicador', 'Valor'],
+            ['Total de Funcionários', str(current.get('employee_count', 0))],
+            ['Total Salários Base', fmt_currency(current.get('total_salary', 0))],
+            ['Total Proventos', fmt_currency(current.get('total_earnings', 0))],
+            ['Total Descontos', fmt_currency(current.get('total_deductions', 0))],
+            ['Total Líquido', fmt_currency(current.get('total_net', 0))],
+            ['Salário Médio', fmt_currency(current.get('average_salary', 0))],
+        ]
+        
+        table = Table(metrics_data, colWidths=[8*cm, 7*cm])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#059669')),  # Emerald
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('ALIGN', (0, 1), (0, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 11),
+            ('FONTSIZE', (0, 1), (-1, -1), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.white),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, self.COLORS['light_gray']]),
+        ]))
+        
+        elements.append(table)
+        elements.append(Spacer(1, 1*cm))
+        
+        # By department
+        by_department = current.get('by_department', [])
+        if by_department:
+            elements.append(Paragraph("Resumo por Setor", self.styles['Subsection']))
+            
+            dept_data = [['Setor', 'Funcionários', 'Total Salários', 'Total Líquido']]
+            
+            for dept in by_department[:15]:  # Top 15 departments
+                dept_name = dept.get('department', 'Não informado')
+                if len(dept_name) > 25:
+                    dept_name = dept_name[:22] + '...'
+                emp_count = dept.get('employee_count', 0)
+                total_sal = dept.get('total_salary', 0)
+                total_net = dept.get('total_net', 0)
+                dept_data.append([
+                    dept_name,
+                    str(emp_count),
+                    fmt_currency(total_sal),
+                    fmt_currency(total_net)
+                ])
+            
+            table = Table(dept_data, colWidths=[6*cm, 2.5*cm, 4*cm, 4*cm])
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), self.COLORS['success']),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('ALIGN', (0, 1), (0, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.white),
                 ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, self.COLORS['light_gray']]),
             ]))
