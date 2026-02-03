@@ -8,6 +8,7 @@ export { default as Tenure } from './Tenure';
 export { default as Leaves } from './Leaves';
 export { default as Payroll } from './Payroll';
 export { default as PeriodComparison } from './PeriodComparison';
+export { default as ReportGenerator } from './ReportGenerator';
 
 // Shared Components
 export {

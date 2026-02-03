@@ -9,7 +9,8 @@ import {
   ArrowPathIcon,
   CurrencyDollarIcon,
   UsersIcon,
-  CalendarDaysIcon
+  CalendarDaysIcon,
+  DocumentArrowDownIcon
 } from '@heroicons/react/24/outline';
 
 const IndicatorsLayout = () => {
@@ -24,6 +25,7 @@ const IndicatorsLayout = () => {
     { path: '/indicators/leaves', name: 'Afastamentos', icon: ExclamationTriangleIcon },
     { path: '/indicators/payroll', name: 'Folha de Pagamento', icon: CurrencyDollarIcon },
     { path: '/indicators/period-comparison', name: 'Comparativo Períodos', icon: CalendarDaysIcon },
+    { path: '/indicators/reports', name: 'Relatórios', icon: DocumentArrowDownIcon },
   ];
 
   return (

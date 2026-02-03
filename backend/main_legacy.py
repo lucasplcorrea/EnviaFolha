@@ -1491,6 +1491,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_indicators_tenure()
         elif path == '/api/v1/indicators/leaves':
             self.handle_indicators_leaves()
+        elif path == '/api/v1/reports/generate':
+            self.handle_report_generate()
         # ===================================
         
         elif path == '/api/v1/payrolls/processed':
@@ -6760,6 +6762,413 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             'average_duration_days': round(float(avg_duration), 1) if avg_duration else 0,
             'by_type': by_type_results,
             'by_department': by_department_results
+        }
+    
+    def handle_report_generate(self):
+        """Gera relatório PDF com indicadores de RH"""
+        try:
+            from app.services.report_generator import ReportGeneratorService
+            import urllib.parse
+            
+            # Parse query parameters
+            query_string = urllib.parse.urlparse(self.path).query
+            params = urllib.parse.parse_qs(query_string)
+            
+            report_type = params.get('report_type', ['consolidated'])[0]
+            sections = params.get('sections', ['overview'])[0].split(',')
+            year = int(params.get('year', [datetime.now().year])[0])
+            month = int(params.get('month', [datetime.now().month])[0])
+            months_range = int(params.get('months_range', ['6'])[0])
+            company = params.get('company', [None])[0]
+            division = params.get('division', [None])[0]
+            
+            print(f"📊 Gerando relatório PDF: {report_type}")
+            print(f"   Seções: {sections}")
+            print(f"   Período: {month}/{year}")
+            print(f"   Empresa: {company}, Setor: {division}")
+            
+            db = SessionLocal()
+            try:
+                # Coletar dados de cada seção necessária
+                data = {}
+                
+                if 'overview' in sections:
+                    # Reutilizar lógica existente
+                    data['overview'] = self._get_overview_data(db, year, month, company, division)
+                
+                if 'headcount' in sections:
+                    data['headcount'] = self._get_headcount_data(db, year, month, months_range, company, division)
+                
+                if 'turnover' in sections:
+                    data['turnover'] = self._get_turnover_data(db, year, month, months_range, company, division)
+                
+                if 'demographics' in sections:
+                    data['demographics'] = self._get_demographics_data(db, year, month, company, division)
+                
+                if 'tenure' in sections:
+                    data['tenure'] = self._get_tenure_data(db, year, month, company, division)
+                
+                if 'leaves' in sections:
+                    data['leaves'] = self._get_leaves_data_for_report(db, year, month, months_range, company, division)
+                
+                # Gerar PDF
+                service = ReportGeneratorService(db)
+                pdf_bytes = service.generate_report(
+                    report_type=report_type,
+                    sections=sections,
+                    year=year,
+                    month=month,
+                    months_range=months_range,
+                    company=company,
+                    division=division,
+                    data=data
+                )
+                
+                # Enviar PDF como resposta
+                month_names = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+                filename = f"Relatorio_RH_{report_type}_{month_names[month-1]}_{year}.pdf"
+                
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/pdf')
+                self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
+                self.send_header('Content-Length', len(pdf_bytes))
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(pdf_bytes)
+                
+                print(f"✅ Relatório PDF gerado com sucesso: {filename}")
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao gerar relatório: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": str(e)}, 500)
+    
+    def _get_overview_data(self, db, year, month, company, division):
+        """Coleta dados de overview para o relatório"""
+        from sqlalchemy import and_, func
+        from app.models.payroll import PayrollData
+        from app.models.employee import Employee
+        from app.models.leave import LeaveRecord
+        
+        # Período de referência
+        reference_date = date(year, month, 1)
+        last_day = date(year, month, 28)  # Aproximação
+        
+        # Buscar período
+        period_query = db.query(PayrollData.period_id).filter(
+            func.extract('year', PayrollData.reference_month) == year,
+            func.extract('month', PayrollData.reference_month) == month
+        ).distinct()
+        
+        period_ids = [p[0] for p in period_query.all()]
+        
+        if not period_ids:
+            return {'current': {}}
+        
+        # Contar funcionários únicos no período
+        emp_query = db.query(PayrollData.employee_id).filter(
+            PayrollData.period_id.in_(period_ids)
+        ).distinct()
+        
+        employee_ids = [e[0] for e in emp_query.all()]
+        
+        # Aplicar filtros
+        total_query = db.query(Employee).filter(Employee.id.in_(employee_ids))
+        if company and company != 'all':
+            total_query = total_query.filter(Employee.company_code == company)
+        if division and division != 'all':
+            total_query = total_query.filter(Employee.department == division)
+        
+        total_employees = total_query.count()
+        
+        # Admissões e demissões
+        admissions = total_query.filter(
+            func.extract('year', Employee.admission_date) == year,
+            func.extract('month', Employee.admission_date) == month
+        ).count()
+        
+        terminations = total_query.filter(
+            Employee.is_active == False,
+            func.extract('year', Employee.termination_date) == year,
+            func.extract('month', Employee.termination_date) == month
+        ).count()
+        
+        # Turnover
+        avg_employees = total_employees + (admissions - terminations) / 2
+        turnover_rate = ((admissions + terminations) / (2 * avg_employees) * 100) if avg_employees > 0 else 0
+        
+        # Afastamentos
+        leave_query = db.query(func.count(LeaveRecord.id)).join(Employee).filter(
+            Employee.id.in_(employee_ids),
+            LeaveRecord.start_date <= last_day,
+            LeaveRecord.end_date >= reference_date
+        )
+        if company and company != 'all':
+            leave_query = leave_query.filter(Employee.company_code == company)
+        if division and division != 'all':
+            leave_query = leave_query.filter(Employee.department == division)
+        
+        on_leave = leave_query.scalar() or 0
+        
+        return {
+            'current': {
+                'total_employees': total_employees,
+                'admissions': admissions,
+                'terminations': terminations,
+                'turnover_rate': turnover_rate,
+                'on_leave': on_leave
+            }
+        }
+    
+    def _get_headcount_data(self, db, year, month, months_range, company, division):
+        """Coleta dados de headcount para o relatório"""
+        current = self._get_headcount_for_period(db, year, month, company or 'all', division or 'all')
+        return {'current': current}
+    
+    def _get_turnover_data(self, db, year, month, months_range, company, division):
+        """Coleta dados de turnover para o relatório"""
+        from sqlalchemy import func
+        from app.models.payroll import PayrollData
+        from app.models.employee import Employee
+        
+        evolution = []
+        current_date = date(year, month, 1)
+        
+        for i in range(months_range):
+            m = current_date.month - i
+            y = current_date.year
+            while m <= 0:
+                m += 12
+                y -= 1
+            
+            metrics = self._get_headcount_for_period(db, y, m, company or 'all', division or 'all')
+            
+            month_names = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+            period_label = f"{month_names[m-1]}/{y}"
+            
+            # Calcular turnover
+            headcount = metrics.get('headcount', 0)
+            admissions = metrics.get('admissions', 0)
+            terminations = metrics.get('terminations', 0)
+            avg_emp = headcount + (admissions - terminations) / 2
+            turnover = ((admissions + terminations) / (2 * avg_emp) * 100) if avg_emp > 0 else 0
+            
+            evolution.insert(0, {
+                'period': period_label,
+                'admissions': admissions,
+                'terminations': terminations,
+                'turnover_rate': turnover
+            })
+        
+        return {
+            'current': {
+                'admissions': evolution[-1]['admissions'] if evolution else 0,
+                'terminations': evolution[-1]['terminations'] if evolution else 0,
+                'turnover_rate': evolution[-1]['turnover_rate'] if evolution else 0
+            },
+            'evolution': evolution
+        }
+    
+    def _get_demographics_data(self, db, year, month, company, division):
+        """Coleta dados demográficos para o relatório"""
+        from sqlalchemy import func, case
+        from app.models.payroll import PayrollData
+        from app.models.employee import Employee
+        
+        # Buscar período
+        period_query = db.query(PayrollData.period_id).filter(
+            func.extract('year', PayrollData.reference_month) == year,
+            func.extract('month', PayrollData.reference_month) == month
+        ).distinct()
+        
+        period_ids = [p[0] for p in period_query.all()]
+        
+        if not period_ids:
+            return {'current': {}}
+        
+        # Funcionários no período
+        emp_query = db.query(PayrollData.employee_id).filter(
+            PayrollData.period_id.in_(period_ids)
+        ).distinct()
+        employee_ids = [e[0] for e in emp_query.all()]
+        
+        # Filtros base
+        base_filter = Employee.id.in_(employee_ids)
+        
+        # Gênero
+        gender_query = db.query(
+            Employee.sex, func.count(Employee.id)
+        ).filter(base_filter)
+        if company and company != 'all':
+            gender_query = gender_query.filter(Employee.company_code == company)
+        if division and division != 'all':
+            gender_query = gender_query.filter(Employee.department == division)
+        gender_results = gender_query.group_by(Employee.sex).all()
+        
+        by_gender = []
+        for sex, count in gender_results:
+            gender_name = 'Masculino' if sex == 'M' else 'Feminino' if sex == 'F' else 'Não informado'
+            by_gender.append({'gender': gender_name, 'count': count})
+        
+        # Faixa etária
+        age_query = db.query(
+            case(
+                (func.extract('year', func.age(Employee.birth_date)) < 25, '18-24'),
+                (func.extract('year', func.age(Employee.birth_date)) < 35, '25-34'),
+                (func.extract('year', func.age(Employee.birth_date)) < 45, '35-44'),
+                (func.extract('year', func.age(Employee.birth_date)) < 55, '45-54'),
+                else_='55+'
+            ).label('age_range'),
+            func.count(Employee.id)
+        ).filter(base_filter, Employee.birth_date.isnot(None))
+        if company and company != 'all':
+            age_query = age_query.filter(Employee.company_code == company)
+        if division and division != 'all':
+            age_query = age_query.filter(Employee.department == division)
+        age_results = age_query.group_by('age_range').all()
+        
+        by_age = [{'age_range': r, 'count': c} for r, c in age_results]
+        
+        # Escolaridade
+        edu_query = db.query(
+            Employee.education_level, func.count(Employee.id)
+        ).filter(base_filter, Employee.education_level.isnot(None))
+        if company and company != 'all':
+            edu_query = edu_query.filter(Employee.company_code == company)
+        if division and division != 'all':
+            edu_query = edu_query.filter(Employee.department == division)
+        edu_results = edu_query.group_by(Employee.education_level).all()
+        
+        by_education = [{'education': e or 'Não informado', 'count': c} for e, c in edu_results]
+        
+        return {
+            'current': {
+                'by_gender': by_gender,
+                'by_age_range': by_age,
+                'by_education': by_education
+            }
+        }
+    
+    def _get_tenure_data(self, db, year, month, company, division):
+        """Coleta dados de tempo de casa para o relatório"""
+        from sqlalchemy import func, case
+        from app.models.payroll import PayrollData
+        from app.models.employee import Employee
+        
+        reference_date = date(year, month, 1)
+        
+        # Buscar período
+        period_query = db.query(PayrollData.period_id).filter(
+            func.extract('year', PayrollData.reference_month) == year,
+            func.extract('month', PayrollData.reference_month) == month
+        ).distinct()
+        
+        period_ids = [p[0] for p in period_query.all()]
+        
+        if not period_ids:
+            return {'current': {}}
+        
+        emp_query = db.query(PayrollData.employee_id).filter(
+            PayrollData.period_id.in_(period_ids)
+        ).distinct()
+        employee_ids = [e[0] for e in emp_query.all()]
+        
+        # Tempo médio
+        avg_query = db.query(
+            func.avg(func.extract('epoch', reference_date - Employee.admission_date) / (30 * 24 * 3600))
+        ).filter(
+            Employee.id.in_(employee_ids),
+            Employee.admission_date.isnot(None)
+        )
+        if company and company != 'all':
+            avg_query = avg_query.filter(Employee.company_code == company)
+        if division and division != 'all':
+            avg_query = avg_query.filter(Employee.department == division)
+        
+        avg_tenure = avg_query.scalar() or 0
+        
+        # Faixas de tempo
+        ranges_query = db.query(
+            case(
+                (func.extract('epoch', reference_date - Employee.admission_date) / (30 * 24 * 3600) < 6, 'Até 6 meses'),
+                (func.extract('epoch', reference_date - Employee.admission_date) / (30 * 24 * 3600) < 12, '6 meses - 1 ano'),
+                (func.extract('epoch', reference_date - Employee.admission_date) / (30 * 24 * 3600) < 24, '1 - 2 anos'),
+                (func.extract('epoch', reference_date - Employee.admission_date) / (30 * 24 * 3600) < 60, '2 - 5 anos'),
+                else_='Mais de 5 anos'
+            ).label('range'),
+            func.count(Employee.id)
+        ).filter(
+            Employee.id.in_(employee_ids),
+            Employee.admission_date.isnot(None)
+        )
+        if company and company != 'all':
+            ranges_query = ranges_query.filter(Employee.company_code == company)
+        if division and division != 'all':
+            ranges_query = ranges_query.filter(Employee.department == division)
+        
+        ranges_results = ranges_query.group_by('range').all()
+        
+        by_range = [{'range': r, 'count': c} for r, c in ranges_results]
+        
+        return {
+            'current': {
+                'average_tenure_months': avg_tenure,
+                'by_tenure_range': by_range
+            }
+        }
+    
+    def _get_leaves_data_for_report(self, db, year, month, months_range, company, division):
+        """Coleta dados de afastamentos para o relatório"""
+        from sqlalchemy import and_, func
+        from app.models.employee import Employee
+        from app.models.leave import LeaveRecord
+        
+        reference_date = date(year, month, 1)
+        last_day = date(year, month, 28)
+        
+        # Total de afastamentos
+        total_query = db.query(func.count(LeaveRecord.id)).join(Employee).filter(
+            and_(
+                Employee.is_active == True,
+                LeaveRecord.start_date <= last_day,
+                LeaveRecord.end_date >= reference_date
+            )
+        )
+        if company and company != 'all':
+            total_query = total_query.filter(Employee.company_code == company)
+        if division and division != 'all':
+            total_query = total_query.filter(Employee.department == division)
+        
+        total = total_query.scalar() or 0
+        
+        # Por tipo
+        by_type_query = db.query(
+            LeaveRecord.leave_type, func.count(LeaveRecord.id)
+        ).join(Employee).filter(
+            and_(
+                Employee.is_active == True,
+                LeaveRecord.start_date <= last_day,
+                LeaveRecord.end_date >= reference_date
+            )
+        )
+        if company and company != 'all':
+            by_type_query = by_type_query.filter(Employee.company_code == company)
+        if division and division != 'all':
+            by_type_query = by_type_query.filter(Employee.department == division)
+        
+        by_type_results = by_type_query.group_by(LeaveRecord.leave_type).all()
+        
+        by_type = [{'type': t or 'Não especificado', 'count': c} for t, c in by_type_results]
+        
+        return {
+            'current': {
+                'total': total,
+                'by_type': by_type
+            }
         }
     
     def handle_indicators_invalidate_cache(self):

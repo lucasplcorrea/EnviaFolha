@@ -13,6 +13,9 @@ pandas==2.1.4
 openpyxl==3.1.2
 aiofiles==23.2.1
 
+# Geração de PDF
+reportlab==4.2.5
+
 # Comunicação e validação
 phonenumbers==8.13.26
 python-dateutil==2.8.2
