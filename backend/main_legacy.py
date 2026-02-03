@@ -6296,26 +6296,219 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json_response({"error": str(e)}, 500)
     
     def handle_indicators_tenure(self):
-        """Retorna métricas de tempo de casa"""
+        """Retorna métricas de tempo de casa com evolução temporal"""
         try:
-            from app.services.hr_indicators import HRIndicatorsService
-            
+            # Parse query params
             query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            use_cache = query_params.get('use_cache', ['true'])[0].lower() != 'false'
+            company = query_params.get('company', ['all'])[0]
+            division = query_params.get('division', ['all'])[0]
+            year = query_params.get('year', [None])[0]
+            month = query_params.get('month', [None])[0]
+            months_range = int(query_params.get('months_range', ['12'])[0])
             
-            db = SessionLocal()
-            try:
-                service = HRIndicatorsService(db)
-                result = service.get_tenure_metrics(use_cache=use_cache)
-                self.send_json_response(result)
-            finally:
+            if SessionLocal:
+                from app.models.payroll import PayrollPeriod, PayrollData
+                from app.models.employee import Employee
+                from sqlalchemy import func, case
+                from datetime import date
+                from dateutil.relativedelta import relativedelta
+                
+                db = SessionLocal()
+                
+                # Se não especificou período, usar o mais recente
+                if not year or not month:
+                    latest_period = db.query(PayrollPeriod).order_by(
+                        PayrollPeriod.year.desc(),
+                        PayrollPeriod.month.desc()
+                    ).first()
+                    
+                    if not latest_period:
+                        db.close()
+                        self.send_json_response({"error": "Nenhum período encontrado"}, 404)
+                        return
+                    
+                    year = latest_period.year
+                    month = latest_period.month
+                else:
+                    year = int(year)
+                    month = int(month)
+                
+                # Calcular período atual
+                current_date = date(year, month, 1)
+                
+                # MÉTRICA ATUAL (mês selecionado)
+                current_metrics = self._get_tenure_for_period(db, year, month, company, division)
+                
+                # EVOLUÇÃO TEMPORAL (últimos N meses)
+                evolution_data = []
+                month_names_pt = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 
+                                  'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+                for i in range(months_range - 1, -1, -1):
+                    period_date = current_date - relativedelta(months=i)
+                    p_year = period_date.year
+                    p_month = period_date.month
+                    
+                    metrics = self._get_tenure_for_period(db, p_year, p_month, company, division)
+                    evolution_data.append({
+                        'year': p_year,
+                        'month': p_month,
+                        'month_name': f"{month_names_pt[p_month-1]}/{str(p_year)[2:]}",
+                        'average_tenure_years': metrics['average_tenure_years'],
+                        'average_tenure_months': metrics['average_tenure_months'],
+                        'total_employees': metrics['total_employees']
+                    })
+                
+                result = {
+                    'filters': {
+                        'year': year,
+                        'month': month,
+                        'company': company,
+                        'division': division,
+                        'months_range': months_range
+                    },
+                    'current': current_metrics,
+                    'evolution': evolution_data
+                }
+                
                 db.close()
+                self.send_json_response(result)
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
                 
         except Exception as e:
             print(f"❌ Erro ao buscar tenure: {e}")
             import traceback
             traceback.print_exc()
             self.send_json_response({"error": str(e)}, 500)
+    
+    def _get_tenure_for_period(self, db, year, month, company='all', division='all'):
+        """Helper para calcular métricas de tempo de casa de um período específico"""
+        from app.models.payroll import PayrollPeriod, PayrollData
+        from app.models.employee import Employee
+        from sqlalchemy import func, case
+        from datetime import date
+        
+        # Buscar períodos do mês especificado
+        periods_query = db.query(PayrollPeriod).filter(
+            PayrollPeriod.year == year,
+            PayrollPeriod.month == month
+        )
+        
+        if company != 'all':
+            periods_query = periods_query.filter(PayrollPeriod.company == company)
+        
+        periods = periods_query.all()
+        if not periods:
+            return {
+                'average_tenure_years': 0,
+                'average_tenure_months': 0,
+                'total_employees': 0,
+                'tenure_ranges': [],
+                'by_department': []
+            }
+        
+        period_ids = [p.id for p in periods]
+        
+        # Obter IDs únicos de funcionários do período
+        employee_ids_query = db.query(PayrollData.employee_id).filter(
+            PayrollData.period_id.in_(period_ids)
+        ).distinct()
+        
+        employee_ids = [r[0] for r in employee_ids_query.all()]
+        
+        if not employee_ids:
+            return {
+                'average_tenure_years': 0,
+                'average_tenure_months': 0,
+                'total_employees': 0,
+                'tenure_ranges': [],
+                'by_department': []
+            }
+        
+        # Query base de employees do período
+        emp_query = db.query(Employee).filter(Employee.id.in_(employee_ids))
+        
+        if division != 'all':
+            emp_query = emp_query.filter(Employee.department == division)
+        
+        # Data de referência para o cálculo
+        reference_date = date(year, month, 1)
+        
+        # Tempo médio de casa (em dias, depois convertido para anos e meses)
+        avg_tenure_days_query = db.query(
+            func.avg(
+                func.extract('day', func.age(
+                    reference_date,
+                    Employee.admission_date
+                ))
+            )
+        ).filter(
+            Employee.id.in_(employee_ids),
+            Employee.admission_date.isnot(None)
+        )
+        
+        if division != 'all':
+            avg_tenure_days_query = avg_tenure_days_query.filter(Employee.department == division)
+        
+        avg_tenure_days = avg_tenure_days_query.scalar()
+        
+        avg_tenure_years = (float(avg_tenure_days) / 365.25) if avg_tenure_days else 0
+        avg_tenure_months = int(round(float(avg_tenure_days) / 30.44)) if avg_tenure_days else 0
+        
+        # Distribuição por tempo de casa
+        tenure_ranges_query = db.query(
+            case(
+                (func.extract('year', func.age(reference_date, Employee.admission_date)) < 1, '0-1 ano'),
+                (func.extract('year', func.age(reference_date, Employee.admission_date)) < 3, '1-3 anos'),
+                (func.extract('year', func.age(reference_date, Employee.admission_date)) < 5, '3-5 anos'),
+                (func.extract('year', func.age(reference_date, Employee.admission_date)) < 10, '5-10 anos'),
+                else_='10+ anos'
+            ).label('tenure_range'),
+            func.count(Employee.id).label('count')
+        ).filter(
+            Employee.id.in_(employee_ids),
+            Employee.admission_date.isnot(None)
+        )
+        
+        if division != 'all':
+            tenure_ranges_query = tenure_ranges_query.filter(Employee.department == division)
+        
+        tenure_ranges = tenure_ranges_query.group_by('tenure_range').all()
+        
+        # Ordenar faixas de tenure
+        tenure_order = {'0-1 ano': 1, '1-3 anos': 2, '3-5 anos': 3, '5-10 anos': 4, '10+ anos': 5}
+        sorted_tenure_ranges = sorted(tenure_ranges, key=lambda x: tenure_order.get(x[0], 99))
+        
+        # Tempo médio por departamento
+        avg_tenure_by_dept_query = db.query(
+            Employee.department,
+            func.avg(
+                func.extract('day', func.age(
+                    reference_date,
+                    Employee.admission_date
+                )) / 365.25
+            ).label('avg_years')
+        ).filter(
+            Employee.id.in_(employee_ids),
+            Employee.admission_date.isnot(None),
+            Employee.department.isnot(None)
+        )
+        
+        if division != 'all':
+            avg_tenure_by_dept_query = avg_tenure_by_dept_query.filter(Employee.department == division)
+        
+        avg_tenure_by_dept = avg_tenure_by_dept_query.group_by(Employee.department).order_by(Employee.department).all()
+        
+        total_employees = sum(c for _, c in tenure_ranges)
+        
+        return {
+            'average_tenure_years': int(round(avg_tenure_years)),
+            'average_tenure_months': avg_tenure_months,
+            'total_employees': total_employees,
+            'tenure_ranges': [{'range': r, 'count': int(c)} for r, c in sorted_tenure_ranges],
+            'by_department': [{'department': d, 'avg_years': int(round(float(a) if a else 0))} for d, a in avg_tenure_by_dept]
+        }
     
     def handle_indicators_leaves(self):
         """Retorna métricas de afastamentos"""
