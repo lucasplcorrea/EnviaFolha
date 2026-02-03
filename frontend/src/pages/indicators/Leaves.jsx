@@ -23,8 +23,8 @@ const Leaves = () => {
   const [filtersReady, setFiltersReady] = useState(false);
   const initialLoadDone = useRef(false);
 
-  // Cores para gráficos
-  const COLORS = ['#8B5CF6', '#EC4899', '#F59E0B', '#10B981', '#3B82F6', '#EF4444', '#6366F1', '#14B8A6'];
+  // Cores para gráficos - expandido para suportar mais tipos de afastamento
+  const COLORS = ['#8B5CF6', '#EC4899', '#F59E0B', '#10B981', '#3B82F6', '#EF4444', '#6366F1', '#14B8A6', '#F97316', '#84CC16', '#A855F7', '#06B6D4'];
 
   // Carregar filtros apenas uma vez na montagem
   useEffect(() => {
@@ -153,6 +153,76 @@ const Leaves = () => {
     }));
   };
 
+  // Processar dados antes do early return (hooks não podem ser condicionais)
+  const current = data?.current || {};
+  const evolution = data?.evolution || [];
+  const { by_type = [], by_department = [] } = current;
+
+  // Agregar tipos de afastamento de todo o período de evolução
+  const aggregatedByType = React.useMemo(() => {
+    if (!evolution || evolution.length === 0) return [];
+    
+    const typeMap = {};
+    evolution.forEach(period => {
+      (period.by_type || []).forEach(item => {
+        if (typeMap[item.type]) {
+          typeMap[item.type] += item.count;
+        } else {
+          typeMap[item.type] = item.count;
+        }
+      });
+    });
+    
+    const total = Object.values(typeMap).reduce((sum, count) => sum + count, 0);
+    return Object.entries(typeMap).map(([type, count]) => ({
+      type,
+      count,
+      percentage: total > 0 ? parseFloat((count / total * 100).toFixed(1)) : 0
+    })).sort((a, b) => b.count - a.count);
+  }, [evolution]);
+
+  // Preparar dados para gráfico de evolução
+  const chartData = React.useMemo(() => {
+    if (!evolution || evolution.length === 0) return [];
+    return evolution.map(item => ({
+      period: formatMonth(item.year, item.month),
+      afastados: item.total_on_leave,
+      taxa: item.absenteeism_rate
+    }));
+  }, [evolution]);
+
+  // Preparar dados para gráfico de evolução por tipo
+  const chartDataByType = React.useMemo(() => {
+    if (!evolution || evolution.length === 0) return [];
+    
+    // Coletar todos os tipos únicos
+    const allTypes = new Set();
+    evolution.forEach(period => {
+      (period.by_type || []).forEach(item => allTypes.add(item.type));
+    });
+    
+    // Criar dados para cada período
+    return evolution.map(period => {
+      const periodData = {
+        period: formatMonth(period.year, period.month)
+      };
+      
+      // Adicionar contagem de cada tipo
+      allTypes.forEach(type => {
+        const typeItem = (period.by_type || []).find(t => t.type === type);
+        periodData[type] = typeItem ? typeItem.count : 0;
+      });
+      
+      return periodData;
+    });
+  }, [evolution]);
+
+  // Empresas fixas
+  const companies = [
+    { code: '0059', name: 'Infraestrutura' },
+    { code: '0060', name: 'Empreendimentos' }
+  ];
+
   if (loading && !data) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -160,23 +230,6 @@ const Leaves = () => {
       </div>
     );
   }
-
-  const current = data?.current || {};
-  const evolution = data?.evolution || [];
-  const { by_type = [], by_department = [] } = current;
-
-  // Preparar dados para gráfico de evolução
-  const chartData = evolution.map(item => ({
-    period: formatMonth(item.year, item.month),
-    afastados: item.total_on_leave,
-    taxa: item.absenteeism_rate
-  }));
-
-  // Empresas fixas
-  const companies = [
-    { code: '0059', name: 'Infraestrutura' },
-    { code: '0060', name: 'Empreendimentos' }
-  ];
 
   return (
     <div className="space-y-6">
@@ -342,33 +395,61 @@ const Leaves = () => {
         </div>
       </div>
 
-      {/* Afastamentos por Tipo */}
-      {by_type && by_type.length > 0 && (
+      {/* Evolução por Tipo de Afastamento */}
+      {chartDataByType && chartDataByType.length > 0 && aggregatedByType.length > 0 && (
         <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">📋 Afastamentos por Tipo</h3>
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">📅 Evolução por Tipo de Afastamento</h3>
+          <ResponsiveContainer width="100%" height={400}>
+            <LineChart data={chartDataByType}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="period" />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              {aggregatedByType.map((typeData, index) => (
+                <Line
+                  key={typeData.type}
+                  type="monotone"
+                  dataKey={typeData.type}
+                  stroke={COLORS[index % COLORS.length]}
+                  strokeWidth={2}
+                  name={typeData.type}
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Afastamentos por Tipo */}
+      {aggregatedByType && aggregatedByType.length > 0 && (
+        <div className="bg-white rounded-lg shadow p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">📋 Afastamentos por Tipo (Período Completo)</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-              <ResponsiveContainer width="100%" height={300}>
+              <ResponsiveContainer width="100%" height={350}>
                 <PieChart>
                   <Pie
-                    data={by_type}
+                    data={aggregatedByType}
                     dataKey="count"
                     nameKey="type"
                     cx="50%"
                     cy="50%"
-                    outerRadius={100}
-                    label={(entry) => `${entry.type}: ${entry.percentage}%`}
+                    outerRadius={110}
+                    label={(entry) => `${entry.percentage}%`}
+                    labelLine={true}
                   >
-                    {by_type.map((entry, index) => (
+                    {aggregatedByType.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip />
+                  <Tooltip formatter={(value, name, props) => [`${value} (${props.payload.percentage}%)`, props.payload.type]} />
+                  <Legend />
                 </PieChart>
               </ResponsiveContainer>
             </div>
             <div className="space-y-3">
-              {by_type.map((item, idx) => (
+              {aggregatedByType.map((item, idx) => (
                 <div key={idx} className="flex items-center justify-between">
                   <div className="flex items-center">
                     <div
