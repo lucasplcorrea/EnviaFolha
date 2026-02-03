@@ -6782,10 +6782,24 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             company = params.get('company', [None])[0]
             division = params.get('division', [None])[0]
             
+            # Obter informações do usuário logado
+            user_info = None
+            try:
+                current_user = self.get_current_user()
+                if current_user:
+                    user_info = {
+                        'name': current_user.name,
+                        'email': current_user.email
+                    }
+            except:
+                pass  # Se não conseguir obter usuário, continua sem
+            
             print(f"📊 Gerando relatório PDF: {report_type}")
             print(f"   Seções: {sections}")
             print(f"   Período: {month}/{year}")
             print(f"   Empresa: {company}, Setor: {division}")
+            if user_info:
+                print(f"   Emitido por: {user_info.get('name', 'N/A')}")
             
             db = SessionLocal()
             try:
@@ -6824,12 +6838,13 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     months_range=months_range,
                     company=company,
                     division=division,
-                    data=data
+                    data=data,
+                    user_info=user_info
                 )
                 
                 # Enviar PDF como resposta
                 month_names = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
-                filename = f"Relatorio_RH_{report_type}_{month_names[month-1]}_{year}.pdf"
+                filename = f"NexoRH_{report_type}_{month_names[month-1]}_{year}.pdf"
                 
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/pdf')
@@ -6922,12 +6937,15 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         }
     
     def _get_turnover_data(self, db, year, month, months_range, company, division):
-        """Coleta dados de turnover para o relatório"""
+        """Coleta dados de turnover para o relatório - calcula admissões e demissões por mês"""
         from datetime import date
-        from dateutil.relativedelta import relativedelta
+        from calendar import monthrange
+        from app.models.payroll import PayrollPeriod, PayrollData
+        from app.models.employee import Employee
         
         evolution = []
         current_date = date(year, month, 1)
+        month_names = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
         
         for i in range(months_range):
             m = current_date.month - i
@@ -6936,30 +6954,78 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 m += 12
                 y -= 1
             
-            metrics = self._get_headcount_for_period(db, y, m, company or 'all', division or 'all')
-            
-            month_names = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+            # Definir período do mês
+            _, last_day = monthrange(y, m)
+            period_start = date(y, m, 1)
+            period_end = date(y, m, last_day)
             period_label = f"{month_names[m-1]}/{y}"
             
-            # Calcular turnover
-            headcount = metrics.get('headcount', 0)
-            admissions = metrics.get('admissions', 0)
-            terminations = metrics.get('terminations', 0)
-            avg_emp = headcount + (admissions - terminations) / 2
+            # Buscar funcionários ativos no período via PayrollData
+            period_query = db.query(PayrollPeriod).filter(
+                PayrollPeriod.year == y,
+                PayrollPeriod.month == m
+            )
+            if company and company != 'all':
+                period_query = period_query.filter(PayrollPeriod.company == company)
+            periods = period_query.all()
+            
+            headcount = 0
+            if periods:
+                period_ids = [p.id for p in periods]
+                employee_ids = db.query(PayrollData.employee_id).filter(
+                    PayrollData.period_id.in_(period_ids)
+                ).distinct().all()
+                employee_ids = [e[0] for e in employee_ids]
+                
+                # Aplicar filtro de divisão
+                if division and division != 'all' and employee_ids:
+                    employees = db.query(Employee).filter(
+                        Employee.id.in_(employee_ids),
+                        Employee.department == division
+                    ).all()
+                    headcount = len(employees)
+                else:
+                    headcount = len(employee_ids)
+            
+            # Contar admissões no mês (funcionários com admission_date no mês)
+            admissions_query = db.query(Employee).filter(
+                Employee.admission_date >= period_start,
+                Employee.admission_date <= period_end
+            )
+            if division and division != 'all':
+                admissions_query = admissions_query.filter(Employee.department == division)
+            admissions = admissions_query.count()
+            
+            # Contar demissões no mês (funcionários com termination_date no mês)
+            terminations_query = db.query(Employee).filter(
+                Employee.termination_date >= period_start,
+                Employee.termination_date <= period_end
+            )
+            if division and division != 'all':
+                terminations_query = terminations_query.filter(Employee.department == division)
+            terminations = terminations_query.count()
+            
+            # Calcular turnover: (admissões + demissões) / média funcionários * 100
+            avg_emp = headcount + (admissions - terminations) / 2 if headcount > 0 else 1
             turnover = ((admissions + terminations) / (2 * avg_emp) * 100) if avg_emp > 0 else 0
             
             evolution.insert(0, {
                 'period': period_label,
+                'headcount': headcount,
                 'admissions': admissions,
                 'terminations': terminations,
-                'turnover_rate': turnover
+                'turnover_rate': round(turnover, 2)
             })
+        
+        # Dados do período atual (último da lista após ordenação)
+        current_data = evolution[-1] if evolution else {'admissions': 0, 'terminations': 0, 'turnover_rate': 0, 'headcount': 0}
         
         return {
             'current': {
-                'admissions': evolution[-1]['admissions'] if evolution else 0,
-                'terminations': evolution[-1]['terminations'] if evolution else 0,
-                'turnover_rate': evolution[-1]['turnover_rate'] if evolution else 0
+                'headcount': current_data.get('headcount', 0),
+                'admissions': current_data.get('admissions', 0),
+                'terminations': current_data.get('terminations', 0),
+                'turnover_rate': current_data.get('turnover_rate', 0)
             },
             'evolution': evolution
         }
@@ -7030,18 +7096,11 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     age_counts['55+'] += 1
         by_age = [{'age_range': k, 'count': v} for k, v in age_counts.items() if v > 0]
         
-        # Escolaridade
-        edu_counts = {}
-        for emp in employees:
-            edu = emp.education_level or 'Não informado'
-            edu_counts[edu] = edu_counts.get(edu, 0) + 1
-        by_education = [{'education': k, 'count': v} for k, v in sorted(edu_counts.items(), key=lambda x: x[1], reverse=True)]
-        
         return {
             'current': {
                 'by_gender': by_gender,
                 'by_age_range': by_age,
-                'by_education': by_education
+                'total_employees': len(employees)
             }
         }
     
