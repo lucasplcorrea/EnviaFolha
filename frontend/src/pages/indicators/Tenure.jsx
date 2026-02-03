@@ -273,15 +273,15 @@ const Tenure = () => {
             <LineChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="month_name" />
-              <YAxis label={{ value: 'Anos', angle: -90, position: 'insideLeft' }} />
+              <YAxis label={{ value: 'Meses', angle: -90, position: 'insideLeft' }} />
               <Tooltip />
               <Legend />
               <Line
                 type="monotone"
-                dataKey="average_tenure_years"
+                dataKey="average_tenure_months"
                 stroke="#6366f1"
                 strokeWidth={2}
-                name="Tempo Médio (anos)"
+                name="Tempo Médio (meses)"
                 dot={{ fill: '#6366f1', r: 4 }}
               />
             </LineChart>
