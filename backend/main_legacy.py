@@ -6426,14 +6426,26 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 'by_department': []
             }
         
-        # Query base de employees do período
-        emp_query = db.query(Employee).filter(Employee.id.in_(employee_ids))
-        
-        if division != 'all':
-            emp_query = emp_query.filter(Employee.department == division)
-        
         # Data de referência para o cálculo
         reference_date = date(year, month, 1)
+        
+        # Filtrar employee_ids por division se necessário
+        filtered_employee_ids = employee_ids
+        if division != 'all':
+            filtered_ids_query = db.query(Employee.id).filter(
+                Employee.id.in_(employee_ids),
+                Employee.department == division
+            )
+            filtered_employee_ids = [r[0] for r in filtered_ids_query.all()]
+            
+            if not filtered_employee_ids:
+                return {
+                    'average_tenure_years': 0,
+                    'average_tenure_months': 0,
+                    'total_employees': 0,
+                    'tenure_ranges': [],
+                    'by_department': []
+                }
         
         # Tempo médio de casa (em dias, depois convertido para anos e meses)
         avg_tenure_days_query = db.query(
@@ -6444,12 +6456,9 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 ))
             )
         ).filter(
-            Employee.id.in_(employee_ids),
+            Employee.id.in_(filtered_employee_ids),
             Employee.admission_date.isnot(None)
         )
-        
-        if division != 'all':
-            avg_tenure_days_query = avg_tenure_days_query.filter(Employee.department == division)
         
         avg_tenure_days = avg_tenure_days_query.scalar()
         
@@ -6467,12 +6476,9 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             ).label('tenure_range'),
             func.count(Employee.id).label('count')
         ).filter(
-            Employee.id.in_(employee_ids),
+            Employee.id.in_(filtered_employee_ids),
             Employee.admission_date.isnot(None)
         )
-        
-        if division != 'all':
-            tenure_ranges_query = tenure_ranges_query.filter(Employee.department == division)
         
         tenure_ranges = tenure_ranges_query.group_by('tenure_range').all()
         
@@ -6490,13 +6496,10 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 )) / 365.25
             ).label('avg_years')
         ).filter(
-            Employee.id.in_(employee_ids),
+            Employee.id.in_(filtered_employee_ids),
             Employee.admission_date.isnot(None),
             Employee.department.isnot(None)
         )
-        
-        if division != 'all':
-            avg_tenure_by_dept_query = avg_tenure_by_dept_query.filter(Employee.department == division)
         
         avg_tenure_by_dept = avg_tenure_by_dept_query.group_by(Employee.department).order_by(Employee.department).all()
         
