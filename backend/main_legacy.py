@@ -6438,6 +6438,11 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             )
             filtered_employee_ids = [r[0] for r in filtered_ids_query.all()]
             
+            print(f"🔍 DEBUG Tenure - Division: {division}")
+            print(f"🔍 Total employee_ids no período: {len(employee_ids)}")
+            print(f"🔍 Filtered employee_ids: {len(filtered_employee_ids)}")
+            print(f"🔍 Employee IDs filtrados: {filtered_employee_ids}")
+            
             if not filtered_employee_ids:
                 return {
                     'average_tenure_years': 0,
@@ -6448,12 +6453,11 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 }
         
         # Tempo médio de casa (em dias, depois convertido para anos e meses)
+        # IMPORTANTE: Não usar func.age() com extract('day') pois retorna apenas a parte de dias do interval
+        # Usar subtração direta de datas para obter o total de dias
         avg_tenure_days_query = db.query(
             func.avg(
-                func.extract('day', func.age(
-                    reference_date,
-                    Employee.admission_date
-                ))
+                reference_date - Employee.admission_date
             )
         ).filter(
             Employee.id.in_(filtered_employee_ids),
@@ -6462,16 +6466,41 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         
         avg_tenure_days = avg_tenure_days_query.scalar()
         
-        avg_tenure_years = (float(avg_tenure_days) / 365.25) if avg_tenure_days else 0
-        avg_tenure_months = int(round(float(avg_tenure_days) / 30.44)) if avg_tenure_days else 0
+        print(f"🔍 DEBUG Tenure - avg_tenure_days: {avg_tenure_days}")
+        print(f"🔍 DEBUG Tenure - reference_date: {reference_date}")
+        
+        # Debug: vamos pegar os dados dos funcionários filtrados
+        debug_employees = db.query(Employee.id, Employee.name, Employee.department, Employee.admission_date).filter(
+            Employee.id.in_(filtered_employee_ids),
+            Employee.admission_date.isnot(None)
+        ).all()
+        
+        for emp in debug_employees:
+            days_diff = (reference_date - emp.admission_date).days if emp.admission_date else 0
+            print(f"🔍 Employee {emp.id} - {emp.name} ({emp.department}): admission={emp.admission_date}, days={days_diff}")
+        
+        # Converter para anos e meses
+        if avg_tenure_days:
+            # avg_tenure_days pode vir como timedelta ou float dependendo do DB
+            if hasattr(avg_tenure_days, 'days'):
+                total_days = avg_tenure_days.days
+            else:
+                total_days = float(avg_tenure_days)
+            
+            avg_tenure_years = total_days / 365.25
+            avg_tenure_months = int(round(total_days / 30.44))
+        else:
+            avg_tenure_years = 0
+            avg_tenure_months = 0
         
         # Distribuição por tempo de casa
+        # Calcular anos de tempo de casa corretamente usando subtração de datas
         tenure_ranges_query = db.query(
             case(
-                (func.extract('year', func.age(reference_date, Employee.admission_date)) < 1, '0-1 ano'),
-                (func.extract('year', func.age(reference_date, Employee.admission_date)) < 3, '1-3 anos'),
-                (func.extract('year', func.age(reference_date, Employee.admission_date)) < 5, '3-5 anos'),
-                (func.extract('year', func.age(reference_date, Employee.admission_date)) < 10, '5-10 anos'),
+                ((reference_date - Employee.admission_date) < 365, '0-1 ano'),
+                ((reference_date - Employee.admission_date) < 1095, '1-3 anos'),  # 365 * 3
+                ((reference_date - Employee.admission_date) < 1825, '3-5 anos'),  # 365 * 5
+                ((reference_date - Employee.admission_date) < 3650, '5-10 anos'), # 365 * 10
                 else_='10+ anos'
             ).label('tenure_range'),
             func.count(Employee.id).label('count')
@@ -6489,12 +6518,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         # Tempo médio por departamento
         avg_tenure_by_dept_query = db.query(
             Employee.department,
-            func.avg(
-                func.extract('day', func.age(
-                    reference_date,
-                    Employee.admission_date
-                )) / 365.25
-            ).label('avg_years')
+            func.avg(reference_date - Employee.admission_date).label('avg_days')
         ).filter(
             Employee.id.in_(filtered_employee_ids),
             Employee.admission_date.isnot(None),
@@ -6503,6 +6527,19 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         
         avg_tenure_by_dept = avg_tenure_by_dept_query.group_by(Employee.department).order_by(Employee.department).all()
         
+        # Converter avg_days para anos para cada departamento
+        by_department_results = []
+        for dept_name, avg_days in avg_tenure_by_dept:
+            if avg_days:
+                if hasattr(avg_days, 'days'):
+                    total_days = avg_days.days
+                else:
+                    total_days = float(avg_days)
+                avg_years = int(round(total_days / 365.25))
+            else:
+                avg_years = 0
+            by_department_results.append({'department': dept_name, 'avg_years': avg_years})
+        
         total_employees = sum(c for _, c in tenure_ranges)
         
         return {
@@ -6510,7 +6547,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             'average_tenure_months': avg_tenure_months,
             'total_employees': total_employees,
             'tenure_ranges': [{'range': r, 'count': int(c)} for r, c in sorted_tenure_ranges],
-            'by_department': [{'department': d, 'avg_years': int(round(float(a) if a else 0))} for d, a in avg_tenure_by_dept]
+            'by_department': by_department_results
         }
     
     def handle_indicators_leaves(self):
