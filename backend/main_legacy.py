@@ -6509,7 +6509,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         
         avg_tenure_by_dept = avg_tenure_by_dept_query.group_by(Employee.department).order_by(Employee.department).all()
         
-        # Converter avg_days para anos para cada departamento
+        # Converter avg_days para meses para cada departamento
         by_department_results = []
         for dept_name, avg_days in avg_tenure_by_dept:
             if avg_days:
@@ -6517,10 +6517,10 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     total_days = avg_days.days
                 else:
                     total_days = float(avg_days)
-                avg_years = int(round(total_days / 365.25))
+                avg_months = int(round(total_days / 30.44))
             else:
-                avg_years = 0
-            by_department_results.append({'department': dept_name, 'avg_years': avg_years})
+                avg_months = 0
+            by_department_results.append({'department': dept_name, 'avg_months': avg_months})
         
         total_employees = sum(c for _, c in tenure_ranges)
         

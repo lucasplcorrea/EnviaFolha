@@ -336,14 +336,14 @@ const Tenure = () => {
           </h3>
           <div className="space-y-3">
             {by_department.map((dept, idx) => {
-              const maxYears = Math.max(...by_department.map(d => d.avg_years));
-              const percentage = maxYears > 0 ? (dept.avg_years / maxYears) * 100 : 0;
+              const maxMonths = Math.max(...by_department.map(d => d.avg_months));
+              const percentage = maxMonths > 0 ? (dept.avg_months / maxMonths) * 100 : 0;
               
               return (
                 <div key={idx}>
                   <div className="flex justify-between text-sm mb-1">
                     <span className="font-medium text-gray-700">{dept.department}</span>
-                    <span className="text-gray-600">{dept.avg_years} {dept.avg_years === 1 ? 'ano' : 'anos'}</span>
+                    <span className="text-gray-600">{dept.avg_months} {dept.avg_months === 1 ? 'mês' : 'meses'}</span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-4">
                     <div 
