@@ -5884,40 +5884,206 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json_response({"error": str(e)}, 500)
     
     def handle_indicators_turnover(self):
-        """Retorna métricas de turnover"""
+        """Retorna métricas de turnover (rotatividade) com evolução temporal"""
         try:
-            from app.services.hr_indicators import HRIndicatorsService
-            from datetime import datetime, timedelta
-            
+            # Parse query params
             query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            use_cache = query_params.get('use_cache', ['true'])[0].lower() != 'false'
+            company = query_params.get('company', ['all'])[0]
+            division = query_params.get('division', ['all'])[0]
+            year = query_params.get('year', [None])[0]
+            month = query_params.get('month', [None])[0]
+            months_range = int(query_params.get('months_range', ['12'])[0])
             
-            # Parse período se fornecido
-            period_start = None
-            period_end = None
-            
-            if 'period_start' in query_params:
-                period_start = datetime.strptime(query_params['period_start'][0], '%Y-%m-%d').date()
-            if 'period_end' in query_params:
-                period_end = datetime.strptime(query_params['period_end'][0], '%Y-%m-%d').date()
-            
-            db = SessionLocal()
-            try:
-                service = HRIndicatorsService(db)
-                result = service.get_turnover_metrics(
-                    period_start=period_start,
-                    period_end=period_end,
-                    use_cache=use_cache
-                )
-                self.send_json_response(result)
-            finally:
+            if SessionLocal:
+                from app.models.payroll import PayrollPeriod, PayrollData
+                from app.models.employee import Employee
+                from sqlalchemy import func, or_, and_
+                from decimal import Decimal
+                from datetime import date, datetime
+                from dateutil.relativedelta import relativedelta
+                
+                db = SessionLocal()
+                
+                # Se não especificou período, usar o mais recente
+                if not year or not month:
+                    latest_period = db.query(PayrollPeriod).order_by(
+                        PayrollPeriod.year.desc(),
+                        PayrollPeriod.month.desc()
+                    ).first()
+                    
+                    if not latest_period:
+                        db.close()
+                        self.send_json_response({"error": "Nenhum período encontrado"}, 404)
+                        return
+                    
+                    year = latest_period.year
+                    month = latest_period.month
+                else:
+                    year = int(year)
+                    month = int(month)
+                
+                # Calcular período atual
+                current_date = date(year, month, 1)
+                
+                # MÉTRICA ATUAL (mês selecionado)
+                current_metrics = self._get_turnover_for_period(db, year, month, company, division)
+                
+                # EVOLUÇÃO TEMPORAL (últimos N meses)
+                evolution_data = []
+                month_names_pt = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 
+                                  'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+                for i in range(months_range - 1, -1, -1):
+                    period_date = current_date - relativedelta(months=i)
+                    p_year = period_date.year
+                    p_month = period_date.month
+                    
+                    metrics = self._get_turnover_for_period(db, p_year, p_month, company, division)
+                    evolution_data.append({
+                        'year': p_year,
+                        'month': p_month,
+                        'month_name': f"{month_names_pt[p_month-1]}/{str(p_year)[2:]}",
+                        'turnover_rate': metrics['turnover_rate'],
+                        'admissions': metrics['admissions'],
+                        'terminations': metrics['terminations'],
+                        'avg_headcount': metrics['avg_headcount']
+                    })
+                
+                # DISTRIBUIÇÃO POR EMPRESA E SETORES - DESABILITADO POR PERFORMANCE
+                # Esses cálculos fazem N queries adicionais e tornam a tela muito lenta
+                # Podem ser reabilitados se necessário com otimização via query única
+                by_company = []
+                top_divisions = []
+                
+                result = {
+                    'filters': {
+                        'year': year,
+                        'month': month,
+                        'company': company,
+                        'division': division,
+                        'months_range': months_range
+                    },
+                    'current': {
+                        'turnover_rate': current_metrics['turnover_rate'],
+                        'admissions': current_metrics['admissions'],
+                        'terminations': current_metrics['terminations'],
+                        'avg_headcount': current_metrics['avg_headcount']
+                    },
+                    'evolution': evolution_data,
+                    'by_company': by_company,
+                    'top_divisions': top_divisions
+                }
+                
                 db.close()
+                self.send_json_response(result)
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
                 
         except Exception as e:
             print(f"❌ Erro ao buscar turnover: {e}")
             import traceback
             traceback.print_exc()
             self.send_json_response({"error": str(e)}, 500)
+    
+    def _get_turnover_for_period(self, db, year, month, company='all', division='all'):
+        """Helper OTIMIZADO para calcular turnover de um período específico"""
+        from app.models.payroll import PayrollPeriod, PayrollData
+        from app.models.employee import Employee
+        from sqlalchemy import func
+        from datetime import date
+        
+        # Calcular datas do período
+        period_start = date(year, month, 1)
+        if month == 12:
+            period_end = date(year + 1, 1, 1)
+        else:
+            period_end = date(year, month + 1, 1)
+        
+        # Mês anterior
+        if month == 1:
+            prev_year, prev_month = year - 1, 12
+        else:
+            prev_year, prev_month = year, month - 1
+        
+        prev_start = date(prev_year, prev_month, 1)
+        
+        # Query única para headcount atual e anterior
+        periods_query = db.query(PayrollPeriod).filter(
+            ((PayrollPeriod.year == year) & (PayrollPeriod.month == month)) |
+            ((PayrollPeriod.year == prev_year) & (PayrollPeriod.month == prev_month))
+        )
+        
+        if company != 'all':
+            periods_query = periods_query.filter(PayrollPeriod.company == company)
+        
+        periods = periods_query.all()
+        
+        current_period_ids = [p.id for p in periods if p.year == year and p.month == month]
+        prev_period_ids = [p.id for p in periods if p.year == prev_year and p.month == prev_month]
+        
+        # Contar headcount de cada período
+        current_headcount = 0
+        prev_headcount = 0
+        employee_ids_current = set()
+        
+        if current_period_ids:
+            hc_query = db.query(func.count(func.distinct(PayrollData.employee_id))).filter(
+                PayrollData.period_id.in_(current_period_ids)
+            )
+            if division != 'all':
+                hc_query = hc_query.join(Employee).filter(Employee.department == division)
+            current_headcount = hc_query.scalar() or 0
+            
+            # IDs dos funcionários no período atual
+            emp_query = db.query(PayrollData.employee_id).filter(
+                PayrollData.period_id.in_(current_period_ids)
+            ).distinct()
+            employee_ids_current = set([r[0] for r in emp_query.all()])
+        
+        if prev_period_ids:
+            hc_query = db.query(func.count(func.distinct(PayrollData.employee_id))).filter(
+                PayrollData.period_id.in_(prev_period_ids)
+            )
+            if division != 'all':
+                hc_query = hc_query.join(Employee).filter(Employee.department == division)
+            prev_headcount = hc_query.scalar() or 0
+        
+        avg_headcount = (current_headcount + prev_headcount) / 2 if (current_headcount + prev_headcount) > 0 else 0
+        
+        # Contar admissões e desligamentos
+        admissions_query = db.query(func.count(Employee.id)).filter(
+            Employee.admission_date >= period_start,
+            Employee.admission_date < period_end
+        )
+        terminations_query = db.query(func.count(Employee.id)).filter(
+            Employee.termination_date >= period_start,
+            Employee.termination_date < period_end
+        )
+        
+        if division != 'all':
+            admissions_query = admissions_query.filter(Employee.department == division)
+            terminations_query = terminations_query.filter(Employee.department == division)
+        
+        if employee_ids_current:
+            admissions_query = admissions_query.filter(Employee.id.in_(employee_ids_current))
+            terminations_query = terminations_query.filter(Employee.id.in_(employee_ids_current))
+        
+        admissions = admissions_query.scalar() or 0
+        terminations = terminations_query.scalar() or 0
+        
+        # Taxa de turnover
+        turnover_rate = 0.0
+        if avg_headcount > 0:
+            turnover_rate = ((admissions + terminations) / 2) / avg_headcount * 100
+        
+        return {
+            'turnover_rate': round(turnover_rate, 2),
+            'admissions': admissions,
+            'terminations': terminations,
+            'avg_headcount': round(avg_headcount, 1),
+            'by_company': [],
+            'top_divisions_turnover': []
+        }
     
     def handle_indicators_demographics(self):
         """Retorna perfil demográfico"""
