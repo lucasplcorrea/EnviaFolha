@@ -1,0 +1,67 @@
+<div class="section">
+    <h2 class="section-title">👥 Efetivo por Setor - {{ period_display }}</h2>
+    
+    <!-- Métricas Principais -->
+    <div class="metrics-grid">
+        <div class="metric-card primary">
+            <div class="metric-label">Total de Funcionários</div>
+            <div class="metric-value">{{ headcount.total_employees|default(0) }}</div>
+        </div>
+        
+        <div class="metric-card success">
+            <div class="metric-label">Custo Total</div>
+            <div class="metric-value">{{ headcount.total_cost|default(0)|currency }}</div>
+        </div>
+        
+        <div class="metric-card info">
+            <div class="metric-label">Custo Médio por Funcionário</div>
+            <div class="metric-value">{{ headcount.avg_cost|default(0)|currency }}</div>
+        </div>
+    </div>
+    
+    <!-- Gráfico -->
+    {% if charts.headcount_bar %}
+    <div class="chart-container">
+        <h3>Distribuição por Setor</h3>
+        {{ charts.headcount_bar|safe }}
+    </div>
+    {% endif %}
+    
+    <!-- Tabela por Setor -->
+    {% if headcount.by_sector %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Setor</th>
+                <th style="text-align: right;">Funcionários</th>
+                <th style="text-align: right;">Custo Total</th>
+                <th style="text-align: right;">Custo Médio</th>
+                <th style="text-align: right;">% do Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for dept in headcount.by_sector|sort(attribute='count', reverse=True) %}
+            <tr>
+                <td>{{ dept.sector|default('N/A') }}</td>
+                <td style="text-align: right;">{{ dept.count|default(0) }}</td>
+                <td style="text-align: right;">{{ dept.cost|default(0)|currency }}</td>
+                <td style="text-align: right;">{{ (dept.cost / dept.count if dept.count else 0)|default(0)|currency }}</td>
+                <td style="text-align: right;">{{ dept.percentage|default(0)|percentage }}%</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr>
+                <th>Total</th>
+                <th style="text-align: right;">{{ headcount.total_employees|default(0) }}</th>
+                <th style="text-align: right;">{{ headcount.total_cost|default(0)|currency }}</th>
+                <th style="text-align: right;">{{ headcount.avg_cost|default(0)|currency }}</th>
+                <th style="text-align: right;">100%</th>
+            </tr>
+        </tfoot>
+    </table>
+    {% else %}
+    <p style="text-align: center; color: #6B7280; padding: 2cm;">Sem dados disponíveis para este período.</p>
+    {% endif %}
+</div>
+

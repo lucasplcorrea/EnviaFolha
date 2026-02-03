@@ -230,23 +230,18 @@ const ReportGenerator = () => {
         throw new Error(errorData.error || 'Erro ao gerar relatório');
       }
       
-      // Download do PDF
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
+      // Novo sistema: recebe JSON com caminho do arquivo HTML
+      const responseData = await response.json();
       
-      // Nome do arquivo baseado no relatório e período
-      const monthNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-      const fileName = `Relatorio_${selectedReport.name.replace(/\s+/g, '_')}_${monthNames[selectedFilters.month - 1]}_${selectedFilters.year}.pdf`;
-      a.download = fileName;
+      if (responseData.success) {
+        toast.success(
+          '✅ Relatório aberto no navegador! Use Ctrl+P para imprimir ou salvar como PDF.',
+          { duration: 6000 }
+        );
+      } else {
+        throw new Error(responseData.message || 'Erro ao gerar relatório');
+      }
       
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
-      
-      toast.success('Relatório gerado com sucesso!');
     } catch (error) {
       console.error('Erro ao gerar relatório:', error);
       toast.error(error.message || 'Erro ao gerar relatório');

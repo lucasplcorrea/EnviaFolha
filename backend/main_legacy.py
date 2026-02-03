@@ -6826,9 +6826,10 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 if 'payroll' in sections:
                     data['payroll'] = self._get_payroll_data_for_report(db, year, month, company, division)
                 
-                # Gerar PDF
-                service = ReportGeneratorService(db)
-                pdf_bytes = service.generate_report(
+                # Gerar relatório moderno em HTML
+                from app.services.modern_report_generator import ModernReportGenerator
+                modern_service = ModernReportGenerator(db)
+                html_content = modern_service.generate_report(
                     report_type=report_type,
                     sections=sections,
                     year=year,
@@ -6840,19 +6841,39 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     user_info=user_info
                 )
                 
-                # Enviar PDF como resposta
+                # Salvar HTML temporário e retornar URL para abrir no navegador
+                import tempfile
+                import webbrowser
+                
+                temp_dir = tempfile.gettempdir()
                 month_names = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
-                filename = f"NexoRH_{report_type}_{month_names[month-1]}_{year}.pdf"
+                filename = f"NexoRH_{report_type}_{month_names[month-1]}_{year}.html"
+                temp_path = os.path.join(temp_dir, filename)
+                
+                with open(temp_path, 'w', encoding='utf-8') as f:
+                    f.write(html_content)
+                
+                # Retornar resposta JSON com caminho do arquivo
+                response_data = {
+                    'success': True,
+                    'message': 'Relatório gerado com sucesso',
+                    'file_path': temp_path,
+                    'filename': filename
+                }
                 
                 self.send_response(200)
-                self.send_header('Content-Type', 'application/pdf')
-                self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
-                self.send_header('Content-Length', len(pdf_bytes))
+                self.send_header('Content-Type', 'application/json')
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
-                self.wfile.write(pdf_bytes)
+                self.wfile.write(json.dumps(response_data).encode())
                 
-                print(f"✅ Relatório PDF gerado com sucesso: {filename}")
+                # Abrir no navegador automaticamente
+                print(f"🌐 Abrindo relatório no navegador: {filename}")
+                webbrowser.open(f'file:///{temp_path}')
+                
+                print(f"✅ Relatório HTML gerado com sucesso: {filename}")
+                print(f"📁 Arquivo salvo em: {temp_path}")
+                print(f"💡 Dica: Use Ctrl+P no navegador para imprimir ou salvar como PDF")
                 
             finally:
                 db.close()
