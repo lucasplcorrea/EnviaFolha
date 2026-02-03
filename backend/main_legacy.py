@@ -6784,15 +6784,13 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             
             # Obter informações do usuário logado
             user_info = None
-            try:
-                current_user = self.get_current_user()
-                if current_user:
-                    user_info = {
-                        'name': current_user.name,
-                        'email': current_user.email
-                    }
-            except:
-                pass  # Se não conseguir obter usuário, continua sem
+            current_user = getattr(self, 'current_user', None)
+            if current_user:
+                # current_user é um dict com os dados do usuário
+                user_info = {
+                    'name': current_user.get('name', 'Usuário'),
+                    'email': current_user.get('email', '')
+                }
             
             print(f"📊 Gerando relatório PDF: {report_type}")
             print(f"   Seções: {sections}")

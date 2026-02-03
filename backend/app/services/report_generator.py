@@ -145,10 +145,10 @@ class ReportGeneratorService:
         
         # Create pie chart
         pie = Pie()
-        pie.x = 50
-        pie.y = 20
-        pie.width = 100
-        pie.height = 100
+        pie.x = 30
+        pie.y = 10
+        pie.width = 120
+        pie.height = 120
         pie.data = values
         pie.labels = None  # We'll use legend instead
         
@@ -162,8 +162,8 @@ class ReportGeneratorService:
         
         # Add legend
         legend = Legend()
-        legend.x = 170
-        legend.y = height - 30
+        legend.x = 165
+        legend.y = height - 20
         legend.dx = 8
         legend.dy = 8
         legend.fontName = 'Helvetica'
@@ -703,8 +703,8 @@ class ReportGeneratorService:
                 by_gender,
                 value_key='count',
                 label_key='gender',
-                width=220,
-                height=150
+                width=260,
+                height=160
             )
             
             gender_data = [['Gênero', 'Qtd', '%']]
@@ -728,9 +728,10 @@ class ReportGeneratorService:
             ]))
             
             # Combine chart and table
-            combined = Table([[pie_chart, mini_table]], colWidths=[8*cm, 8*cm])
+            combined = Table([[pie_chart, mini_table]], colWidths=[9*cm, 7*cm])
             combined.setStyle(TableStyle([
                 ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('ALIGN', (0, 0), (0, 0), 'LEFT'),
             ]))
             elements.append(combined)
             elements.append(Spacer(1, 0.5*cm))
@@ -745,8 +746,8 @@ class ReportGeneratorService:
                 by_age,
                 value_key='count',
                 label_key='age_range',
-                width=220,
-                height=150
+                width=260,
+                height=160
             )
             
             age_data = [['Faixa', 'Qtd', '%']]
@@ -769,9 +770,10 @@ class ReportGeneratorService:
                 ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, self.COLORS['light_gray']]),
             ]))
             
-            combined = Table([[pie_chart, mini_table]], colWidths=[8*cm, 8*cm])
+            combined = Table([[pie_chart, mini_table]], colWidths=[9*cm, 7*cm])
             combined.setStyle(TableStyle([
                 ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('ALIGN', (0, 0), (0, 0), 'LEFT'),
             ]))
             elements.append(combined)
         
@@ -865,8 +867,8 @@ class ReportGeneratorService:
                 sorted_types[:8],  # Top 8 types for chart
                 value_key='count',
                 label_key='type',
-                width=240,
-                height=160
+                width=280,
+                height=170
             )
             
             type_data = [['Tipo', 'Qtd', '%']]
@@ -893,9 +895,10 @@ class ReportGeneratorService:
             ]))
             
             # Combine chart and table
-            combined = Table([[pie_chart, mini_table]], colWidths=[8*cm, 9*cm])
+            combined = Table([[pie_chart, mini_table]], colWidths=[9.5*cm, 6.5*cm])
             combined.setStyle(TableStyle([
                 ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('ALIGN', (0, 0), (0, 0), 'LEFT'),
             ]))
             elements.append(combined)
         
