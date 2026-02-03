@@ -2,9 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useTheme } from '../../contexts/ThemeContext';
 import {
   UsersIcon,
-  ArrowPathIcon,
   ExclamationTriangleIcon,
-  UserGroupIcon,
   CalendarIcon
 } from '@heroicons/react/24/outline';
 import api from '../../services/api';
@@ -25,11 +23,16 @@ const Demographics = () => {
   const { config } = useTheme();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
+  const [filters, setFilters] = useState({
+    years: [],
+    months: [],
+    divisions: []
+  });
   const [selectedFilters, setSelectedFilters] = useState({
+    year: '',
+    month: '',
     company: 'all',
     division: 'all',
-    year: null,
-    month: null,
     months_range: 12
   });
   
@@ -45,22 +48,37 @@ const Demographics = () => {
       try {
         const token = localStorage.getItem('token');
         
-        const [yearsRes, monthsRes] = await Promise.all([
+        const [yearsRes, monthsRes, divisionsRes] = await Promise.all([
           fetch('http://localhost:8002/api/v1/payroll/years', {
             headers: { 'Authorization': `Bearer ${token}` }
           }),
           fetch('http://localhost:8002/api/v1/payroll/months', {
             headers: { 'Authorization': `Bearer ${token}` }
+          }),
+          fetch('http://localhost:8002/api/v1/payroll/divisions', {
+            headers: { 'Authorization': `Bearer ${token}` }
           })
         ]);
         
-        const [yearsData, monthsData] = await Promise.all([
+        const [yearsData, monthsData, divisionsData] = await Promise.all([
           yearsRes.json(),
-          monthsRes.json()
+          monthsRes.json(),
+          divisionsRes.json()
         ]);
+        
+        // Extrair apenas os nomes das divisões
+        const divisionNames = (divisionsData.departments || []).map(d => 
+          typeof d === 'object' ? d.name : d
+        ).filter(Boolean);
         
         const years = yearsData.years || [];
         const months = monthsData.months || [];
+        
+        setFilters({
+          years,
+          months,
+          divisions: divisionNames
+        });
         
         // Selecionar período mais recente
         if (years.length > 0 && months.length > 0) {
@@ -122,17 +140,6 @@ const Demographics = () => {
     }));
   };
 
-  const handleRefresh = async () => {
-    try {
-      await api.post('/indicators/cache/invalidate');
-      toast.success('Cache invalidado');
-    } catch (error) {
-      console.error('Erro ao invalidar cache:', error);
-    }
-    await loadData();
-    toast.success('Indicadores atualizados!');
-  };
-
   // Preparar dados do gráfico de evolução
   const chartData = useMemo(() => {
     if (!data?.evolution) return [];
@@ -153,17 +160,39 @@ const Demographics = () => {
   return (
     <div className="space-y-6">
       {/* Filtros */}
-      <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
-        <h2 className={`text-xl font-semibold ${config.classes.text} mb-4`}>
-          Filtros
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {/* Empresa */}
+      <div className="bg-white rounded-lg shadow p-4">
+        <h2 className="text-lg font-semibold text-gray-900 mb-3">Filtros</h2>
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <div>
-            <label className={`block text-sm font-medium ${config.classes.text} mb-2`}>
-              <UserGroupIcon className="h-4 w-4 inline mr-1" />
-              Empresa
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Ano</label>
+            <select
+              value={selectedFilters.year}
+              onChange={(e) => handleFilterChange('year', parseInt(e.target.value))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Selecione</option>
+              {filters.years.map(year => (
+                <option key={year} value={year}>{year}</option>
+              ))}
+            </select>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Mês</label>
+            <select
+              value={selectedFilters.month}
+              onChange={(e) => handleFilterChange('month', parseInt(e.target.value))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Selecione</option>
+              {filters.months.map(month => (
+                <option key={month.number} value={month.number}>{month.name}</option>
+              ))}
+            </select>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Empresa</label>
             <select
               value={selectedFilters.company}
               onChange={(e) => handleFilterChange('company', e.target.value)}
@@ -174,57 +203,33 @@ const Demographics = () => {
               <option value="0059">Infraestrutura</option>
             </select>
           </div>
-
-          {/* Divisão */}
+          
           <div>
-            <label className={`block text-sm font-medium ${config.classes.text} mb-2`}>
-              <UsersIcon className="h-4 w-4 inline mr-1" />
-              Divisão
-            </label>
-            <input
-              type="text"
+            <label className="block text-sm font-medium text-gray-700 mb-1">Setor</label>
+            <select
               value={selectedFilters.division}
               onChange={(e) => handleFilterChange('division', e.target.value)}
-              placeholder="Todas (deixe 'all')"
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          {/* Período */}
-          <div>
-            <label className={`block text-sm font-medium ${config.classes.text} mb-2`}>
-              <CalendarIcon className="h-4 w-4 inline mr-1" />
-              Mês/Ano
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="number"
-                value={selectedFilters.month || ''}
-                onChange={(e) => handleFilterChange('month', e.target.value)}
-                placeholder="Mês"
-                min="1"
-                max="12"
-                className="w-20 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <input
-                type="number"
-                value={selectedFilters.year || ''}
-                onChange={(e) => handleFilterChange('year', e.target.value)}
-                placeholder="Ano"
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-          </div>
-
-          {/* Botão Atualizar */}
-          <div className="flex items-end">
-            <button
-              onClick={handleRefresh}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
             >
-              <ArrowPathIcon className="h-5 w-5" />
-              Atualizar
-            </button>
+              <option value="all">Todos</option>
+              {filters.divisions.map(division => (
+                <option key={division} value={division}>{division}</option>
+              ))}
+            </select>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Período Evolução</label>
+            <select
+              value={selectedFilters.months_range}
+              onChange={(e) => handleFilterChange('months_range', parseInt(e.target.value))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value={6}>6 meses</option>
+              <option value={12}>12 meses</option>
+              <option value={18}>18 meses</option>
+              <option value={24}>24 meses</option>
+            </select>
           </div>
         </div>
       </div>
