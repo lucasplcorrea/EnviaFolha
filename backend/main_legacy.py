@@ -6085,21 +6085,209 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             'top_divisions_turnover': []
         }
     
+    def _get_demographics_for_period(self, db, year, month, company='all', division='all'):
+        """Helper para calcular métricas demográficas de um período específico"""
+        from app.models.payroll import PayrollPeriod, PayrollData
+        from app.models.employee import Employee
+        from sqlalchemy import func, case
+        
+        # Buscar períodos do mês especificado
+        periods_query = db.query(PayrollPeriod).filter(
+            PayrollPeriod.year == year,
+            PayrollPeriod.month == month
+        )
+        
+        if company != 'all':
+            periods_query = periods_query.filter(PayrollPeriod.company == company)
+        
+        periods = periods_query.all()
+        if not periods:
+            return {
+                'average_age': 0,
+                'male_count': 0,
+                'female_count': 0,
+                'total_employees': 0,
+                'by_sex': [],
+                'age_ranges': []
+            }
+        
+        period_ids = [p.id for p in periods]
+        
+        # Obter IDs únicos de funcionários do período
+        employee_ids_query = db.query(PayrollData.employee_id).filter(
+            PayrollData.period_id.in_(period_ids)
+        ).distinct()
+        
+        employee_ids = [r[0] for r in employee_ids_query.all()]
+        
+        if not employee_ids:
+            return {
+                'average_age': 0,
+                'male_count': 0,
+                'female_count': 0,
+                'total_employees': 0,
+                'by_sex': [],
+                'age_ranges': []
+            }
+        
+        # Query base de employees do período
+        emp_query = db.query(Employee).filter(Employee.id.in_(employee_ids))
+        
+        if division != 'all':
+            emp_query = emp_query.filter(Employee.department == division)
+        
+        # Distribuição por sexo
+        by_sex_query = db.query(
+            Employee.sex,
+            func.count(Employee.id).label('count')
+        ).filter(
+            Employee.id.in_(employee_ids),
+            Employee.sex.isnot(None)
+        )
+        
+        if division != 'all':
+            by_sex_query = by_sex_query.filter(Employee.department == division)
+        
+        by_sex = by_sex_query.group_by(Employee.sex).all()
+        
+        # Faixas etárias
+        age_ranges_query = db.query(
+            case(
+                (func.extract('year', func.age(Employee.birth_date)) < 25, '18-24'),
+                (func.extract('year', func.age(Employee.birth_date)) < 35, '25-34'),
+                (func.extract('year', func.age(Employee.birth_date)) < 45, '35-44'),
+                (func.extract('year', func.age(Employee.birth_date)) < 55, '45-54'),
+                else_='55+'
+            ).label('age_range'),
+            func.count(Employee.id).label('count')
+        ).filter(
+            Employee.id.in_(employee_ids),
+            Employee.birth_date.isnot(None)
+        )
+        
+        if division != 'all':
+            age_ranges_query = age_ranges_query.filter(Employee.department == division)
+        
+        age_ranges = age_ranges_query.group_by('age_range').all()
+        
+        # Idade média
+        avg_age_query = db.query(
+            func.avg(func.extract('year', func.age(Employee.birth_date)))
+        ).filter(
+            Employee.id.in_(employee_ids),
+            Employee.birth_date.isnot(None)
+        )
+        
+        if division != 'all':
+            avg_age_query = avg_age_query.filter(Employee.department == division)
+        
+        avg_age = avg_age_query.scalar()
+        
+        # Ordenar faixas etárias
+        age_range_order = {'18-24': 1, '25-34': 2, '35-44': 3, '45-54': 4, '55+': 5}
+        sorted_age_ranges = sorted(age_ranges, key=lambda x: age_range_order.get(x[0], 99))
+        
+        # Extrair contagens por sexo
+        male_count = 0
+        female_count = 0
+        for s, c in by_sex:
+            if s == 'M':
+                male_count = c
+            elif s == 'F':
+                female_count = c
+        
+        total_employees = male_count + female_count
+        
+        return {
+            'average_age': int(round(float(avg_age))) if avg_age else 0,
+            'male_count': male_count,
+            'female_count': female_count,
+            'total_employees': total_employees,
+            'by_sex': [{'sex': s or 'Não informado', 'count': c} for s, c in by_sex],
+            'age_ranges': [{'range': r, 'count': c} for r, c in sorted_age_ranges]
+        }
+    
     def handle_indicators_demographics(self):
-        """Retorna perfil demográfico"""
+        """Retorna perfil demográfico com evolução temporal"""
         try:
-            from app.services.hr_indicators import HRIndicatorsService
-            
+            # Parse query params
             query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            use_cache = query_params.get('use_cache', ['true'])[0].lower() != 'false'
+            company = query_params.get('company', ['all'])[0]
+            division = query_params.get('division', ['all'])[0]
+            year = query_params.get('year', [None])[0]
+            month = query_params.get('month', [None])[0]
+            months_range = int(query_params.get('months_range', ['12'])[0])
             
-            db = SessionLocal()
-            try:
-                service = HRIndicatorsService(db)
-                result = service.get_demographic_metrics(use_cache=use_cache)
-                self.send_json_response(result)
-            finally:
+            if SessionLocal:
+                from app.models.payroll import PayrollPeriod, PayrollData
+                from app.models.employee import Employee
+                from sqlalchemy import func, case
+                from datetime import date
+                from dateutil.relativedelta import relativedelta
+                
+                db = SessionLocal()
+                
+                # Se não especificou período, usar o mais recente
+                if not year or not month:
+                    latest_period = db.query(PayrollPeriod).order_by(
+                        PayrollPeriod.year.desc(),
+                        PayrollPeriod.month.desc()
+                    ).first()
+                    
+                    if not latest_period:
+                        db.close()
+                        self.send_json_response({"error": "Nenhum período encontrado"}, 404)
+                        return
+                    
+                    year = latest_period.year
+                    month = latest_period.month
+                else:
+                    year = int(year)
+                    month = int(month)
+                
+                # Calcular período atual
+                current_date = date(year, month, 1)
+                
+                # MÉTRICA ATUAL (mês selecionado)
+                current_metrics = self._get_demographics_for_period(db, year, month, company, division)
+                
+                # EVOLUÇÃO TEMPORAL (últimos N meses)
+                evolution_data = []
+                month_names_pt = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 
+                                  'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+                for i in range(months_range - 1, -1, -1):
+                    period_date = current_date - relativedelta(months=i)
+                    p_year = period_date.year
+                    p_month = period_date.month
+                    
+                    metrics = self._get_demographics_for_period(db, p_year, p_month, company, division)
+                    evolution_data.append({
+                        'year': p_year,
+                        'month': p_month,
+                        'month_name': f"{month_names_pt[p_month-1]}/{str(p_year)[2:]}",
+                        'average_age': metrics['average_age'],
+                        'male_count': metrics['male_count'],
+                        'female_count': metrics['female_count'],
+                        'total_employees': metrics['total_employees']
+                    })
+                
+                result = {
+                    'filters': {
+                        'year': year,
+                        'month': month,
+                        'company': company,
+                        'division': division,
+                        'months_range': months_range
+                    },
+                    'current': current_metrics,
+                    'evolution': evolution_data
+                }
+                
                 db.close()
+                self.send_json_response(result)
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
                 
         except Exception as e:
             print(f"❌ Erro ao buscar demographics: {e}")

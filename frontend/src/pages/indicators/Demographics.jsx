@@ -1,23 +1,54 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useTheme } from '../../contexts/ThemeContext';
 import {
   UsersIcon,
   ArrowPathIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  UserGroupIcon,
+  CalendarIcon
 } from '@heroicons/react/24/outline';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
-import { MetricCard, LoadingSpinner, EmptyState, translateLabel } from './components';
+import { MetricCard, LoadingSpinner, EmptyState } from './components';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer
+} from 'recharts';
 
 const Demographics = () => {
   const { config } = useTheme();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
+  const [selectedFilters, setSelectedFilters] = useState({
+    company: 'all',
+    division: 'all',
+    year: null,
+    month: null,
+    months_range: 12
+  });
+  
+  const filtersLoaded = useRef(false);
 
   const loadData = useCallback(async () => {
+    if (!selectedFilters.year || !selectedFilters.month) return;
+    
     setLoading(true);
     try {
-      const response = await api.get('/indicators/demographics');
+      const params = new URLSearchParams({
+        company: selectedFilters.company,
+        division: selectedFilters.division,
+        year: selectedFilters.year,
+        month: selectedFilters.month,
+        months_range: selectedFilters.months_range
+      });
+      
+      const response = await api.get(`/indicators/demographics?${params}`);
       setData(response.data);
     } catch (error) {
       console.error('Erro ao carregar demografia:', error);
@@ -25,22 +56,63 @@ const Demographics = () => {
     } finally {
       setLoading(false);
     }
+  }, [selectedFilters]);
+
+  useEffect(() => {
+    if (!filtersLoaded.current) {
+      loadFiltersData();
+      filtersLoaded.current = true;
+    }
   }, []);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    if (selectedFilters.year && selectedFilters.month) {
+      loadData();
+    }
+  }, [selectedFilters, loadData]);
+
+  const loadFiltersData = async () => {
+    try {
+      const response = await api.get('/indicators/filters');
+      const { periods } = response.data;
+      
+      if (periods && periods.length > 0) {
+        const latest = periods[0];
+        setSelectedFilters(prev => ({
+          ...prev,
+          year: latest.year,
+          month: latest.month
+        }));
+      }
+    } catch (error) {
+      console.error('Erro ao carregar filtros:', error);
+      toast.error('Erro ao carregar filtros');
+    }
+  };
+
+  const handleFilterChange = (filterName, value) => {
+    setSelectedFilters(prev => ({
+      ...prev,
+      [filterName]: value
+    }));
+  };
 
   const handleRefresh = async () => {
     try {
       await api.post('/indicators/cache/invalidate');
-      toast.success('Cache invalidado, recalculando...');
+      toast.success('Cache invalidado');
     } catch (error) {
       console.error('Erro ao invalidar cache:', error);
     }
     await loadData();
     toast.success('Indicadores atualizados!');
   };
+
+  // Preparar dados do gráfico de evolução
+  const chartData = useMemo(() => {
+    if (!data?.evolution) return [];
+    return data.evolution;
+  }, [data]);
 
   if (loading) {
     return <LoadingSpinner message="Carregando indicadores demográficos..." />;
@@ -50,56 +122,186 @@ const Demographics = () => {
     return <EmptyState icon={ExclamationTriangleIcon} message="Nenhum dado demográfico disponível" />;
   }
 
-  const { by_sex, age_ranges, average_age } = data;
-
-  // Calcular totais por sexo
-  const totalBySex = by_sex?.reduce((sum, s) => sum + s.count, 0) || 0;
+  const { current, evolution } = data;
+  const { by_sex, age_ranges, average_age, total_employees, male_count, female_count } = current;
 
   return (
     <div className="space-y-6">
-      {/* Botão de atualização */}
-      <div className="flex justify-end">
-        <button
-          onClick={handleRefresh}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <ArrowPathIcon className="h-5 w-5" />
-          Atualizar
-        </button>
+      {/* Filtros */}
+      <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
+        <h2 className={`text-xl font-semibold ${config.classes.text} mb-4`}>
+          Filtros
+        </h2>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {/* Empresa */}
+          <div>
+            <label className={`block text-sm font-medium ${config.classes.text} mb-2`}>
+              <UserGroupIcon className="h-4 w-4 inline mr-1" />
+              Empresa
+            </label>
+            <select
+              value={selectedFilters.company}
+              onChange={(e) => handleFilterChange('company', e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">Todas</option>
+              <option value="0060">Empreendimentos</option>
+              <option value="0059">Infraestrutura</option>
+            </select>
+          </div>
+
+          {/* Divisão */}
+          <div>
+            <label className={`block text-sm font-medium ${config.classes.text} mb-2`}>
+              <UsersIcon className="h-4 w-4 inline mr-1" />
+              Divisão
+            </label>
+            <input
+              type="text"
+              value={selectedFilters.division}
+              onChange={(e) => handleFilterChange('division', e.target.value)}
+              placeholder="Todas (deixe 'all')"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {/* Período */}
+          <div>
+            <label className={`block text-sm font-medium ${config.classes.text} mb-2`}>
+              <CalendarIcon className="h-4 w-4 inline mr-1" />
+              Mês/Ano
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="number"
+                value={selectedFilters.month || ''}
+                onChange={(e) => handleFilterChange('month', e.target.value)}
+                placeholder="Mês"
+                min="1"
+                max="12"
+                className="w-20 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <input
+                type="number"
+                value={selectedFilters.year || ''}
+                onChange={(e) => handleFilterChange('year', e.target.value)}
+                placeholder="Ano"
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+
+          {/* Botão Atualizar */}
+          <div className="flex items-end">
+            <button
+              onClick={handleRefresh}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <ArrowPathIcon className="h-5 w-5" />
+              Atualizar
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Métricas Principais */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <MetricCard
           title="Idade Média"
           value={average_age || 0}
           unit="anos"
-          icon={UsersIcon}
+          icon={CalendarIcon}
           color="yellow"
         />
         <MetricCard
           title="Total de Colaboradores"
-          value={totalBySex}
+          value={total_employees || 0}
           icon={UsersIcon}
           color="blue"
         />
         <MetricCard
-          title="Faixas Etárias"
-          value={age_ranges?.length || 0}
+          title="Masculino"
+          value={male_count || 0}
           icon={UsersIcon}
-          color="purple"
+          color="indigo"
+        />
+        <MetricCard
+          title="Feminino"
+          value={female_count || 0}
+          icon={UsersIcon}
+          color="pink"
         />
       </div>
 
-      {/* Distribuição por Sexo */}
+      {/* Gráfico de Evolução da Idade Média */}
+      {evolution && evolution.length > 0 && (
+        <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
+          <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
+            📊 Evolução da Idade Média
+          </h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="month_name" />
+              <YAxis label={{ value: 'Idade (anos)', angle: -90, position: 'insideLeft' }} />
+              <Tooltip />
+              <Legend />
+              <Line
+                type="monotone"
+                dataKey="average_age"
+                stroke="#f59e0b"
+                strokeWidth={2}
+                name="Idade Média"
+                dot={{ fill: '#f59e0b', r: 4 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Gráfico de Evolução por Sexo */}
+      {evolution && evolution.length > 0 && (
+        <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
+          <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
+            👥 Evolução da Distribuição por Sexo
+          </h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="month_name" />
+              <YAxis label={{ value: 'Quantidade', angle: -90, position: 'insideLeft' }} />
+              <Tooltip />
+              <Legend />
+              <Line
+                type="monotone"
+                dataKey="male_count"
+                stroke="#3b82f6"
+                strokeWidth={2}
+                name="Masculino"
+                dot={{ fill: '#3b82f6', r: 4 }}
+              />
+              <Line
+                type="monotone"
+                dataKey="female_count"
+                stroke="#ec4899"
+                strokeWidth={2}
+                name="Feminino"
+                dot={{ fill: '#ec4899', r: 4 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Distribuição por Sexo (cards) */}
       {by_sex && by_sex.length > 0 && (
         <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
           <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
-            👥 Distribuição por Sexo
+            👥 Distribuição por Sexo (Período Atual)
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {by_sex.map((item, idx) => {
-              const percentage = totalBySex > 0 ? ((item.count / totalBySex) * 100).toFixed(1) : 0;
+              const percentage = total_employees > 0 ? ((item.count / total_employees) * 100).toFixed(1) : 0;
               const isMale = item.sex === 'M';
               return (
                 <div 
@@ -138,7 +340,7 @@ const Demographics = () => {
       {age_ranges && age_ranges.length > 0 && (
         <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
           <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
-            📊 Distribuição por Faixa Etária
+            📊 Distribuição por Faixa Etária (Período Atual)
           </h3>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
             {age_ranges.map((range, idx) => {
@@ -171,65 +373,6 @@ const Demographics = () => {
           </div>
         </div>
       )}
-
-      {/* Análise Demográfica */}
-      <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
-        <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
-          📈 Análise Demográfica
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Resumo por Sexo */}
-          {by_sex && by_sex.length > 0 && (
-            <div>
-              <h4 className={`text-sm font-medium ${config.classes.textSecondary} mb-3`}>Proporção por Sexo</h4>
-              <div className="flex h-8 rounded-full overflow-hidden">
-                {by_sex.map((item, idx) => {
-                  const percentage = totalBySex > 0 ? (item.count / totalBySex) * 100 : 0;
-                  const isMale = item.sex === 'M';
-                  return (
-                    <div 
-                      key={idx}
-                      className={`flex items-center justify-center text-xs font-medium text-white ${
-                        isMale ? 'bg-blue-500' : 'bg-pink-500'
-                      }`}
-                      style={{ width: `${percentage}%` }}
-                    >
-                      {percentage > 15 && `${percentage.toFixed(0)}%`}
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="flex justify-between mt-2 text-xs">
-                {by_sex.map((item, idx) => (
-                  <span key={idx} className={config.classes.textSecondary}>
-                    {translateLabel(item.sex)}: {item.count}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Faixa mais populosa */}
-          {age_ranges && age_ranges.length > 0 && (
-            <div>
-              <h4 className={`text-sm font-medium ${config.classes.textSecondary} mb-3`}>Maior Faixa Etária</h4>
-              {(() => {
-                const maxRange = age_ranges.reduce((max, r) => r.count > max.count ? r : max, age_ranges[0]);
-                const totalRange = age_ranges.reduce((sum, r) => sum + r.count, 0);
-                const percentage = totalRange > 0 ? ((maxRange.count / totalRange) * 100).toFixed(1) : 0;
-                return (
-                  <div className="p-4 rounded-lg bg-gradient-to-r from-blue-500 to-purple-500 text-white">
-                    <p className="text-2xl font-bold">{maxRange.range}</p>
-                    <p className="text-sm opacity-90 mt-1">
-                      {maxRange.count} colaboradores ({percentage}%)
-                    </p>
-                  </div>
-                );
-              })()}
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 };
