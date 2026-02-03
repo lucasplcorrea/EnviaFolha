@@ -33,7 +33,58 @@ const Demographics = () => {
     months_range: 12
   });
   
-  const filtersLoaded = useRef(false);
+  const [filtersReady, setFiltersReady] = useState(false);
+  const initialLoadDone = useRef(false);
+
+  // Carregar filtros apenas uma vez na montagem
+  useEffect(() => {
+    if (initialLoadDone.current) return;
+    initialLoadDone.current = true;
+    
+    const loadFilters = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        
+        const [yearsRes, monthsRes] = await Promise.all([
+          fetch('http://localhost:8002/api/v1/payroll/years', {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }),
+          fetch('http://localhost:8002/api/v1/payroll/months', {
+            headers: { 'Authorization': `Bearer ${token}` }
+          })
+        ]);
+        
+        const [yearsData, monthsData] = await Promise.all([
+          yearsRes.json(),
+          monthsRes.json()
+        ]);
+        
+        const years = yearsData.years || [];
+        const months = monthsData.months || [];
+        
+        // Selecionar período mais recente
+        if (years.length > 0 && months.length > 0) {
+          const latestYear = Math.max(...years);
+          const latestMonth = months[months.length - 1].number;
+          
+          setSelectedFilters(prev => ({ 
+            ...prev, 
+            year: latestYear,
+            month: latestMonth
+          }));
+          setFiltersReady(true);
+        } else {
+          setLoading(false);
+        }
+      } catch (error) {
+        console.error('Erro ao carregar filtros:', error);
+        toast.error('Erro ao carregar filtros');
+        setLoading(false);
+      }
+    };
+    
+    loadFilters();
+  }, []);
 
   const loadData = useCallback(async () => {
     if (!selectedFilters.year || !selectedFilters.month) return;
@@ -59,36 +110,10 @@ const Demographics = () => {
   }, [selectedFilters]);
 
   useEffect(() => {
-    if (!filtersLoaded.current) {
-      loadFiltersData();
-      filtersLoaded.current = true;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (selectedFilters.year && selectedFilters.month) {
+    if (filtersReady && selectedFilters.year && selectedFilters.month) {
       loadData();
     }
-  }, [selectedFilters, loadData]);
-
-  const loadFiltersData = async () => {
-    try {
-      const response = await api.get('/indicators/filters');
-      const { periods } = response.data;
-      
-      if (periods && periods.length > 0) {
-        const latest = periods[0];
-        setSelectedFilters(prev => ({
-          ...prev,
-          year: latest.year,
-          month: latest.month
-        }));
-      }
-    } catch (error) {
-      console.error('Erro ao carregar filtros:', error);
-      toast.error('Erro ao carregar filtros');
-    }
-  };
+  }, [filtersReady, selectedFilters, loadData]);
 
   const handleFilterChange = (filterName, value) => {
     setSelectedFilters(prev => ({
