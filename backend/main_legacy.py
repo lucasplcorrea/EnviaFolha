@@ -6533,17 +6533,52 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         }
     
     def handle_indicators_leaves(self):
-        """Retorna métricas de afastamentos"""
+        """Retorna métricas de afastamentos com filtros e evolução"""
         try:
-            from app.services.hr_indicators import HRIndicatorsService
+            from sqlalchemy import func, and_
+            from app.models.employee import Employee
+            from app.models.leave import LeaveRecord
+            from datetime import datetime, date
+            from dateutil.relativedelta import relativedelta
             
             query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            use_cache = query_params.get('use_cache', ['true'])[0].lower() != 'false'
+            
+            # Filtros
+            company = query_params.get('company', [None])[0]
+            division = query_params.get('division', [None])[0]
+            leave_type = query_params.get('leave_type', [None])[0]
+            year = query_params.get('year', [None])[0]
+            month = query_params.get('month', [None])[0]
+            months_range = int(query_params.get('months_range', ['6'])[0])
             
             db = SessionLocal()
             try:
-                service = HRIndicatorsService(db)
-                result = service.get_leave_metrics(use_cache=use_cache)
+                # Determinar período de referência
+                if year and month:
+                    reference_date = date(int(year), int(month), 1)
+                else:
+                    reference_date = date.today().replace(day=1)
+                
+                # Buscar tipos de afastamento disponíveis
+                leave_types = db.query(LeaveRecord.leave_type).distinct().all()
+                leave_types_list = [lt[0] for lt in leave_types if lt[0]]
+                
+                # Calcular evolução dos últimos N meses
+                evolution = []
+                for i in range(months_range - 1, -1, -1):
+                    period_date = reference_date - relativedelta(months=i)
+                    period_metrics = self._get_leaves_for_period(db, period_date, company, division, leave_type)
+                    evolution.append(period_metrics)
+                
+                # Métricas do período atual
+                current_metrics = evolution[-1] if evolution else {}
+                
+                result = {
+                    'evolution': evolution,
+                    'current': current_metrics,
+                    'leave_types': leave_types_list
+                }
+                
                 self.send_json_response(result)
             finally:
                 db.close()
@@ -6553,6 +6588,179 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             import traceback
             traceback.print_exc()
             self.send_json_response({"error": str(e)}, 500)
+    
+    def _get_leaves_for_period(self, db, reference_date, company=None, division=None, leave_type=None):
+        """Calcula métricas de afastamentos para um período específico usando LeaveRecord"""
+        from sqlalchemy import func, and_, or_
+        from app.models.employee import Employee
+        from app.models.leave import LeaveRecord
+        from datetime import date
+        from dateutil.relativedelta import relativedelta
+        
+        # Último dia do mês
+        if reference_date.month == 12:
+            last_day = reference_date.replace(day=31)
+        else:
+            last_day = (reference_date.replace(day=1) + relativedelta(months=1)) - relativedelta(days=1)
+        
+        # Total de colaboradores ativos
+        employees_query = db.query(Employee).filter(Employee.is_active == True)
+        if company:
+            employees_query = employees_query.filter(Employee.company_code == company)
+        if division:
+            employees_query = employees_query.filter(Employee.department == division)
+        
+        total_employees = employees_query.count()
+        
+        # Query base de afastamentos no período
+        # (afastamento começa antes ou durante o mês E termina depois ou durante o mês)
+        leaves_query = db.query(LeaveRecord).join(Employee).filter(
+            and_(
+                Employee.is_active == True,
+                LeaveRecord.start_date <= last_day,
+                LeaveRecord.end_date >= reference_date
+            )
+        )
+        
+        # Aplicar filtros
+        if company:
+            leaves_query = leaves_query.filter(Employee.company_code == company)
+        if division:
+            leaves_query = leaves_query.filter(Employee.department == division)
+        if leave_type:
+            leaves_query = leaves_query.filter(LeaveRecord.leave_type == leave_type)
+        
+        # Contar afastamentos únicos por colaborador no período
+        total_on_leave = db.query(func.count(func.distinct(LeaveRecord.employee_id))).join(Employee).filter(
+            and_(
+                Employee.is_active == True,
+                LeaveRecord.start_date <= last_day,
+                LeaveRecord.end_date >= reference_date
+            )
+        )
+        
+        if company:
+            total_on_leave = total_on_leave.filter(Employee.company_code == company)
+        if division:
+            total_on_leave = total_on_leave.filter(Employee.department == division)
+        if leave_type:
+            total_on_leave = total_on_leave.filter(LeaveRecord.leave_type == leave_type)
+        
+        total_on_leave = total_on_leave.scalar() or 0
+        
+        # Taxa de absenteísmo
+        absenteeism_rate = (total_on_leave / total_employees * 100) if total_employees > 0 else 0
+        
+        # Afastamentos por tipo
+        by_type_query = db.query(
+            LeaveRecord.leave_type,
+            func.count(LeaveRecord.id).label('count')
+        ).join(Employee).filter(
+            and_(
+                Employee.is_active == True,
+                LeaveRecord.start_date <= last_day,
+                LeaveRecord.end_date >= reference_date
+            )
+        )
+        
+        if company:
+            by_type_query = by_type_query.filter(Employee.company_code == company)
+        if division:
+            by_type_query = by_type_query.filter(Employee.department == division)
+        
+        by_type = by_type_query.group_by(LeaveRecord.leave_type).all()
+        
+        total_leaves = sum(count for _, count in by_type)
+        by_type_results = []
+        for type_name, count in by_type:
+            by_type_results.append({
+                'type': type_name if type_name else 'Não especificado',
+                'count': count,
+                'percentage': round((count / total_leaves * 100), 1) if total_leaves > 0 else 0
+            })
+        
+        # Duração média dos afastamentos (em dias) - usando campo days se disponível
+        avg_duration_query = db.query(
+            func.avg(LeaveRecord.days)
+        ).join(Employee).filter(
+            and_(
+                Employee.is_active == True,
+                LeaveRecord.start_date <= last_day,
+                LeaveRecord.end_date >= reference_date,
+                LeaveRecord.days.isnot(None)
+            )
+        )
+        
+        if company:
+            avg_duration_query = avg_duration_query.filter(Employee.company_code == company)
+        if division:
+            avg_duration_query = avg_duration_query.filter(Employee.department == division)
+        if leave_type:
+            avg_duration_query = avg_duration_query.filter(LeaveRecord.leave_type == leave_type)
+        
+        avg_duration = avg_duration_query.scalar()
+        
+        # Se days não estiver preenchido, calcular pela diferença de datas
+        if avg_duration is None:
+            avg_duration_query = db.query(
+                func.avg(LeaveRecord.end_date - LeaveRecord.start_date)
+            ).join(Employee).filter(
+                and_(
+                    Employee.is_active == True,
+                    LeaveRecord.start_date <= last_day,
+                    LeaveRecord.end_date >= reference_date
+                )
+            )
+            
+            if company:
+                avg_duration_query = avg_duration_query.filter(Employee.company_code == company)
+            if division:
+                avg_duration_query = avg_duration_query.filter(Employee.department == division)
+            if leave_type:
+                avg_duration_query = avg_duration_query.filter(LeaveRecord.leave_type == leave_type)
+            
+            avg_duration = avg_duration_query.scalar()
+        
+        # Afastamentos por departamento
+        by_department_query = db.query(
+            Employee.department,
+            func.count(LeaveRecord.id).label('count')
+        ).join(Employee).filter(
+            and_(
+                Employee.is_active == True,
+                LeaveRecord.start_date <= last_day,
+                LeaveRecord.end_date >= reference_date
+            )
+        )
+        
+        if company:
+            by_department_query = by_department_query.filter(Employee.company_code == company)
+        if division:
+            by_department_query = by_department_query.filter(Employee.department == division)
+        if leave_type:
+            by_department_query = by_department_query.filter(LeaveRecord.leave_type == leave_type)
+        
+        by_department = by_department_query.group_by(Employee.department).all()
+        
+        by_department_results = []
+        for dept, count in by_department:
+            by_department_results.append({
+                'department': dept if dept else 'Não especificado',
+                'count': count,
+                'percentage': round((count / total_leaves * 100), 1) if total_leaves > 0 else 0
+            })
+        
+        return {
+            'year': reference_date.year,
+            'month': reference_date.month,
+            'total_employees': total_employees,
+            'total_on_leave': total_on_leave,
+            'total_leave_records': total_leaves,
+            'absenteeism_rate': round(absenteeism_rate, 2),
+            'average_duration_days': round(float(avg_duration), 1) if avg_duration else 0,
+            'by_type': by_type_results,
+            'by_department': by_department_results
+        }
     
     def handle_indicators_invalidate_cache(self):
         """Invalida cache de indicadores e employees"""

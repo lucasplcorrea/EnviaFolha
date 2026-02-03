@@ -1,226 +1,420 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useTheme } from '../../contexts/ThemeContext';
-import {
-  ExclamationTriangleIcon,
-  ArrowPathIcon
-} from '@heroicons/react/24/outline';
-import api from '../../services/api';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import toast from 'react-hot-toast';
-import { MetricCard, LoadingSpinner, EmptyState, translateLabel } from './components';
 
 const Leaves = () => {
-  const { config } = useTheme();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
+  const [filters, setFilters] = useState({
+    years: [],
+    months: [],
+    divisions: [],
+    leaveTypes: []
+  });
+  const [selectedFilters, setSelectedFilters] = useState({
+    year: '',
+    month: '',
+    company: 'all',
+    division: 'all',
+    leave_type: 'all',
+    months_range: 6
+  });
+  
+  const [filtersReady, setFiltersReady] = useState(false);
+  const initialLoadDone = useRef(false);
+
+  // Cores para gráficos
+  const COLORS = ['#8B5CF6', '#EC4899', '#F59E0B', '#10B981', '#3B82F6', '#EF4444', '#6366F1', '#14B8A6'];
+
+  // Carregar filtros apenas uma vez na montagem
+  useEffect(() => {
+    if (initialLoadDone.current) return;
+    initialLoadDone.current = true;
+    
+    const loadFilters = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        
+        const [yearsRes, monthsRes, divisionsRes] = await Promise.all([
+          fetch('http://localhost:8002/api/v1/payroll/years', {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }),
+          fetch('http://localhost:8002/api/v1/payroll/months', {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }),
+          fetch('http://localhost:8002/api/v1/payroll/divisions', {
+            headers: { 'Authorization': `Bearer ${token}` }
+          })
+        ]);
+        
+        const [yearsData, monthsData, divisionsData] = await Promise.all([
+          yearsRes.json(),
+          monthsRes.json(),
+          divisionsRes.json()
+        ]);
+        
+        // Extrair apenas os nomes das divisões
+        const divisionNames = (divisionsData.departments || []).map(d => 
+          typeof d === 'object' ? d.name : d
+        ).filter(Boolean);
+        
+        const years = yearsData.years || [];
+        const months = monthsData.months || [];
+        
+        setFilters({
+          years,
+          months,
+          divisions: divisionNames
+        });
+        
+        // Selecionar período mais recente
+        if (years.length > 0 && months.length > 0) {
+          const latestYear = Math.max(...years);
+          const latestMonth = months[months.length - 1].number;
+          
+          setSelectedFilters(prev => ({ 
+            ...prev, 
+            year: latestYear,
+            month: latestMonth
+          }));
+          setFiltersReady(true);
+        } else {
+          setLoading(false);
+        }
+      } catch (error) {
+        console.error('Erro ao carregar filtros:', error);
+        toast.error('Erro ao carregar filtros');
+        setLoading(false);
+      }
+    };
+    
+    loadFilters();
+  }, []);
 
   const loadData = useCallback(async () => {
+    if (!selectedFilters.year || !selectedFilters.month) return;
+    
     setLoading(true);
     try {
-      const response = await api.get('/indicators/leaves');
-      setData(response.data);
+      const token = localStorage.getItem('token');
+      const params = new URLSearchParams({
+        year: selectedFilters.year,
+        month: selectedFilters.month,
+        months_range: selectedFilters.months_range
+      });
+      
+      if (selectedFilters.company !== 'all') {
+        params.append('company', selectedFilters.company);
+      }
+      if (selectedFilters.division !== 'all') {
+        params.append('division', selectedFilters.division);
+      }
+      if (selectedFilters.leave_type !== 'all') {
+        params.append('leave_type', selectedFilters.leave_type);
+      }
+      
+      const response = await fetch(`http://localhost:8002/api/v1/indicators/leaves?${params}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (!response.ok) throw new Error('Erro ao carregar dados');
+      
+      const result = await response.json();
+      setData(result);
+      
+      // Atualizar tipos de afastamento disponíveis
+      if (result.leave_types && result.leave_types.length > 0) {
+        setFilters(prev => ({ ...prev, leaveTypes: result.leave_types }));
+      }
     } catch (error) {
-      console.error('Erro ao carregar afastamentos:', error);
-      toast.error('Erro ao carregar indicadores de afastamentos');
+      console.error('Erro ao carregar dados de afastamentos:', error);
+      toast.error('Erro ao carregar dados');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedFilters]);
 
+  // Carregar dados quando filtros estiverem prontos ou mudarem
   useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  const handleRefresh = async () => {
-    try {
-      await api.post('/indicators/cache/invalidate');
-      toast.success('Cache invalidado, recalculando...');
-    } catch (error) {
-      console.error('Erro ao invalidar cache:', error);
+    if (filtersReady) {
+      loadData();
     }
-    await loadData();
-    toast.success('Indicadores atualizados!');
+  }, [filtersReady, loadData]);
+
+  const formatMonth = (year, month) => {
+    const monthNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+    return `${monthNames[month - 1]}/${year}`;
   };
 
-  if (loading) {
-    return <LoadingSpinner message="Carregando indicadores de afastamentos..." />;
+  const handleFilterChange = (field, value) => {
+    setSelectedFilters(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
+  if (loading && !data) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-gray-500">Carregando dados de afastamentos...</div>
+      </div>
+    );
   }
 
-  if (!data) {
-    return <EmptyState icon={ExclamationTriangleIcon} message="Nenhum dado de afastamentos disponível" />;
-  }
+  const current = data?.current || {};
+  const evolution = data?.evolution || [];
+  const { by_type = [], by_department = [] } = current;
 
-  const { currently_on_leave, by_leave_type, by_leave_reason } = data;
+  // Preparar dados para gráfico de evolução
+  const chartData = evolution.map(item => ({
+    period: formatMonth(item.year, item.month),
+    afastados: item.total_on_leave,
+    taxa: item.absenteeism_rate
+  }));
 
-  // Calcular totais
-  const totalByType = by_leave_type?.reduce((sum, t) => sum + t.count, 0) || 0;
-  const totalByReason = by_leave_reason?.reduce((sum, r) => sum + r.count, 0) || 0;
+  // Empresas fixas
+  const companies = [
+    { code: '0059', name: 'Infraestrutura' },
+    { code: '0060', name: 'Empreendimentos' }
+  ];
 
   return (
     <div className="space-y-6">
-      {/* Botão de atualização */}
-      <div className="flex justify-end">
-        <button
-          onClick={handleRefresh}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <ArrowPathIcon className="h-5 w-5" />
-          Atualizar
-        </button>
+      {/* Filtros */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-xl font-semibold text-gray-900 mb-4">🏥 Afastamentos</h2>
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Ano</label>
+            <select
+              value={selectedFilters.year}
+              onChange={(e) => handleFilterChange('year', parseInt(e.target.value))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              {filters.years.map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Mês</label>
+            <select
+              value={selectedFilters.month}
+              onChange={(e) => handleFilterChange('month', parseInt(e.target.value))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              {filters.months.map(m => (
+                <option key={m.number} value={m.number}>{m.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Empresa</label>
+            <select
+              value={selectedFilters.company}
+              onChange={(e) => handleFilterChange('company', e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="all">Todas</option>
+              {companies.map(c => (
+                <option key={c.code} value={c.code}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Setor</label>
+            <select
+              value={selectedFilters.division}
+              onChange={(e) => handleFilterChange('division', e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="all">Todos</option>
+              {filters.divisions.map(d => (
+                <option key={d} value={d}>{d}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Afastamento</label>
+            <select
+              value={selectedFilters.leave_type}
+              onChange={(e) => handleFilterChange('leave_type', e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="all">Todos</option>
+              {filters.leaveTypes.map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Período Evolução</label>
+            <select
+              value={selectedFilters.months_range}
+              onChange={(e) => handleFilterChange('months_range', parseInt(e.target.value))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value={3}>3 meses</option>
+              <option value={6}>6 meses</option>
+              <option value={12}>12 meses</option>
+            </select>
+          </div>
+        </div>
       </div>
 
-      {/* Métricas Principais */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <MetricCard
-          title="Atualmente Afastados"
-          value={currently_on_leave || 0}
-          icon={ExclamationTriangleIcon}
-          color="yellow"
-        />
-        <MetricCard
-          title="Tipos de Afastamento"
-          value={by_leave_type?.length || 0}
-          icon={ExclamationTriangleIcon}
-          color="orange"
-        />
-        <MetricCard
-          title="Motivos Registrados"
-          value={by_leave_reason?.length || 0}
-          icon={ExclamationTriangleIcon}
-          color="pink"
-        />
+      {/* Cards de Métricas */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Total Afastados</p>
+              <p className="text-3xl font-bold text-gray-900 mt-2">{current.total_on_leave || 0}</p>
+            </div>
+            <div className="text-4xl">🏥</div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Taxa de Absenteísmo</p>
+              <p className="text-3xl font-bold text-gray-900 mt-2">{current.absenteeism_rate || 0}%</p>
+            </div>
+            <div className="text-4xl">📊</div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Duração Média</p>
+              <p className="text-3xl font-bold text-gray-900 mt-2">{current.average_duration_days || 0}</p>
+              <p className="text-sm text-gray-500">dias</p>
+            </div>
+            <div className="text-4xl">⏱️</div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Total Colaboradores</p>
+              <p className="text-3xl font-bold text-gray-900 mt-2">{current.total_employees || 0}</p>
+            </div>
+            <div className="text-4xl">👥</div>
+          </div>
+        </div>
       </div>
 
-      {/* Por Tipo de Afastamento */}
-      {by_leave_type && by_leave_type.length > 0 && (
-        <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
-          <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
-            📋 Afastamentos por Tipo
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {by_leave_type.map((type, idx) => {
-              const percentage = totalByType > 0 ? ((type.count / totalByType) * 100).toFixed(1) : 0;
-              
-              // Cores por índice
-              const colors = [
-                { bg: 'bg-yellow-50 dark:bg-yellow-900/20', border: 'border-yellow-200 dark:border-yellow-800', text: 'text-yellow-700 dark:text-yellow-400', bar: 'bg-yellow-500' },
-                { bg: 'bg-orange-50 dark:bg-orange-900/20', border: 'border-orange-200 dark:border-orange-800', text: 'text-orange-700 dark:text-orange-400', bar: 'bg-orange-500' },
-                { bg: 'bg-red-50 dark:bg-red-900/20', border: 'border-red-200 dark:border-red-800', text: 'text-red-700 dark:text-red-400', bar: 'bg-red-500' },
-                { bg: 'bg-pink-50 dark:bg-pink-900/20', border: 'border-pink-200 dark:border-pink-800', text: 'text-pink-700 dark:text-pink-400', bar: 'bg-pink-500' },
-                { bg: 'bg-purple-50 dark:bg-purple-900/20', border: 'border-purple-200 dark:border-purple-800', text: 'text-purple-700 dark:text-purple-400', bar: 'bg-purple-500' },
-              ];
-              const color = colors[idx % colors.length];
+      {/* Gráficos de Evolução */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-white rounded-lg shadow p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">📈 Evolução de Afastamentos</h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="period" />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              <Line type="monotone" dataKey="afastados" stroke="#8B5CF6" strokeWidth={2} name="Total Afastados" />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="bg-white rounded-lg shadow p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">📊 Evolução da Taxa de Absenteísmo</h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="period" />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              <Line type="monotone" dataKey="taxa" stroke="#EC4899" strokeWidth={2} name="Taxa (%)" />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Afastamentos por Tipo */}
+      {by_type && by_type.length > 0 && (
+        <div className="bg-white rounded-lg shadow p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">📋 Afastamentos por Tipo</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie
+                    data={by_type}
+                    dataKey="count"
+                    nameKey="type"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={100}
+                    label={(entry) => `${entry.type}: ${entry.percentage}%`}
+                  >
+                    {by_type.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="space-y-3">
+              {by_type.map((item, idx) => (
+                <div key={idx} className="flex items-center justify-between">
+                  <div className="flex items-center">
+                    <div
+                      className="w-4 h-4 rounded mr-2"
+                      style={{ backgroundColor: COLORS[idx % COLORS.length] }}
+                    ></div>
+                    <span className="text-sm font-medium text-gray-700">{item.type}</span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm font-bold text-gray-900">{item.count}</span>
+                    <span className="text-xs text-gray-500 ml-1">({item.percentage}%)</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Afastamentos por Departamento */}
+      {by_department && by_department.length > 0 && (
+        <div className="bg-white rounded-lg shadow p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">🏢 Afastamentos por Departamento</h3>
+          <div className="space-y-3">
+            {by_department.map((dept, idx) => {
+              const maxCount = Math.max(...by_department.map(d => d.count));
+              const percentage = maxCount > 0 ? (dept.count / maxCount) * 100 : 0;
               
               return (
-                <div key={idx} className={`p-4 rounded-lg border ${color.bg} ${color.border}`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <p className={`text-sm font-medium ${color.text}`}>
-                      {translateLabel(type.leave_type) || type.leave_type || 'Não informado'}
-                    </p>
-                    <span className={`text-2xl font-bold ${config.classes.text}`}>{type.count}</span>
+                <div key={idx}>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="font-medium text-gray-700">{dept.department}</span>
+                    <span className="text-gray-600">{dept.count} ({dept.percentage}%)</span>
                   </div>
-                  <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                  <div className="w-full bg-gray-200 rounded-full h-4">
                     <div 
-                      className={`h-2 rounded-full ${color.bar}`}
+                      className="bg-purple-500 h-4 rounded-full transition-all duration-500"
                       style={{ width: `${percentage}%` }}
                     ></div>
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">{percentage}% do total</p>
                 </div>
               );
             })}
           </div>
         </div>
       )}
-
-      {/* Por Motivo de Afastamento */}
-      {by_leave_reason && by_leave_reason.length > 0 && (
-        <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
-          <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
-            🏥 Afastamentos por Motivo
-          </h3>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-              <thead className={config.classes.background}>
-                <tr>
-                  <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
-                    Motivo
-                  </th>
-                  <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
-                    Quantidade
-                  </th>
-                  <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
-                    Percentual
-                  </th>
-                </tr>
-              </thead>
-              <tbody className={`${config.classes.card} divide-y ${config.classes.border}`}>
-                {by_leave_reason.map((reason, idx) => {
-                  const percentage = totalByReason > 0 ? ((reason.count / totalByReason) * 100).toFixed(1) : 0;
-                  return (
-                    <tr key={idx} className={config.classes.cardHover}>
-                      <td className={`px-6 py-4 text-sm ${config.classes.text}`}>
-                        {translateLabel(reason.leave_reason) || reason.leave_reason || 'Não informado'}
-                      </td>
-                      <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${config.classes.text}`}>
-                        {reason.count}
-                      </td>
-                      <td className={`px-6 py-4 whitespace-nowrap text-sm ${config.classes.textSecondary}`}>
-                        <div className="flex items-center">
-                          <div className="w-24 bg-gray-200 dark:bg-gray-700 rounded-full h-2 mr-2">
-                            <div 
-                              className="bg-yellow-500 h-2 rounded-full" 
-                              style={{ width: `${percentage}%` }}
-                            ></div>
-                          </div>
-                          <span>{percentage}%</span>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Resumo e Alertas */}
-      <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
-        <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
-          ⚠️ Resumo de Afastamentos
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Status atual */}
-          <div className="p-4 rounded-lg bg-gradient-to-r from-yellow-500 to-orange-500 text-white">
-            <p className="text-sm font-medium opacity-90">Colaboradores Afastados Agora</p>
-            <p className="text-4xl font-bold mt-2">{currently_on_leave || 0}</p>
-            <p className="text-sm opacity-75 mt-1">
-              Requer acompanhamento contínuo
-            </p>
-          </div>
-
-          {/* Tipo mais comum */}
-          {by_leave_type && by_leave_type.length > 0 && (
-            <div className="p-4 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
-              <p className={`text-sm font-medium ${config.classes.textSecondary}`}>Tipo Mais Frequente</p>
-              {(() => {
-                const maxType = by_leave_type.reduce((max, t) => t.count > max.count ? t : max, by_leave_type[0]);
-                const percentage = totalByType > 0 ? ((maxType.count / totalByType) * 100).toFixed(1) : 0;
-                return (
-                  <>
-                    <p className={`text-xl font-bold ${config.classes.text} mt-2`}>
-                      {translateLabel(maxType.leave_type) || maxType.leave_type || 'Não informado'}
-                    </p>
-                    <p className="text-sm text-gray-500 mt-1">
-                      {maxType.count} casos ({percentage}%)
-                    </p>
-                  </>
-                );
-              })()}
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 };

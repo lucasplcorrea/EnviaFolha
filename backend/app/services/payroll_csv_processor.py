@@ -13,6 +13,7 @@ from sqlalchemy import and_
 
 from app.models.employee import Employee
 from app.models.payroll import PayrollPeriod, PayrollData
+from app.models.leave import LeaveRecord
 from app.models.user import User
 from app.utils.parsers import (
     parse_br_number,
@@ -23,6 +24,20 @@ from app.utils.parsers import (
     normalize_phone,
     CSV_COLUMN_MAPPING
 )
+
+# Mapeamento de códigos de situação para tipos de afastamento
+SITUATION_TO_LEAVE_TYPE = {
+    2: 'Férias',
+    3: 'Auxílio Doença',
+    9: 'Licença Remunerada',
+    13: 'Licença Maternidade',
+    14: 'Auxílio Doença',  # até 15 dias
+    23: 'Auxílio Doença',  # dentro 60 dias
+    31: 'Licença Paternidade',
+}
+
+# Situações que devem ser ignoradas (trabalhando, demitido)
+IGNORE_SITUATIONS = {1, 7}
 
 
 class PayrollCSVProcessor:
@@ -349,6 +364,83 @@ class PayrollCSVProcessor:
         
         self.stats['processed'] += 1
         self.stats['updated_payrolls'] = self.stats.get('updated_payrolls', 0) + 1
+        
+        # 7. Processar afastamentos baseado na coluna Situação
+        self._process_leave_from_situation(row, employee, period_id)
+    
+    def _process_leave_from_situation(self, row: pd.Series, employee: Employee, period_id: int):
+        """
+        Cria/atualiza registro de afastamento baseado na coluna Situação do CSV.
+        Considera o mês inteiro como período de afastamento.
+        """
+        try:
+            # Extrair código da situação
+            situacao = row.get('Situação', row.get('SITUACAO', None))
+            if situacao is None:
+                return
+            
+            try:
+                situacao_code = int(situacao)
+            except (ValueError, TypeError):
+                return
+            
+            # Ignorar se for situação normal (trabalhando) ou demitido
+            if situacao_code in IGNORE_SITUATIONS:
+                return
+            
+            # Verificar se é uma situação de afastamento conhecida
+            leave_type = SITUATION_TO_LEAVE_TYPE.get(situacao_code)
+            if not leave_type:
+                # Situação desconhecida - registrar como "Outro"
+                descricao = row.get('Descrição', row.get('DESCRICAO', f'Situação {situacao_code}'))
+                leave_type = str(descricao) if descricao else 'Outro'
+            
+            # Buscar informações do período para calcular datas
+            period = self.db.query(PayrollPeriod).filter(PayrollPeriod.id == period_id).first()
+            if not period:
+                return
+            
+            # Calcular primeiro e último dia do mês
+            year = period.year
+            month = period.month
+            start_date = date(year, month, 1)
+            last_day = calendar.monthrange(year, month)[1]
+            end_date = date(year, month, last_day)
+            
+            # Verificar se já existe um registro de afastamento para este período
+            existing_leave = self.db.query(LeaveRecord).filter(
+                and_(
+                    LeaveRecord.employee_id == employee.id,
+                    LeaveRecord.start_date == start_date,
+                    LeaveRecord.end_date == end_date
+                )
+            ).first()
+            
+            if existing_leave:
+                # Atualizar tipo se mudou
+                if existing_leave.leave_type != leave_type:
+                    existing_leave.leave_type = leave_type
+                    existing_leave.notes = f'Atualizado via processamento CSV'
+            else:
+                # Criar novo registro de afastamento
+                leave_record = LeaveRecord(
+                    employee_id=employee.id,
+                    unified_code=employee.unique_id,
+                    leave_type=leave_type,
+                    start_date=start_date,
+                    end_date=end_date,
+                    days=float(last_day),  # Mês inteiro
+                    notes=f'Criado automaticamente via processamento CSV',
+                    created_at=datetime.now()
+                )
+                self.db.add(leave_record)
+                
+                # Atualizar estatísticas
+                self.stats['leaves_created'] = self.stats.get('leaves_created', 0) + 1
+                
+        except Exception as e:
+            print(f"⚠️ Erro ao processar afastamento: {e}")
+            # Não interromper o processamento por erro de afastamento
     
     def _create_employee_from_csv(self, row: pd.Series, matricula: str, division_code: str) -> Employee:
         """Cria employee temporário a partir do CSV"""
@@ -376,7 +468,7 @@ class PayrollCSVProcessor:
     
     def _extract_earnings(self, row: pd.Series) -> Dict[str, float]:
         """
-        Extrai proventos do CSV - APENAS colunas essenciais
+        Extrai proventos do CSV - incluindo férias e 13º salário
         """
         earnings = {}
         
@@ -427,6 +519,58 @@ class PayrollCSVProcessor:
         }
         
         for json_field, csv_field in outros_fields.items():
+            val = self._get_number(row, [csv_field])
+            if val > 0:
+                earnings[json_field] = val
+        
+        # ============ FÉRIAS ============
+        # Valor base de férias
+        ferias_fields = {
+            'FERIAS_VALOR_BASE': 'Horas Férias Diurnas',
+            'FERIAS_VALOR_PROPORCIONAIS': 'Horas Férias Proporc.Diurnas',
+            'FERIAS_VALOR_VENCIDAS': 'Horas Férias Vencidas Diurnas',
+            'FERIAS_VALOR_APP': 'Horas Férias Proporcionais Diurnas API',
+            'FERIAS_DIFERENCA': 'Diferença de Férias',
+            # 1/3 de férias
+            'FERIAS_ABONO_1_3': '1/3 Sobre Férias',
+            'FERIAS_ABONO_1_3_PROPORCIONAIS': '1/3 S/Férias Proporcionais',
+            'FERIAS_ABONO_1_3_VENCIDAS': '1/3 S/Férias Vencidas',
+            'FERIAS_ABONO_1_3_APP': '1/3 S/Férias Proporcionais API',
+            # Médias sobre férias
+            'FERIAS_MEDIA_EVENTOS': 'Med.Eve.Var.S/Férias',
+            'FERIAS_MEDIA_EVENTOS_PROPORC': 'Med.Eve.Var.S/Férias Proporc.',
+            'FERIAS_MEDIA_EVENTOS_VENCIDAS': 'Med.Eve.Var.S/Férias Vencidas',
+            'FERIAS_MEDIA_EVENTOS_APP': 'Med.Eve.Var.Férias Prop.API',
+            'FERIAS_MEDIA_HE': 'Med.Hrs.Ext.S/Férias Diurnas',
+            'FERIAS_MEDIA_HE_NOTURNAS': 'Med.Hrs.Ext.S/Férias Noturnas',
+            'FERIAS_MEDIA_HE_PROPORC': 'Med.Hrs.Ext.Diurnas S/Ferias Proporc.',
+            'FERIAS_MEDIA_HE_VENCIDAS': 'Med.Hrs.Ext.Diurnas S/Férias Vencidas',
+            'FERIAS_MEDIA_HE_APP': 'Med.Hrs.Ext.Diurnas Férias Prop.API',
+            # Transferência e adicional noturno sobre férias
+            'FERIAS_TRANSFERENCIA_FILIAL': 'Transf.Filial S/Férias',
+            'FERIAS_ADICIONAL_NOTURNO': 'Adicional Noturno S/Férias',
+            # Descontos de férias (adiantamentos)
+            'FERIAS_ADIANTAMENTO_PAGO': 'Desconto Adiantamento Férias',
+        }
+        
+        for json_field, csv_field in ferias_fields.items():
+            val = self._get_number(row, [csv_field])
+            if val > 0:
+                earnings[json_field] = val
+        
+        # ============ 13º SALÁRIO ============
+        decimo_terceiro_fields = {
+            '13_SALARIO_INDENIZADO': '13o Salário Indenizado',
+            '13_SALARIO_PROPORCIONAL': '13o Salário Proporcional',
+            '13_SALARIO_PROPORCIONAL_APP': '13o Salário Proporcional APP',
+            # Médias sobre 13º
+            '13_MEDIA_EVENTOS_INDENIZADO': 'Med.Eve.Var. 13o Sal.Ind.',
+            '13_MEDIA_EVENTOS_PROPORCIONAL': 'Med.Eve.Var.13o Sal.Prop.',
+            '13_MEDIA_HE_INDENIZADO': 'Med.Hrs.Ext.Diurnas 13o Sal.Ind.',
+            '13_MEDIA_HE_PROPORCIONAL': 'Med.Hrs.Ext.Diurnas 13o Sal.Prop.',
+        }
+        
+        for json_field, csv_field in decimo_terceiro_fields.items():
             val = self._get_number(row, [csv_field])
             if val > 0:
                 earnings[json_field] = val
