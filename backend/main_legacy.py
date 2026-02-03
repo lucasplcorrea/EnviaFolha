@@ -6438,11 +6438,6 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             )
             filtered_employee_ids = [r[0] for r in filtered_ids_query.all()]
             
-            print(f"🔍 DEBUG Tenure - Division: {division}")
-            print(f"🔍 Total employee_ids no período: {len(employee_ids)}")
-            print(f"🔍 Filtered employee_ids: {len(filtered_employee_ids)}")
-            print(f"🔍 Employee IDs filtrados: {filtered_employee_ids}")
-            
             if not filtered_employee_ids:
                 return {
                     'average_tenure_years': 0,
@@ -6465,19 +6460,6 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         )
         
         avg_tenure_days = avg_tenure_days_query.scalar()
-        
-        print(f"🔍 DEBUG Tenure - avg_tenure_days: {avg_tenure_days}")
-        print(f"🔍 DEBUG Tenure - reference_date: {reference_date}")
-        
-        # Debug: vamos pegar os dados dos funcionários filtrados
-        debug_employees = db.query(Employee.id, Employee.name, Employee.department, Employee.admission_date).filter(
-            Employee.id.in_(filtered_employee_ids),
-            Employee.admission_date.isnot(None)
-        ).all()
-        
-        for emp in debug_employees:
-            days_diff = (reference_date - emp.admission_date).days if emp.admission_date else 0
-            print(f"🔍 Employee {emp.id} - {emp.name} ({emp.department}): admission={emp.admission_date}, days={days_diff}")
         
         # Converter para anos e meses
         if avg_tenure_days:
