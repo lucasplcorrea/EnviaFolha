@@ -6851,72 +6851,41 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json_response({"error": str(e)}, 500)
     
     def _get_overview_data(self, db, year, month, company, division):
-        """Coleta dados de overview para o relatório"""
+        """Coleta dados de overview para o relatório - usa headcount existente"""
         from datetime import date
-        from sqlalchemy import and_, func
-        from app.models.payroll import PayrollData
-        from app.models.employee import Employee
+        from sqlalchemy import func
         from app.models.leave import LeaveRecord
+        from app.models.employee import Employee
         
-        # Período de referência
+        # Usar o método _get_headcount_for_period que já funciona
+        headcount_data = self._get_headcount_for_period(db, year, month, company or 'all', division or 'all')
+        
+        # Período de referência para afastamentos
         reference_date = date(year, month, 1)
-        last_day = date(year, month, 28)  # Aproximação
+        last_day = date(year, month, 28)
         
-        # Buscar período
-        period_query = db.query(PayrollData.period_id).filter(
-            func.extract('year', PayrollData.reference_month) == year,
-            func.extract('month', PayrollData.reference_month) == month
-        ).distinct()
+        # Contar afastamentos
+        on_leave = 0
+        try:
+            leave_query = db.query(func.count(LeaveRecord.id)).join(Employee).filter(
+                LeaveRecord.start_date <= last_day,
+                LeaveRecord.end_date >= reference_date
+            )
+            if company and company != 'all':
+                leave_query = leave_query.filter(Employee.company_code == company)
+            if division and division != 'all':
+                leave_query = leave_query.filter(Employee.department == division)
+            on_leave = leave_query.scalar() or 0
+        except Exception as e:
+            print(f"⚠️ Erro ao buscar afastamentos: {e}")
         
-        period_ids = [p[0] for p in period_query.all()]
+        # Calcular admissões e demissões a partir dos dados de headcount
+        admissions = headcount_data.get('admissions', 0) if headcount_data.get('admissions') else 0
+        terminations = headcount_data.get('terminations', 0) if headcount_data.get('terminations') else 0
         
-        if not period_ids:
-            return {'current': {}}
-        
-        # Contar funcionários únicos no período
-        emp_query = db.query(PayrollData.employee_id).filter(
-            PayrollData.period_id.in_(period_ids)
-        ).distinct()
-        
-        employee_ids = [e[0] for e in emp_query.all()]
-        
-        # Aplicar filtros
-        total_query = db.query(Employee).filter(Employee.id.in_(employee_ids))
-        if company and company != 'all':
-            total_query = total_query.filter(Employee.company_code == company)
-        if division and division != 'all':
-            total_query = total_query.filter(Employee.department == division)
-        
-        total_employees = total_query.count()
-        
-        # Admissões e demissões
-        admissions = total_query.filter(
-            func.extract('year', Employee.admission_date) == year,
-            func.extract('month', Employee.admission_date) == month
-        ).count()
-        
-        terminations = total_query.filter(
-            Employee.is_active == False,
-            func.extract('year', Employee.termination_date) == year,
-            func.extract('month', Employee.termination_date) == month
-        ).count()
-        
-        # Turnover
+        total_employees = headcount_data.get('headcount', 0)
         avg_employees = total_employees + (admissions - terminations) / 2
         turnover_rate = ((admissions + terminations) / (2 * avg_employees) * 100) if avg_employees > 0 else 0
-        
-        # Afastamentos
-        leave_query = db.query(func.count(LeaveRecord.id)).join(Employee).filter(
-            Employee.id.in_(employee_ids),
-            LeaveRecord.start_date <= last_day,
-            LeaveRecord.end_date >= reference_date
-        )
-        if company and company != 'all':
-            leave_query = leave_query.filter(Employee.company_code == company)
-        if division and division != 'all':
-            leave_query = leave_query.filter(Employee.department == division)
-        
-        on_leave = leave_query.scalar() or 0
         
         return {
             'current': {
@@ -6924,21 +6893,38 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 'admissions': admissions,
                 'terminations': terminations,
                 'turnover_rate': turnover_rate,
-                'on_leave': on_leave
+                'on_leave': on_leave,
+                'total_cost': headcount_data.get('total_cost', 0),
+                'avg_cost_per_employee': headcount_data.get('avg_cost_per_employee', 0)
             }
         }
     
     def _get_headcount_data(self, db, year, month, months_range, company, division):
         """Coleta dados de headcount para o relatório"""
         current = self._get_headcount_for_period(db, year, month, company or 'all', division or 'all')
-        return {'current': current}
+        
+        # Formatar dados para o PDF com by_department
+        by_department = []
+        for div_data in current.get('top_divisions', []):
+            by_department.append({
+                'department': div_data.get('division', 'Não informado'),
+                'count': div_data.get('count', 0)
+            })
+        
+        return {
+            'current': {
+                'headcount': current.get('headcount', 0),
+                'total_cost': current.get('total_cost', 0),
+                'avg_cost_per_employee': current.get('avg_cost_per_employee', 0),
+                'by_department': by_department,
+                'by_company': current.get('by_company', [])
+            }
+        }
     
     def _get_turnover_data(self, db, year, month, months_range, company, division):
         """Coleta dados de turnover para o relatório"""
         from datetime import date
-        from sqlalchemy import func
-        from app.models.payroll import PayrollData
-        from app.models.employee import Employee
+        from dateutil.relativedelta import relativedelta
         
         evolution = []
         current_date = date(year, month, 1)
@@ -6981,74 +6967,75 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     def _get_demographics_data(self, db, year, month, company, division):
         """Coleta dados demográficos para o relatório"""
         from sqlalchemy import func, case
-        from app.models.payroll import PayrollData
+        from app.models.payroll import PayrollPeriod, PayrollData
         from app.models.employee import Employee
         
-        # Buscar período
-        period_query = db.query(PayrollData.period_id).filter(
-            func.extract('year', PayrollData.reference_month) == year,
-            func.extract('month', PayrollData.reference_month) == month
-        ).distinct()
+        # Buscar período usando PayrollPeriod (mesmo padrão do _get_headcount_for_period)
+        period_query = db.query(PayrollPeriod).filter(
+            PayrollPeriod.year == year,
+            PayrollPeriod.month == month
+        )
+        if company and company != 'all':
+            period_query = period_query.filter(PayrollPeriod.company == company)
         
-        period_ids = [p[0] for p in period_query.all()]
+        periods = period_query.all()
+        if not periods:
+            return {'current': {'by_gender': [], 'by_age_range': [], 'by_education': []}}
         
-        if not period_ids:
-            return {'current': {}}
+        period_ids = [p.id for p in periods]
         
         # Funcionários no período
-        emp_query = db.query(PayrollData.employee_id).filter(
+        payroll_records = db.query(PayrollData.employee_id).filter(
             PayrollData.period_id.in_(period_ids)
-        ).distinct()
-        employee_ids = [e[0] for e in emp_query.all()]
+        ).distinct().all()
+        employee_ids = [r[0] for r in payroll_records]
         
-        # Filtros base
-        base_filter = Employee.id.in_(employee_ids)
+        if not employee_ids:
+            return {'current': {'by_gender': [], 'by_age_range': [], 'by_education': []}}
+        
+        # Buscar employees com filtro de divisão
+        emp_query = db.query(Employee).filter(Employee.id.in_(employee_ids))
+        if division and division != 'all':
+            emp_query = emp_query.filter(Employee.department == division)
+        employees = emp_query.all()
+        
+        if not employees:
+            return {'current': {'by_gender': [], 'by_age_range': [], 'by_education': []}}
+        
+        # Calcular distribuições manualmente (sem funções SQL complexas)
+        from datetime import date
+        today = date.today()
         
         # Gênero
-        gender_query = db.query(
-            Employee.sex, func.count(Employee.id)
-        ).filter(base_filter)
-        if company and company != 'all':
-            gender_query = gender_query.filter(Employee.company_code == company)
-        if division and division != 'all':
-            gender_query = gender_query.filter(Employee.department == division)
-        gender_results = gender_query.group_by(Employee.sex).all()
-        
-        by_gender = []
-        for sex, count in gender_results:
-            gender_name = 'Masculino' if sex == 'M' else 'Feminino' if sex == 'F' else 'Não informado'
-            by_gender.append({'gender': gender_name, 'count': count})
+        gender_counts = {}
+        for emp in employees:
+            gender = 'Masculino' if emp.sex == 'M' else 'Feminino' if emp.sex == 'F' else 'Não informado'
+            gender_counts[gender] = gender_counts.get(gender, 0) + 1
+        by_gender = [{'gender': k, 'count': v} for k, v in gender_counts.items()]
         
         # Faixa etária
-        age_query = db.query(
-            case(
-                (func.extract('year', func.age(Employee.birth_date)) < 25, '18-24'),
-                (func.extract('year', func.age(Employee.birth_date)) < 35, '25-34'),
-                (func.extract('year', func.age(Employee.birth_date)) < 45, '35-44'),
-                (func.extract('year', func.age(Employee.birth_date)) < 55, '45-54'),
-                else_='55+'
-            ).label('age_range'),
-            func.count(Employee.id)
-        ).filter(base_filter, Employee.birth_date.isnot(None))
-        if company and company != 'all':
-            age_query = age_query.filter(Employee.company_code == company)
-        if division and division != 'all':
-            age_query = age_query.filter(Employee.department == division)
-        age_results = age_query.group_by('age_range').all()
-        
-        by_age = [{'age_range': r, 'count': c} for r, c in age_results]
+        age_counts = {'18-24': 0, '25-34': 0, '35-44': 0, '45-54': 0, '55+': 0}
+        for emp in employees:
+            if emp.birth_date:
+                age = (today - emp.birth_date).days // 365
+                if age < 25:
+                    age_counts['18-24'] += 1
+                elif age < 35:
+                    age_counts['25-34'] += 1
+                elif age < 45:
+                    age_counts['35-44'] += 1
+                elif age < 55:
+                    age_counts['45-54'] += 1
+                else:
+                    age_counts['55+'] += 1
+        by_age = [{'age_range': k, 'count': v} for k, v in age_counts.items() if v > 0]
         
         # Escolaridade
-        edu_query = db.query(
-            Employee.education_level, func.count(Employee.id)
-        ).filter(base_filter, Employee.education_level.isnot(None))
-        if company and company != 'all':
-            edu_query = edu_query.filter(Employee.company_code == company)
-        if division and division != 'all':
-            edu_query = edu_query.filter(Employee.department == division)
-        edu_results = edu_query.group_by(Employee.education_level).all()
-        
-        by_education = [{'education': e or 'Não informado', 'count': c} for e, c in edu_results]
+        edu_counts = {}
+        for emp in employees:
+            edu = emp.education_level or 'Não informado'
+            edu_counts[edu] = edu_counts.get(edu, 0) + 1
+        by_education = [{'education': k, 'count': v} for k, v in sorted(edu_counts.items(), key=lambda x: x[1], reverse=True)]
         
         return {
             'current': {
@@ -7061,64 +7048,73 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     def _get_tenure_data(self, db, year, month, company, division):
         """Coleta dados de tempo de casa para o relatório"""
         from datetime import date
-        from sqlalchemy import func, case
-        from app.models.payroll import PayrollData
+        from app.models.payroll import PayrollPeriod, PayrollData
         from app.models.employee import Employee
         
         reference_date = date(year, month, 1)
         
-        # Buscar período
-        period_query = db.query(PayrollData.period_id).filter(
-            func.extract('year', PayrollData.reference_month) == year,
-            func.extract('month', PayrollData.reference_month) == month
-        ).distinct()
+        # Buscar período usando PayrollPeriod
+        period_query = db.query(PayrollPeriod).filter(
+            PayrollPeriod.year == year,
+            PayrollPeriod.month == month
+        )
+        if company and company != 'all':
+            period_query = period_query.filter(PayrollPeriod.company == company)
         
-        period_ids = [p[0] for p in period_query.all()]
+        periods = period_query.all()
+        if not periods:
+            return {'current': {'average_tenure_months': 0, 'by_tenure_range': []}}
         
-        if not period_ids:
-            return {'current': {}}
+        period_ids = [p.id for p in periods]
         
-        emp_query = db.query(PayrollData.employee_id).filter(
+        # Funcionários no período
+        payroll_records = db.query(PayrollData.employee_id).filter(
             PayrollData.period_id.in_(period_ids)
-        ).distinct()
-        employee_ids = [e[0] for e in emp_query.all()]
+        ).distinct().all()
+        employee_ids = [r[0] for r in payroll_records]
         
-        # Tempo médio
-        avg_query = db.query(
-            func.avg(func.extract('epoch', reference_date - Employee.admission_date) / (30 * 24 * 3600))
-        ).filter(
-            Employee.id.in_(employee_ids),
-            Employee.admission_date.isnot(None)
-        )
-        if company and company != 'all':
-            avg_query = avg_query.filter(Employee.company_code == company)
+        if not employee_ids:
+            return {'current': {'average_tenure_months': 0, 'by_tenure_range': []}}
+        
+        # Buscar employees com filtro de divisão
+        emp_query = db.query(Employee).filter(Employee.id.in_(employee_ids))
         if division and division != 'all':
-            avg_query = avg_query.filter(Employee.department == division)
+            emp_query = emp_query.filter(Employee.department == division)
+        employees = emp_query.all()
         
-        avg_tenure = avg_query.scalar() or 0
+        if not employees:
+            return {'current': {'average_tenure_months': 0, 'by_tenure_range': []}}
         
-        # Faixas de tempo
-        ranges_query = db.query(
-            case(
-                (func.extract('epoch', reference_date - Employee.admission_date) / (30 * 24 * 3600) < 6, 'Até 6 meses'),
-                (func.extract('epoch', reference_date - Employee.admission_date) / (30 * 24 * 3600) < 12, '6 meses - 1 ano'),
-                (func.extract('epoch', reference_date - Employee.admission_date) / (30 * 24 * 3600) < 24, '1 - 2 anos'),
-                (func.extract('epoch', reference_date - Employee.admission_date) / (30 * 24 * 3600) < 60, '2 - 5 anos'),
-                else_='Mais de 5 anos'
-            ).label('range'),
-            func.count(Employee.id)
-        ).filter(
-            Employee.id.in_(employee_ids),
-            Employee.admission_date.isnot(None)
-        )
-        if company and company != 'all':
-            ranges_query = ranges_query.filter(Employee.company_code == company)
-        if division and division != 'all':
-            ranges_query = ranges_query.filter(Employee.department == division)
+        # Calcular tempo de casa manualmente
+        tenure_counts = {
+            'Até 6 meses': 0,
+            '6 meses - 1 ano': 0,
+            '1 - 2 anos': 0,
+            '2 - 5 anos': 0,
+            'Mais de 5 anos': 0
+        }
+        total_months = 0
+        count_with_admission = 0
         
-        ranges_results = ranges_query.group_by('range').all()
+        for emp in employees:
+            if emp.admission_date:
+                months_tenure = (reference_date - emp.admission_date).days / 30
+                total_months += months_tenure
+                count_with_admission += 1
+                
+                if months_tenure < 6:
+                    tenure_counts['Até 6 meses'] += 1
+                elif months_tenure < 12:
+                    tenure_counts['6 meses - 1 ano'] += 1
+                elif months_tenure < 24:
+                    tenure_counts['1 - 2 anos'] += 1
+                elif months_tenure < 60:
+                    tenure_counts['2 - 5 anos'] += 1
+                else:
+                    tenure_counts['Mais de 5 anos'] += 1
         
-        by_range = [{'range': r, 'count': c} for r, c in ranges_results]
+        avg_tenure = total_months / count_with_admission if count_with_admission > 0 else 0
+        by_range = [{'range': k, 'count': v} for k, v in tenure_counts.items() if v > 0]
         
         return {
             'current': {
@@ -7180,73 +7176,99 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     
     def _get_payroll_data_for_report(self, db, year, month, company, division):
         """Coleta dados de folha de pagamento para o relatório"""
-        from sqlalchemy import func
-        from app.models.payroll import PayrollData
+        from decimal import Decimal
+        from app.models.payroll import PayrollPeriod, PayrollData
         from app.models.employee import Employee
         
-        # Buscar período
-        period_query = db.query(PayrollData.period_id).filter(
-            func.extract('year', PayrollData.reference_month) == year,
-            func.extract('month', PayrollData.reference_month) == month
-        ).distinct()
-        
-        period_ids = [p[0] for p in period_query.all()]
-        
-        if not period_ids:
-            return {'current': {}}
-        
-        # Query base
-        base_query = db.query(PayrollData).join(Employee).filter(
-            PayrollData.period_id.in_(period_ids)
+        # Buscar período usando PayrollPeriod
+        period_query = db.query(PayrollPeriod).filter(
+            PayrollPeriod.year == year,
+            PayrollPeriod.month == month
         )
         if company and company != 'all':
-            base_query = base_query.filter(Employee.company_code == company)
-        if division and division != 'all':
-            base_query = base_query.filter(Employee.department == division)
+            period_query = period_query.filter(PayrollPeriod.company == company)
         
-        payroll_records = base_query.all()
+        periods = period_query.all()
+        if not periods:
+            return {'current': {}}
+        
+        period_ids = [p.id for p in periods]
+        
+        # Buscar dados de folha
+        payroll_records = db.query(PayrollData).filter(
+            PayrollData.period_id.in_(period_ids)
+        ).all()
         
         if not payroll_records:
             return {'current': {}}
         
-        # Totais gerais
-        total_salary = sum(float(p.salary or 0) for p in payroll_records)
-        total_earnings = sum(float(p.total_earnings or 0) for p in payroll_records)
-        total_deductions = sum(float(p.total_deductions or 0) for p in payroll_records)
-        total_net = sum(float(p.net_salary or 0) for p in payroll_records)
+        # Buscar employees para filtro de divisão
+        employee_ids = list(set(r.employee_id for r in payroll_records))
+        emp_query = db.query(Employee).filter(Employee.id.in_(employee_ids))
+        employees = {e.id: e for e in emp_query.all()}
         
-        employee_count = len(set(p.employee_id for p in payroll_records))
+        # Filtrar por divisão se necessário
+        if division and division != 'all':
+            payroll_records = [r for r in payroll_records if employees.get(r.employee_id) and employees[r.employee_id].department == division]
+        
+        if not payroll_records:
+            return {'current': {}}
+        
+        # Calcular totais
+        total_salary = sum(float(r.gross_salary or 0) for r in payroll_records)
+        total_net = sum(float(r.net_salary or 0) for r in payroll_records)
+        
+        # Calcular proventos e descontos dos campos JSON
+        total_earnings = 0
+        total_deductions = 0
+        for r in payroll_records:
+            if r.earnings_data:
+                for val in r.earnings_data.values():
+                    try:
+                        total_earnings += float(val) if val else 0
+                    except:
+                        pass
+            if r.deductions_data:
+                for val in r.deductions_data.values():
+                    try:
+                        total_deductions += float(val) if val else 0
+                    except:
+                        pass
+        
+        # Se não tiver dados JSON, usar gross e net
+        if total_earnings == 0:
+            total_earnings = total_salary
+        if total_deductions == 0 and total_salary > total_net:
+            total_deductions = total_salary - total_net
+        
+        employee_count = len(set(r.employee_id for r in payroll_records))
         avg_salary = total_salary / employee_count if employee_count > 0 else 0
         
         # Por setor
-        by_department_query = db.query(
-            Employee.department,
-            func.count(PayrollData.id).label('count'),
-            func.sum(PayrollData.salary).label('total_salary'),
-            func.sum(PayrollData.total_earnings).label('total_earnings'),
-            func.sum(PayrollData.net_salary).label('total_net')
-        ).join(Employee).filter(
-            PayrollData.period_id.in_(period_ids)
-        )
-        if company and company != 'all':
-            by_department_query = by_department_query.filter(Employee.company_code == company)
-        if division and division != 'all':
-            by_department_query = by_department_query.filter(Employee.department == division)
+        by_department = {}
+        for r in payroll_records:
+            emp = employees.get(r.employee_id)
+            if emp:
+                dept = emp.department or 'Não especificado'
+                if dept not in by_department:
+                    by_department[dept] = {'count': 0, 'total_salary': 0, 'total_net': 0, 'emp_ids': set()}
+                if r.employee_id not in by_department[dept]['emp_ids']:
+                    by_department[dept]['emp_ids'].add(r.employee_id)
+                    by_department[dept]['count'] += 1
+                by_department[dept]['total_salary'] += float(r.gross_salary or 0)
+                by_department[dept]['total_net'] += float(r.net_salary or 0)
         
-        by_department_results = by_department_query.group_by(Employee.department).all()
-        
-        by_department = []
-        for dept, count, dept_salary, dept_earnings, dept_net in by_department_results:
-            by_department.append({
-                'department': dept or 'Não especificado',
-                'employee_count': count,
-                'total_salary': float(dept_salary or 0),
-                'total_earnings': float(dept_earnings or 0),
-                'total_net': float(dept_net or 0)
-            })
-        
-        # Ordenar por total de salários (maior primeiro)
-        by_department.sort(key=lambda x: x['total_salary'], reverse=True)
+        by_department_list = [
+            {
+                'department': dept,
+                'employee_count': data['count'],
+                'total_salary': data['total_salary'],
+                'total_earnings': data['total_salary'],  # Usando salário bruto como proventos
+                'total_net': data['total_net']
+            }
+            for dept, data in by_department.items()
+        ]
+        by_department_list.sort(key=lambda x: x['total_salary'], reverse=True)
         
         return {
             'current': {
@@ -7256,7 +7278,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 'total_deductions': total_deductions,
                 'total_net': total_net,
                 'average_salary': avg_salary,
-                'by_department': by_department
+                'by_department': by_department_list
             }
         }
     
