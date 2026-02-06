@@ -72,6 +72,23 @@ const RHIndicators = () => {
     }
   }, [selectedPeriods, selectedDepartments, selectedEmployees, activeCategory]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Click fora do dropdown de export para fechar
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (exportDropdownRef.current && !exportDropdownRef.current.contains(event.target)) {
+        setShowExportDropdown(false);
+      }
+    };
+
+    if (showExportDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showExportDropdown]);
+
   const loadIndicators = useCallback(async () => {
     setLoading(true);
     try {
@@ -822,23 +839,6 @@ const RHIndicators = () => {
         toast.error('❌ Erro ao gerar arquivo Excel');
       }
     };
-
-    // Click fora do dropdown para fechar
-    useEffect(() => {
-      const handleClickOutside = (event) => {
-        if (exportDropdownRef.current && !exportDropdownRef.current.contains(event.target)) {
-          setShowExportDropdown(false);
-        }
-      };
-
-      if (showExportDropdown) {
-        document.addEventListener('mousedown', handleClickOutside);
-      }
-
-      return () => {
-        document.removeEventListener('mousedown', handleClickOutside);
-      };
-    }, [showExportDropdown]);
 
     // Função auxiliar para renderizar conteúdo baseado na categoria ativa
     const renderOverview = () => {
