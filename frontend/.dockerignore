@@ -1,0 +1,16 @@
+# Frontend specific dockerignore
+node_modules/
+npm-debug.log
+yarn-error.log
+.npm/
+.env
+.env.local
+.env.development
+.env.test
+build/
+dist/
+coverage/
+.vscode/
+.idea/
+*.log
+*.md

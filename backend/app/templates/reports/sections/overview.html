@@ -1,0 +1,71 @@
+<div class="section">
+    <h2 class="section-title">📊 Visão Geral - {{ period_display }}</h2>
+    
+    <!-- Métricas Principais -->
+    <div class="metrics-grid">
+        <div class="metric-card primary">
+            <div class="metric-label">Total de Funcionários</div>
+            <div class="metric-value">{{ overview.total_employees }}</div>
+        </div>
+        
+        <div class="metric-card success">
+            <div class="metric-label">Admissões</div>
+            <div class="metric-value">{{ overview.admissions }}</div>
+            {% if overview.admission_rate %}
+            <div class="metric-change">{{ overview.admission_rate|percentage }}% do efetivo</div>
+            {% endif %}
+        </div>
+        
+        <div class="metric-card danger">
+            <div class="metric-label">Desligamentos</div>
+            <div class="metric-value">{{ overview.terminations }}</div>
+            {% if overview.termination_rate %}
+            <div class="metric-change">{{ overview.termination_rate|percentage }}% do efetivo</div>
+            {% endif %}
+        </div>
+        
+        <div class="metric-card warning">
+            <div class="metric-label">Taxa de Rotatividade</div>
+            <div class="metric-value">{{ overview.turnover_rate|percentage }}%</div>
+        </div>
+        
+        <div class="metric-card info">
+            <div class="metric-label">Afastamentos</div>
+            <div class="metric-value">{{ overview.total_leaves }}</div>
+            {% if overview.leave_rate %}
+            <div class="metric-change">{{ overview.leave_rate|percentage }}% do efetivo</div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <!-- Resumo por Setor -->
+    {% if overview.by_sector %}
+    <div class="chart-container">
+        <h3>Distribuição por Setor</h3>
+        {{ charts.overview_sector_chart|safe }}
+    </div>
+    
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Setor</th>
+                <th style="text-align: right;">Funcionários</th>
+                <th style="text-align: right;">Admissões</th>
+                <th style="text-align: right;">Desligamentos</th>
+                <th style="text-align: right;">Rotatividade</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in overview.by_sector %}
+            <tr>
+                <td>{{ item.sector }}</td>
+                <td style="text-align: right;">{{ item.count }}</td>
+                <td style="text-align: right;">{{ item.admissions }}</td>
+                <td style="text-align: right;">{{ item.terminations }}</td>
+                <td style="text-align: right;">{{ item.turnover_rate|percentage }}%</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>

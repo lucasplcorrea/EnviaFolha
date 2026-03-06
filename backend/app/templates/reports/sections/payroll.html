@@ -1,0 +1,111 @@
+<div class="section">
+    <h2 class="section-title">💰 Folha de Pagamento - {{ period_display }}</h2>
+    
+    <!-- Métricas Financeiras Principais -->
+    <div class="metrics-grid">
+        <div class="metric-card primary">
+            <div class="metric-label">Folha Bruta Total</div>
+            <div class="metric-value">{{ payroll.total_gross|currency }}</div>
+        </div>
+        
+        <div class="metric-card success">
+            <div class="metric-label">Folha Líquida Total</div>
+            <div class="metric-value">{{ payroll.total_net|currency }}</div>
+        </div>
+        
+        <div class="metric-card warning">
+            <div class="metric-label">Salário Médio Bruto</div>
+            <div class="metric-value">{{ payroll.avg_gross|currency }}</div>
+        </div>
+        
+        <div class="metric-card info">
+            <div class="metric-label">Salário Médio Líquido</div>
+            <div class="metric-value">{{ payroll.avg_net|currency }}</div>
+        </div>
+        
+        {% if payroll.total_benefits %}
+        <div class="metric-card danger">
+            <div class="metric-label">Total de Benefícios</div>
+            <div class="metric-value">{{ payroll.total_benefits|currency }}</div>
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- Gráfico de Folha por Setor -->
+    {% if charts.payroll_bar %}
+    <div class="chart-container">
+        <h3>Folha de Pagamento por Setor</h3>
+        {{ charts.payroll_bar|safe }}
+    </div>
+    {% endif %}
+    
+    <!-- Tabela Detalhada por Setor -->
+    {% if payroll.by_sector %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Setor</th>
+                <th style="text-align: right;">Funcionários</th>
+                <th style="text-align: right;">Folha Bruta</th>
+                <th style="text-align: right;">Folha Líquida</th>
+                <th style="text-align: right;">Média Bruta</th>
+                <th style="text-align: right;">Média Líquida</th>
+                <th style="text-align: right;">% do Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in payroll.by_sector|sort(attribute='total_gross', reverse=True) %}
+            <tr>
+                <td>{{ item.sector }}</td>
+                <td style="text-align: right;">{{ item.count }}</td>
+                <td style="text-align: right;">{{ item.total_gross|currency }}</td>
+                <td style="text-align: right;">{{ item.total_net|currency }}</td>
+                <td style="text-align: right;">{{ item.avg_gross|currency }}</td>
+                <td style="text-align: right;">{{ item.avg_net|currency }}</td>
+                <td style="text-align: right;">{{ item.percentage|percentage }}%</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr>
+                <th>Total</th>
+                <th style="text-align: right;">{{ payroll.total_employees }}</th>
+                <th style="text-align: right;">{{ payroll.total_gross|currency }}</th>
+                <th style="text-align: right;">{{ payroll.total_net|currency }}</th>
+                <th style="text-align: right;">{{ payroll.avg_gross|currency }}</th>
+                <th style="text-align: right;">{{ payroll.avg_net|currency }}</th>
+                <th style="text-align: right;">100%</th>
+            </tr>
+        </tfoot>
+    </table>
+    {% endif %}
+    
+    <!-- Distribuição Salarial -->
+    {% if payroll.by_salary_range %}
+    <h3 style="margin-top: 30px;">Distribuição por Faixa Salarial</h3>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Faixa Salarial</th>
+                <th style="text-align: right;">Quantidade</th>
+                <th style="text-align: right;">Percentual</th>
+                <th style="width: 200px;">Distribuição</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in payroll.by_salary_range %}
+            <tr>
+                <td>{{ item.range }}</td>
+                <td style="text-align: right;">{{ item.count }}</td>
+                <td style="text-align: right;">{{ item.percentage|percentage }}%</td>
+                <td>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: {{ item.percentage }}%;"></div>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>

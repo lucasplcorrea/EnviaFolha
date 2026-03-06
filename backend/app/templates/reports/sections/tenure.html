@@ -1,0 +1,82 @@
+<div class="section">
+    <h2 class="section-title">⏱️ Tempo de Casa - {{ period_display }}</h2>
+    
+    <!-- Métrica de Tempo Médio -->
+    <div class="metrics-grid">
+        <div class="metric-card primary">
+            <div class="metric-label">Tempo Médio de Casa</div>
+            <div class="metric-value">
+                {% if tenure.avg_tenure_years %}
+                    {{ tenure.avg_tenure_years }} anos
+                {% else %}
+                    {{ tenure.avg_tenure_months }} meses
+                {% endif %}
+            </div>
+        </div>
+        
+        {% if tenure.median_tenure_months %}
+        <div class="metric-card info">
+            <div class="metric-label">Tempo Mediano</div>
+            <div class="metric-value">{{ tenure.median_tenure_months }} meses</div>
+        </div>
+        {% endif %}
+        
+        {% if tenure.longest_tenure %}
+        <div class="metric-card success">
+            <div class="metric-label">Maior Tempo de Casa</div>
+            <div class="metric-value">{{ tenure.longest_tenure }} anos</div>
+        </div>
+        {% endif %}
+        
+        {% if tenure.newest_employees %}
+        <div class="metric-card warning">
+            <div class="metric-label">Funcionários com < 6 meses</div>
+            <div class="metric-value">{{ tenure.newest_employees }}</div>
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- Gráfico de Faixas de Tempo -->
+    {% if charts.tenure_bar %}
+    <div class="chart-container">
+        <h3>Distribuição por Faixas de Tempo de Casa</h3>
+        {{ charts.tenure_bar|safe }}
+    </div>
+    {% endif %}
+    
+    <!-- Tabela Detalhada -->
+    {% if tenure.by_range %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Faixa de Tempo</th>
+                <th style="text-align: right;">Quantidade</th>
+                <th style="text-align: right;">Percentual</th>
+                <th style="width: 200px;">Distribuição</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in tenure.by_range %}
+            <tr>
+                <td>{{ item.range }}</td>
+                <td style="text-align: right;">{{ item.count }}</td>
+                <td style="text-align: right;">{{ item.percentage|percentage }}%</td>
+                <td>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: {{ item.percentage }}%;"></div>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr>
+                <th>Total</th>
+                <th style="text-align: right;">{{ tenure.total_employees }}</th>
+                <th style="text-align: right;">100%</th>
+                <th></th>
+            </tr>
+        </tfoot>
+    </table>
+    {% endif %}
+</div>
