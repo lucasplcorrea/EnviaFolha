@@ -13,6 +13,7 @@ Analiticos/
 *.db
 *.sqlite
 *.sqlite3
+backend/*.db
 
 # Logs
 logs/
@@ -23,6 +24,7 @@ uploads/
 processed/
 sent/
 temp/
+tests/Erros*/
 
 # Node.js
 node_modules/
@@ -42,6 +44,7 @@ yarn-error.log*
 
 # Python
 __pycache__/
+backend/**/__pycache__/
 *.py[cod]
 *$py.class
 *.so
