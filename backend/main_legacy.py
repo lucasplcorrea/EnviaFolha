@@ -7503,7 +7503,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     empresa_num = 'UNKNOWN_EMP'
                     header_match = re.search(
                         r'Cadastro\s+Nome\s+do\s+Funcionário\s+CBO\s+Empresa\s+Local\s+Departamento\s+FL\s*\n\s*'
-                        r'(\d+)\s+([A-ZÀ-Ú\s\d]+?)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)',
+                        r'(\d+)\s+([A-ZÀ-Úa-zà-ú\s\d]+?)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)',
                         text
                     )
                     
@@ -7512,7 +7512,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     else:
                         # Fallback: padrão mais genérico (linha com vários números após o nome)
                         # Ex: "189 CRISTINA APARECIDA STOROZ WIL 421310 60 1 000101"
-                        generic_match = re.search(r'^\s*(\d+)\s+[\w\sÀ-Ú]+\s+(\d{4,6})\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)', text, re.MULTILINE)
+                        # Ex: "692 VITORIA DE OLIVEIRA 411005 59 1 000501"
+                        generic_match = re.search(r'^\s*(\d+)\s+[A-ZÀ-Úa-zà-ú\s]+\s+(\d{4,6})\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)', text, re.MULTILINE)
                         if generic_match:
                             empresa_num = generic_match.group(3)  # Terceiro número = empresa
                     
