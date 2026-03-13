@@ -33,4 +33,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8002/api/v1/database/health')" || exit 1
 
 # Comando para executar a aplicação
-CMD ["python", "main_legacy.py"]
+CMD ["python", "main.py"]
