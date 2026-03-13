@@ -43,8 +43,17 @@ PORT = int(os.getenv('PORT', 8002))
 class ModularEnviaFolhaHandler(EnviaFolhaHandler):
     """Adapter que intercepta rotas modulares sem expandir o main_legacy."""
 
+    @staticmethod
+    def _normalize_path(raw_path: str) -> str:
+        """Normaliza barras duplicadas e remove barra final para matching robusto."""
+        parts = [part for part in (raw_path or "").split('/') if part]
+        if not parts:
+            return '/'
+        return '/' + '/'.join(parts)
+
     def do_GET(self):
-        path = urllib.parse.urlparse(self.path).path
+        raw_path = urllib.parse.urlparse(self.path).path
+        path = self._normalize_path(raw_path)
 
         if path == '/api/v1/tax-statements/export/sent':
             TaxStatementsRouter(self).handle_export_sent()
@@ -71,7 +80,8 @@ class ModularEnviaFolhaHandler(EnviaFolhaHandler):
         super().do_GET()
 
     def do_POST(self):
-        path = urllib.parse.urlparse(self.path).path
+        raw_path = urllib.parse.urlparse(self.path).path
+        path = self._normalize_path(raw_path)
 
         if path == '/api/v1/tax-statements/process':
             TaxStatementsRouter(self).handle_process()

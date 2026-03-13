@@ -1,8 +1,11 @@
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
+const configuredBaseURL = process.env.REACT_APP_API_URL || 'http://localhost:8002/api/v1';
+const normalizedBaseURL = configuredBaseURL.replace(/\/+$/, '');
+
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:8002/api/v1',
+  baseURL: normalizedBaseURL,
   timeout: 30000,
 });
 
