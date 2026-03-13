@@ -21,6 +21,7 @@ MUDANÇAS:
 """
 import os
 import sys
+import urllib.parse
 from http.server import HTTPServer
 
 # Importar RequestHandler do código legado (TEMPORÁRIO - fase 1 da refatoração)
@@ -33,8 +34,58 @@ from main_legacy import (
     db_engine
 )
 
+from app.routes import TaxStatementsRouter
+
 # Configurações
 PORT = int(os.getenv('PORT', 8002))
+
+
+class ModularEnviaFolhaHandler(EnviaFolhaHandler):
+    """Adapter que intercepta rotas modulares sem expandir o main_legacy."""
+
+    def do_GET(self):
+        path = urllib.parse.urlparse(self.path).path
+
+        if path == '/api/v1/tax-statements/export/sent':
+            TaxStatementsRouter(self).handle_export_sent()
+            return
+
+        if path == '/api/v1/tax-statements':
+            TaxStatementsRouter(self).handle_list()
+            return
+
+        if path.startswith('/api/v1/tax-statements/process/') and path.endswith('/status'):
+            parts = path.split('/')
+            if len(parts) >= 7:
+                job_id = parts[5]
+                TaxStatementsRouter(self).handle_process_status(job_id)
+                return
+
+        if path.startswith('/api/v1/tax-statements/send/') and path.endswith('/status'):
+            parts = path.split('/')
+            if len(parts) >= 7:
+                queue_id = parts[5]
+                TaxStatementsRouter(self).handle_send_status(queue_id)
+                return
+
+        super().do_GET()
+
+    def do_POST(self):
+        path = urllib.parse.urlparse(self.path).path
+
+        if path == '/api/v1/tax-statements/process':
+            TaxStatementsRouter(self).handle_process()
+            return
+
+        if path == '/api/v1/tax-statements/send':
+            TaxStatementsRouter(self).handle_send()
+            return
+
+        if path == '/api/v1/tax-statements/delete':
+            TaxStatementsRouter(self).handle_delete()
+            return
+
+        super().do_POST()
 
 
 def print_startup_banner():
@@ -85,7 +136,7 @@ def main():
         
         # Criar servidor HTTP
         server_address = ('', PORT)
-        httpd = HTTPServer(server_address, EnviaFolhaHandler)
+        httpd = HTTPServer(server_address, ModularEnviaFolhaHandler)
         
         print(f"✅ Servidor rodando em http://localhost:{PORT}")
         print("   🔧 Código em main_legacy.py (backup seguro)")

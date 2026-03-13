@@ -29,6 +29,28 @@ class BaseRouter:
             self.handler.wfile.write(response.encode('utf-8'))
         except Exception as e:
             print(f"❌ Erro ao enviar resposta JSON: {e}")
+
+    def send_binary_response(
+        self,
+        data: bytes,
+        content_type: str,
+        filename: str,
+        status_code: int = 200,
+    ):
+        """Enviar resposta binária com headers de download."""
+        try:
+            self.handler.send_response(status_code)
+            self.handler.send_header('Content-Type', content_type)
+            self.handler.send_header('Content-Disposition', f'attachment; filename="{filename}"')
+            self.handler.send_header('Content-Length', str(len(data)))
+            self.handler.send_header('Access-Control-Allow-Origin', '*')
+            self.handler.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+            self.handler.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+            self.handler.send_header('Access-Control-Expose-Headers', 'Content-Disposition')
+            self.handler.end_headers()
+            self.handler.wfile.write(data)
+        except Exception as e:
+            print(f"❌ Erro ao enviar resposta binária: {e}")
     
     def get_request_data(self) -> Dict[str, Any]:
         """Ler dados JSON do corpo da requisição"""

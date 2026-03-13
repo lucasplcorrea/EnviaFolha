@@ -14,6 +14,7 @@ import {
   Bars3Icon,
   XMarkIcon,
   HeartIcon,
+  DocumentTextIcon,
   DocumentArrowUpIcon,
   PaperAirplaneIcon,
   PresentationChartLineIcon,
@@ -35,6 +36,12 @@ const navigation = [
     href: '/payroll-sender', 
     icon: PaperAirplaneIcon,
     description: 'Envio via WhatsApp'
+  },
+  {
+    name: 'Informes de Rendimentos',
+    href: '/tax-statements',
+    icon: DocumentTextIcon,
+    description: 'Processamento e envio anual de IR'
   },
   { 
     name: 'Dados de Folha', 
