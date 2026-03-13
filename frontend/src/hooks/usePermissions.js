@@ -2,9 +2,9 @@ import { useAuth } from '../contexts/AuthContext';
 
 // Mapeamento de páginas permitidas por role
 const ROLE_PAGES = {
-  admin: ['dashboard', 'employees', 'payroll', 'communications', 'reports', 'users', 'settings', 'profile'],
-  manager: ['dashboard', 'employees', 'payroll', 'communications', 'reports', 'settings', 'profile'],
-  operator: ['dashboard', 'payroll', 'communications', 'reports', 'profile'],
+  admin: ['dashboard', 'employees', 'payroll', 'tax-statements', 'communications', 'reports', 'users', 'settings', 'profile'],
+  manager: ['dashboard', 'employees', 'payroll', 'tax-statements', 'communications', 'reports', 'settings', 'profile'],
+  operator: ['dashboard', 'payroll', 'tax-statements', 'communications', 'reports', 'profile'],
   viewer: ['reports', 'profile']
 };
 
@@ -17,6 +17,7 @@ const ROUTE_TO_PAGE = {
   '/payroll-processor': 'payroll',
   '/payroll-sender': 'payroll',
   '/payroll-data': 'payroll',
+  '/tax-statements': 'tax-statements',
   // '/data-import': removido - importação agora apenas em /employees
   '/communications': 'communications',
   '/endomarketing': 'reports',  // Endomarketing faz parte de reports/analytics
@@ -104,6 +105,7 @@ export const usePermissions = () => {
       'dashboard': '/',
       'employees': '/employees',
       'payroll': '/payroll',
+      'tax-statements': '/tax-statements',
       'communications': '/communications',
       'reports': '/reports',
       'users': '/users',

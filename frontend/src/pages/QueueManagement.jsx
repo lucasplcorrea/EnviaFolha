@@ -109,7 +109,9 @@ const QueueManagement = () => {
   const getTypeLabel = (type) => {
     const types = {
       payroll: 'Folha de Pagamento',
-      communication: 'Comunicado'
+      holerite: 'Folha de Pagamento',
+      communication: 'Comunicado',
+      tax_statement: 'Informe de Rendimentos'
     };
     return types[type] || type;
   };
@@ -171,6 +173,7 @@ const QueueManagement = () => {
                 <option value="all">Todos</option>
                 <option value="payroll">Folha de Pagamento</option>
                 <option value="communication">Comunicado</option>
+                <option value="tax_statement">Informe de Rendimentos</option>
               </select>
             </div>
           </div>

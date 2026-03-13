@@ -371,7 +371,21 @@ class EvolutionAPIService:
             result = response.json()
             message_id = result.get('key', {}).get('id', 'N/A')
             
-            return {"success": True, "message": f"Arquivo enviado. ID: {message_id}"}
+            return {"success": True, "message": f"Arquivo enviado. ID: {message_id}", "message_id": message_id}
             
+        except requests.exceptions.HTTPError as e:
+            status_code = e.response.status_code if e.response is not None else "N/A"
+            response_text = ""
+            try:
+                if e.response is not None:
+                    response_text = (e.response.text or "").strip()
+            except Exception:
+                response_text = ""
+
+            details = f"HTTP {status_code}"
+            if response_text:
+                details = f"{details} - {response_text[:500]}"
+
+            return {"success": False, "message": f"Erro ao enviar arquivo: {details}"}
         except Exception as e:
             return {"success": False, "message": f"Erro ao enviar arquivo: {str(e)}"}

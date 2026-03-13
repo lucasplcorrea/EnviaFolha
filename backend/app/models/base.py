@@ -5,8 +5,23 @@ from sqlalchemy.sql import func
 from ..core.config import settings
 
 # Configuração específica para PostgreSQL
-engine = create_engine(settings.DATABASE_URL, echo=False)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+db_url = settings.DATABASE_URL
+engine_kwargs = {"echo": False}
+
+# Para PostgreSQL, habilita estratégias de resiliência para conexões de longa duração.
+if isinstance(db_url, str) and db_url.startswith("postgresql"):
+    engine_kwargs.update(
+        {
+            "pool_size": 5,
+            "max_overflow": 10,
+            "pool_timeout": 30,
+            "pool_recycle": 3600,
+            "pool_pre_ping": True,
+        }
+    )
+
+engine = create_engine(db_url, **engine_kwargs)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, expire_on_commit=False)
 
 Base = declarative_base()
 

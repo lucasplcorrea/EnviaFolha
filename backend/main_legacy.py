@@ -768,6 +768,7 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
             db.close()
         
         # Processar cada arquivo
+        last_selected_instance = None
         for idx, file_info in enumerate(selected_files):
             # 🛑 VERIFICAR SE FILA FOI CANCELADA OU PAUSADA
             if queue_id:
@@ -980,6 +981,8 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                             print(f"⚠️ [JOB {job_id[:8]}] Erro ao atualizar fila: {e}")
                     continue
                 
+                previous_instance = last_selected_instance
+                print(f"🔄 [JOB {job_id[:8]}] Round-robin (holerite): {previous_instance or 'N/A'} -> {next_instance}")
                 print(f"📱 [JOB {job_id[:8]}] Usando instância: {next_instance}")
                 
                 # Criar serviço com a instância selecionada
@@ -999,6 +1002,7 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                 
                 # Registrar envio na instância (para tracking de delays)
                 instance_manager.register_send(next_instance)
+                last_selected_instance = next_instance
                 print(f"✅ [JOB {job_id[:8]}] Envio registrado para instância: {next_instance}")
                 
                 # Verificar resultado
@@ -1081,11 +1085,25 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                         from app.models.system_log import SystemLog, LogLevel, LogCategory
                         log_db = SessionLocal()
                         try:
+                            log_details = {
+                                'job_id': job_id,
+                                'queue_id': queue_id,
+                                'filename': filename,
+                                'month_year': month_year,
+                                'employee_name': employee_name,
+                                'employee_id': employee_id,
+                                'phone_number': phone_number,
+                                'instance': next_instance,
+                                'round_robin_previous': previous_instance,
+                                'message_id': result.get('message_id'),
+                                'send_type': 'payroll',
+                                'status': 'success'
+                            }
                             log_entry = SystemLog(
                                 level=LogLevel.INFO,
                                 category=LogCategory.PAYROLL,
                                 message=f"Holerite enviado com sucesso: {employee_name} ({month_year})",
-                                details=f"Arquivo: {filename}, Telefone: {phone_number}, Instância: {next_instance}",
+                                details=json.dumps(log_details, ensure_ascii=False),
                                 user_id=user_id,
                                 entity_type='Employee',
                                 entity_id=str(employee_id)
@@ -1122,7 +1140,7 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                             item_id = queue_item_map.get(filename)
                             print(f"🔍 [JOB {job_id[:8]}] Procurando item (falha) para {filename}: item_id={item_id}")
                             if item_id:
-                                queue_service.update_item_status(item_id, 'failed', last_error)
+                                queue_service.update_item_status(item_id, 'failed', error_msg)
                                 print(f"❌ [JOB {job_id[:8]}] Item {item_id} marcado como 'failed'")
                             else:
                                 print(f"⚠️ [JOB {job_id[:8]}] Item não encontrado no mapa para {filename}")
@@ -1155,7 +1173,7 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                                 month=month_for_db,
                                 file_path=filename,
                                 status='failed',
-                                error_message=last_error,
+                                error_message=error_msg,
                                 user_id=user_id
                             )
                             db.add(payroll_send)
@@ -1171,11 +1189,25 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                         from app.models.system_log import SystemLog, LogLevel, LogCategory
                         log_db = SessionLocal()
                         try:
+                            log_details = {
+                                'job_id': job_id,
+                                'queue_id': queue_id,
+                                'filename': filename,
+                                'month_year': month_year,
+                                'employee_name': employee_name,
+                                'employee_id': employee_id,
+                                'phone_number': phone_number,
+                                'instance': next_instance,
+                                'round_robin_previous': previous_instance,
+                                'send_type': 'payroll',
+                                'status': 'failed',
+                                'error': error_msg
+                            }
                             log_entry = SystemLog(
                                 level=LogLevel.ERROR,
                                 category=LogCategory.PAYROLL,
                                 message=f"Falha ao enviar holerite: {employee_name} ({month_year})",
-                                details=f"Erro: {error_msg}, Arquivo: {filename}, Telefone: {phone_number}",
+                                details=json.dumps(log_details, ensure_ascii=False),
                                 user_id=user_id,
                                 entity_type='Employee',
                                 entity_id=str(employee_id)
@@ -1497,6 +1529,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         
         elif path == '/api/v1/payrolls/processed':
             self.handle_payrolls_processed()
+        elif path == '/api/v1/tax-statements':
+            self.handle_list_tax_statements()
         elif path == '/api/v1/payrolls/periods':
             self.handle_list_payroll_periods()
         elif path == '/api/v1/payroll/statistics':
@@ -1611,6 +1645,9 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_create_payroll_template()
         elif path == '/api/v1/payroll/process' or path == '/api/v1/payrolls/process':
             self.handle_process_payroll_file()
+        elif path == '/api/v1/tax-statements/process':
+            self.handle_process_tax_statement_file()
+            return
         elif path == '/api/v1/payroll/upload-csv':
             self.handle_upload_payroll_csv()  # 🆕 Novo endpoint para CSVs da pasta Analiticos
             return
@@ -10123,6 +10160,187 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 "success": False,
                 "error": f"Erro interno: {str(e)}"
             }, 500)
+
+    def handle_process_tax_statement_file(self):
+        """Processa PDF consolidado de informes de rendimentos."""
+        try:
+            if not SessionLocal:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                return
+
+            db = SessionLocal()
+            try:
+                user = self.get_authenticated_user(db)
+                if not user:
+                    self.send_json_response({"error": "Token de acesso necessário"}, 401)
+                    return
+
+                content_type = self.headers.get('Content-Type', '')
+                if 'multipart/form-data' not in content_type:
+                    self.send_json_response({"error": "Content-Type deve ser multipart/form-data"}, 400)
+                    return
+
+                boundary = None
+                for part in content_type.split(';'):
+                    if 'boundary=' in part:
+                        boundary = part.split('boundary=')[1].strip()
+                        break
+
+                if not boundary:
+                    self.send_json_response({"error": "Boundary não encontrado"}, 400)
+                    return
+
+                content_length = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(content_length)
+                file_data, filename = self.parse_multipart_data(body, boundary)
+
+                if not file_data or not filename:
+                    self.send_json_response({"error": "Arquivo não encontrado no upload"}, 400)
+                    return
+
+                if not filename.lower().endswith('.pdf'):
+                    self.send_json_response({"error": "Apenas arquivos PDF são aceitos"}, 400)
+                    return
+
+                parsed = urllib.parse.urlparse(self.path)
+                query = urllib.parse.parse_qs(parsed.query)
+
+                company = query.get('company', [None])[0]
+                ref_year_raw = query.get('ref_year', [None])[0]
+                ref_year = int(ref_year_raw) if ref_year_raw and str(ref_year_raw).isdigit() else None
+
+                uploads_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads', 'tax_statements')
+                os.makedirs(uploads_dir, exist_ok=True)
+
+                timestamp = int(time.time())
+                safe_filename = f"{timestamp}_{filename}"
+                upload_path = os.path.join(uploads_dir, safe_filename)
+
+                with open(upload_path, 'wb') as fp:
+                    fp.write(file_data)
+
+                from app.models.tax_statement import TaxStatementUpload
+                from app.services.tax_statement_processing import process_tax_statement_pdf
+
+                batch = TaxStatementUpload(
+                    original_filename=filename,
+                    file_path=upload_path,
+                    file_size=len(file_data),
+                    ref_year=ref_year or datetime.now().year,
+                    company=company,
+                    status='processing',
+                    total_statements=0,
+                    statements_processed=0,
+                    statements_failed=0,
+                    processing_started_at=datetime.now(),
+                    uploaded_by=user.id,
+                )
+                db.add(batch)
+                db.commit()
+                db.refresh(batch)
+
+                result = process_tax_statement_pdf(
+                    db=db,
+                    source_pdf_path=upload_path,
+                    uploaded_by=user.id,
+                    company=company,
+                    fallback_year=ref_year,
+                    output_root_dir=os.path.dirname(os.path.abspath(__file__)),
+                )
+
+                batch.status = 'completed'
+                batch.total_statements = result.get('chunks_detected', 0)
+                batch.statements_processed = result.get('processed_success', 0)
+                batch.statements_failed = result.get('processed_failed', 0)
+                batch.processing_completed_at = datetime.now()
+                batch.processing_log = json.dumps(result, ensure_ascii=False)
+                db.commit()
+
+                self.send_json_response({
+                    "success": True,
+                    "message": "Informe de rendimentos processado com sucesso",
+                    "batch_id": batch.id,
+                    "summary": result,
+                }, 200)
+
+            except Exception as process_error:
+                db.rollback()
+                self.send_json_response({"error": f"Erro ao processar IR: {str(process_error)}"}, 500)
+            finally:
+                db.close()
+
+        except Exception as e:
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_list_tax_statements(self):
+        """Lista informes de rendimentos com filtros básicos para frontend."""
+        try:
+            if not SessionLocal:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                return
+
+            parsed = urllib.parse.urlparse(self.path)
+            query = urllib.parse.parse_qs(parsed.query)
+
+            page = int(query.get('page', ['1'])[0])
+            page_size = int(query.get('page_size', ['50'])[0])
+            ref_year = query.get('ref_year', [None])[0]
+            status = query.get('status', [None])[0]
+            company = query.get('company', [None])[0]
+
+            page = max(page, 1)
+            page_size = min(max(page_size, 1), 200)
+
+            from app.models.tax_statement import TaxStatement
+
+            db = SessionLocal()
+            try:
+                q = db.query(TaxStatement)
+
+                if ref_year and str(ref_year).isdigit():
+                    q = q.filter(TaxStatement.ref_year == int(ref_year))
+                if status:
+                    q = q.filter(TaxStatement.status == status)
+                if company:
+                    q = q.filter(TaxStatement.company == company)
+
+                total = q.count()
+                items = (
+                    q.order_by(TaxStatement.created_at.desc())
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
+                    .all()
+                )
+
+                payload = []
+                for item in items:
+                    payload.append({
+                        "id": item.id,
+                        "unique_id": item.unique_id,
+                        "ref_year": item.ref_year,
+                        "cpf": item.cpf,
+                        "employee_id": item.employee_id,
+                        "employee_unique_id": item.employee_unique_id,
+                        "employee_name": item.employee_name,
+                        "status": item.status,
+                        "file_path": item.file_path,
+                        "pages_count": item.pages_count,
+                        "company": item.company,
+                        "processing_error": item.processing_error,
+                        "created_at": item.created_at.isoformat() if item.created_at else None,
+                    })
+
+                self.send_json_response({
+                    "tax_statements": payload,
+                    "total": total,
+                    "page": page,
+                    "page_size": page_size,
+                }, 200)
+            finally:
+                db.close()
+
+        except Exception as e:
+            self.send_json_response({"error": f"Erro ao listar IR: {str(e)}"}, 500)
 
 if __name__ == "__main__":
     import time
