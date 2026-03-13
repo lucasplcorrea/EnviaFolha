@@ -25,6 +25,28 @@ from .base import BaseRouter
 class TaxStatementsRouter(BaseRouter):
     """Router for tax statement processing and send workflows."""
 
+    @staticmethod
+    def _resolve_writable_upload_dir(backend_root: str) -> tuple[str, str]:
+        """Resolve diretório de upload gravável e raiz de saída correspondente.
+
+        Retorna:
+            (uploads_dir, output_root_dir)
+        """
+        candidates = [
+            (os.path.join(backend_root, "uploads", "tax_statements"), backend_root),
+            (os.path.join("/tmp", "enviafolha", "uploads", "tax_statements"), os.path.join("/tmp", "enviafolha")),
+        ]
+
+        for upload_dir, root_dir in candidates:
+            try:
+                os.makedirs(upload_dir, exist_ok=True)
+                if os.access(upload_dir, os.W_OK):
+                    return upload_dir, root_dir
+            except Exception:
+                continue
+
+        raise PermissionError("Nenhum diretório de upload gravável disponível")
+
     def _get_authenticated_user(self):
         auth_header = self.handler.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
@@ -127,8 +149,11 @@ class TaxStatementsRouter(BaseRouter):
         ref_year = int(ref_year_raw) if ref_year_raw and str(ref_year_raw).isdigit() else None
 
         backend_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        uploads_dir = os.path.join(backend_root, "uploads", "tax_statements")
-        os.makedirs(uploads_dir, exist_ok=True)
+        try:
+            uploads_dir, output_root_dir = self._resolve_writable_upload_dir(backend_root)
+        except PermissionError as exc:
+            self.send_error(str(exc), 500)
+            return
 
         safe_name = f"{int(time.time())}_{filename}"
         upload_path = os.path.join(uploads_dir, safe_name)
@@ -161,7 +186,7 @@ class TaxStatementsRouter(BaseRouter):
                 uploaded_by=user["id"],
                 company=company,
                 fallback_year=ref_year,
-                output_root_dir=backend_root,
+                output_root_dir=output_root_dir,
             )
 
             self.send_json_response(
