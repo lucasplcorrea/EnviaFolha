@@ -18,6 +18,7 @@ backend/*.db
 # Logs
 logs/
 *.log
+backend/scripts/maintenance/*.csv
 
 # Uploads e arquivos processados
 uploads/

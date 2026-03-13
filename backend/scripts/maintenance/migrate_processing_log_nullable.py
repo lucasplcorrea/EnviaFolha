@@ -3,18 +3,15 @@ Migração: Tornar processed_by nullable em payroll_processing_logs
 Data: 2026-01-19
 """
 
-import sys
-import os
+from common import ensure_backend_on_path, get_database_url
 
-# Adicionar diretório raiz ao path
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+ensure_backend_on_path()
 
 from sqlalchemy import create_engine, text
-from app.core.config import settings
 
 def migrate():
     """Executa a migração"""
-    engine = create_engine(settings.DATABASE_URL)
+    engine = create_engine(get_database_url())
     
     print("🔄 Iniciando migração: payroll_processing_logs.processed_by nullable")
     

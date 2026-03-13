@@ -1,14 +1,20 @@
-import requests
 import os
 
+import requests
+
+from common import ensure_backend_on_path, get_analytics_dir, get_api_base_url, get_api_credentials
+
+ensure_backend_on_path()
+
 # URL da API
-API_URL = "http://localhost:8002"
+API_URL = get_api_base_url()
+API_USERNAME, API_PASSWORD = get_api_credentials()
 
 # Fazer login para obter token
 print("🔐 Fazendo login...")
 login_response = requests.post(f"{API_URL}/api/v1/auth/login", json={
-    "username": "admin",
-    "password": "admin123"
+    "username": API_USERNAME,
+    "password": API_PASSWORD
 })
 
 if login_response.status_code != 200:
@@ -39,7 +45,7 @@ if periods_response.status_code == 200:
                 print(f"   ⚠️ Erro ao deletar: {delete_response.status_code}")
 
 # Upload do CSV
-csv_path = r"C:\Users\LucasPedroLopesCorrê\Documents\GitHub\EnviaFolha\Analiticos\Empreendimentos\07-2025.CSV"
+csv_path = os.path.join(str(get_analytics_dir()), "07-2025.CSV")
 
 if not os.path.exists(csv_path):
     print(f"❌ Arquivo não encontrado: {csv_path}")

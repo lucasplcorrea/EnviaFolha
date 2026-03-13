@@ -1,19 +1,14 @@
 """
 Script de migração para corrigir o tamanho do campo phone na tabela employees
 """
-import sys
-import os
+from common import ensure_backend_on_path, get_database_url
 
-# Adiciona o diretório backend ao path
-backend_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, backend_dir)
+ensure_backend_on_path()
 
 from sqlalchemy import create_engine, text
-from app.core.config import Settings
 
 def migrate_phone_field():
-    settings = Settings()
-    engine = create_engine(settings.DATABASE_URL)
+    engine = create_engine(get_database_url())
     
     print("🔄 Iniciando migração do campo phone...")
     

@@ -8,8 +8,9 @@ import sys
 import os
 from pathlib import Path
 
-# Adicionar o diretório raiz ao path
-sys.path.insert(0, str(Path(__file__).parent))
+from common import ensure_backend_on_path
+
+ensure_backend_on_path()
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker

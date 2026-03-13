@@ -1,10 +1,17 @@
-import requests
 import os
+
+import requests
 from sqlalchemy import create_engine, text
+
+from common import ensure_backend_on_path, get_analytics_dir, get_api_base_url, get_api_credentials
+
+ensure_backend_on_path()
+
 from app.core.config import settings
 
 # URL da API
-API_URL = "http://localhost:8002"
+API_URL = get_api_base_url()
+API_USERNAME, API_PASSWORD = get_api_credentials()
 
 # Meses para re-processar (excluindo 07 e 02 que já foram feitos)
 months_to_process = [
@@ -20,13 +27,13 @@ months_to_process = [
     (12, "Dezembro", "12-2025.CSV"),
 ]
 
-base_path = r"C:\Users\LucasPedroLopesCorrê\Documents\GitHub\EnviaFolha\Analiticos\Empreendimentos"
+base_path = get_analytics_dir()
 
 # Fazer login
 print("🔐 Fazendo login...")
 login_response = requests.post(f"{API_URL}/api/v1/auth/login", json={
-    "username": "admin",
-    "password": "admin123"
+    "username": API_USERNAME,
+    "password": API_PASSWORD
 })
 
 if login_response.status_code != 200:
@@ -59,7 +66,7 @@ for month_num, month_name, filename in months_to_process:
                     print("   ✅ Período deletado")
     
     # Verificar se arquivo existe
-    csv_path = os.path.join(base_path, filename)
+    csv_path = os.path.join(str(base_path), filename)
     if not os.path.exists(csv_path):
         print(f"⚠️ Arquivo não encontrado: {filename}")
         continue

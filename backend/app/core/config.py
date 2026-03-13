@@ -9,18 +9,18 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     
     # Configurações do banco de dados
-    DATABASE_URL: str = "postgresql://enviafolha_user:secure_password@localhost:5432/enviafolha_db"
+    DATABASE_URL: str = "sqlite:///./nexo_rh.db"
     
     # Configurações PostgreSQL individuais
     DB_HOST: str = "localhost"
     DB_PORT: str = "5432"
     DB_NAME: str = "enviafolha_db"
     DB_USER: str = "enviafolha_user"
-    DB_PASSWORD: str = "secure_password"
+    DB_PASSWORD: str = ""
     PORT: str = "8002"
     
     # Configurações de autenticação
-    SECRET_KEY: str = "your-secret-key-change-this"
+    SECRET_KEY: str = "change-this-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     

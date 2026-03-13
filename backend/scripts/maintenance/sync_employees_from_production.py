@@ -4,9 +4,14 @@ from typing import Any, Dict, List, Tuple
 from datetime import datetime
 import re
 
+from common import load_repo_env
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
+
+
+load_repo_env()
 
 
 def build_url(host: str, port: str, db_name: str, user: str, password: str) -> str:

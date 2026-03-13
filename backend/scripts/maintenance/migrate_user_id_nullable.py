@@ -5,10 +5,12 @@ Migração: Alterar user_id para nullable em communication_sends
 from sqlalchemy import create_engine, text
 import os
 
+from common import get_database_url, load_repo_env
+
 # Carregar variáveis de ambiente
 def load_env_file():
     env_vars = {}
-    env_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+    env_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env')
     
     if os.path.exists(env_file):
         with open(env_file, 'r', encoding='utf-8') as f:
@@ -22,9 +24,10 @@ def load_env_file():
     return env_vars
 
 load_env_file()
+load_repo_env()
 
 # Conectar ao banco
-DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://enviafolha_user:secure_password@localhost:5432/enviafolha_db')
+DATABASE_URL = get_database_url()
 engine = create_engine(DATABASE_URL)
 
 print("🔧 Aplicando migração: user_id nullable em communication_sends")

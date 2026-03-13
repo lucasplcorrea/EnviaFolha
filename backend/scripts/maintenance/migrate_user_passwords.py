@@ -1,34 +1,41 @@
 """
 Script para migrar senhas de MD5 para bcrypt
 """
+import json
 import sys
 import os
 
-# Adicionar diretório backend ao path
-sys.path.insert(0, os.path.dirname(__file__))
+from common import ensure_backend_on_path, get_database_url, load_repo_env
+
+ensure_backend_on_path()
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from app.models.user import User
 from app.core.auth import get_password_hash
-from dotenv import load_dotenv
 
-# Carregar variáveis de ambiente
-env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
-load_dotenv(env_path)
+load_repo_env()
 
-# Configuração do banco
-DB_USER = os.getenv("DB_USER", "enviafolha_user")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "secure_password")
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = os.getenv("DB_NAME", "enviafolha_db")
-
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+DATABASE_URL = get_database_url()
 
 # Criar engine e sessão
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
+
+
+def load_password_overrides() -> tuple[dict[str, str], str | None]:
+    raw_map = os.getenv("PASSWORD_MIGRATION_MAP", "{}")
+    try:
+        password_map = json.loads(raw_map)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("PASSWORD_MIGRATION_MAP deve ser um JSON válido.") from exc
+
+    if not isinstance(password_map, dict):
+        raise RuntimeError("PASSWORD_MIGRATION_MAP deve ser um objeto JSON com usuario -> senha.")
+
+    normalized_map = {str(key): str(value) for key, value in password_map.items()}
+    fallback_password = os.getenv("DEFAULT_MIGRATION_PASSWORD")
+    return normalized_map, fallback_password
 
 def migrate_passwords():
     """Migra senhas de MD5 para bcrypt"""
@@ -40,33 +47,32 @@ def migrate_passwords():
         # Buscar todos os usuários
         users = db.query(User).all()
         print(f"📊 Encontrados {len(users)} usuários")
-        
-        # Senhas padrão conhecidas (ajuste conforme necessário)
-        default_passwords = {
-            'admin': 'admin123',
-            'lucas.pedro': '@Lmightpush1',  # Senha que você tentou atualizar
-        }
+        password_overrides, fallback_password = load_password_overrides()
         
         migrated = 0
+        skipped = 0
         for user in users:
             # Se o hash não parece bcrypt (bcrypt começa com $2b$)
             if not user.password_hash.startswith('$2b$'):
                 print(f"\n👤 Usuário: {user.username}")
                 print(f"   Hash antigo (MD5): {user.password_hash[:20]}...")
                 
-                # Se conhecemos a senha, recriar o hash
-                if user.username in default_passwords:
-                    password = default_passwords[user.username]
+                password = password_overrides.get(user.username)
+                if password:
                     new_hash = get_password_hash(password)
                     user.password_hash = new_hash
-                    print(f"   ✅ Nova senha aplicada: {password}")
+                    print("   ✅ Hash atualizado usando senha definida por variável de ambiente")
+                    print(f"   Novo hash (bcrypt): {new_hash[:30]}...")
+                    migrated += 1
+                elif fallback_password:
+                    new_hash = get_password_hash(fallback_password)
+                    user.password_hash = new_hash
+                    print("   ⚠️ Hash atualizado usando DEFAULT_MIGRATION_PASSWORD")
                     print(f"   Novo hash (bcrypt): {new_hash[:30]}...")
                     migrated += 1
                 else:
-                    print(f"   ⚠️ Senha desconhecida - usar senha padrão: admin123")
-                    new_hash = get_password_hash('admin123')
-                    user.password_hash = new_hash
-                    migrated += 1
+                    print("   ⚠️ Senha não informada via ambiente; usuário preservado sem alteração")
+                    skipped += 1
             else:
                 print(f"✅ {user.username} já usa bcrypt")
         
@@ -75,6 +81,9 @@ def migrate_passwords():
             print(f"\n✅ {migrated} senha(s) migrada(s) com sucesso!")
         else:
             print(f"\n✅ Nenhuma senha precisou ser migrada")
+
+        if skipped > 0:
+            print(f"⚠️ {skipped} usuário(s) ficaram sem migração por falta de senha no ambiente")
         
     except Exception as e:
         print(f"❌ Erro na migração: {e}")

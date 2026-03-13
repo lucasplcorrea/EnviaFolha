@@ -1,21 +1,28 @@
-import requests
 import os
+
+import requests
 from sqlalchemy import create_engine, text
+
+from common import ensure_backend_on_path, get_analytics_dir, get_api_base_url, get_api_credentials
+
+ensure_backend_on_path()
+
 from app.core.config import settings
 
-API_URL = "http://localhost:8002"
+API_URL = get_api_base_url()
+API_USERNAME, API_PASSWORD = get_api_credentials()
 
 # Login
 print("🔐 Fazendo login...")
 login_response = requests.post(f"{API_URL}/api/v1/auth/login", json={
-    "username": "admin",
-    "password": "admin123"
+    "username": API_USERNAME,
+    "password": API_PASSWORD
 })
 
 token = login_response.json()["access_token"]
 headers = {"Authorization": f"Bearer {token}"}
 
-base_path = r"C:\Users\LucasPedroLopesCorrê\Documents\GitHub\EnviaFolha\Analiticos\Empreendimentos"
+base_path = get_analytics_dir()
 
 for month_num, month_name, filename in [(11, "Novembro", "11-2025.CSV"), (12, "Dezembro", "12-2025.CSV")]:
     print(f"\n{'='*60}")
@@ -34,7 +41,7 @@ for month_num, month_name, filename in [(11, "Novembro", "11-2025.CSV"), (12, "D
             requests.delete(f"{API_URL}/api/v1/payroll/periods/{period_id}", headers=headers)
     
     # Upload
-    csv_path = os.path.join(base_path, filename)
+    csv_path = os.path.join(str(base_path), filename)
     print(f"📤 Processando {filename}...")
     
     upload_response = requests.post(

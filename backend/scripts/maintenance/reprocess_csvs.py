@@ -8,37 +8,15 @@ from pathlib import Path
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-# Add app to path
-sys.path.insert(0, str(Path(__file__).parent))
+from common import ensure_backend_on_path, get_analytics_dir, get_database_url, load_repo_env
+
+ensure_backend_on_path()
 
 from app.services.payroll_csv_processor import PayrollCSVProcessor
 
-# Load environment variables
-def load_env_file():
-    env_vars = {}
-    env_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
-    if os.path.exists(env_file):
-        with open(env_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    key, value = line.split('=', 1)
-                    env_vars[key.strip()] = value.strip().strip('"').strip("'")
-    return env_vars
+load_repo_env()
 
-env_vars = load_env_file()
-for key, value in env_vars.items():
-    os.environ[key] = value
-
-# Database connection
-database_url = os.getenv('DATABASE_URL')
-if not database_url:
-    db_user = os.getenv('DB_USER', 'enviafolha_user')
-    db_password = os.getenv('DB_PASSWORD', 'secure_password')
-    db_host = os.getenv('DB_HOST', 'localhost')
-    db_port = os.getenv('DB_PORT', '5432')
-    db_name = os.getenv('DB_NAME', 'enviafolha_db')
-    database_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+database_url = get_database_url()
 
 engine = create_engine(database_url)
 SessionLocal = sessionmaker(bind=engine)
@@ -47,7 +25,7 @@ def reprocess_all_csvs():
     """Re-processa todos os CSVs encontrados"""
     
     # Encontrar todos os CSVs em Analiticos/Empreendimentos
-    csv_dir = Path(__file__).parent.parent / 'Analiticos' / 'Empreendimentos'
+    csv_dir = get_analytics_dir()
     csv_files = sorted(csv_dir.glob('*.CSV'))
     
     print("="*80)

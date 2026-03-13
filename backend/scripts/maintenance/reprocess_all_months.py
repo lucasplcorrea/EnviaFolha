@@ -3,12 +3,16 @@ Script para reprocessar TODOS os meses de 2024 e 2025.
 Isso irá capturar todas as novas colunas de 13º Salário e Férias.
 """
 
-import requests
 import os
 import time
 
+import requests
+
+from common import get_analytics_dir, get_api_base_url, get_api_credentials
+
 # URL da API
-API_URL = "http://localhost:8002"
+API_URL = get_api_base_url()
+API_USERNAME, API_PASSWORD = get_api_credentials()
 
 # Todos os meses a processar (2024 e 2025)
 months_to_process = [
@@ -40,13 +44,13 @@ months_to_process = [
     (12, 2025, "Dezembro", "12-2025.CSV"),
 ]
 
-base_path = r"C:\Users\LucasPedroLopesCorrê\Documents\GitHub\EnviaFolha\Analiticos\Empreendimentos"
+base_path = get_analytics_dir()
 
 # Fazer login
 print("🔐 Fazendo login...")
 login_response = requests.post(f"{API_URL}/api/v1/auth/login", json={
-    "username": "admin",
-    "password": "admin123"
+    "username": API_USERNAME,
+    "password": API_PASSWORD
 })
 
 if login_response.status_code != 200:
@@ -87,7 +91,7 @@ for month_num, year, month_name, filename in months_to_process:
                     print(f"   ⚠️ Erro ao deletar: {delete_response.status_code}")
     
     # Processar CSV via JSON (endpoint correto)
-    file_path = os.path.join(base_path, filename)
+    file_path = os.path.join(str(base_path), filename)
     if os.path.exists(file_path):
         print(f"📄 Processando CSV: {filename}")
         
