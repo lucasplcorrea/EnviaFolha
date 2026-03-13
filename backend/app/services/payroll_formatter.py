@@ -99,14 +99,29 @@ class PayrollFormatter:
         Exemplo:
         - Empresa: 59, Cadastro: 169 → 005900169
         - Empresa: 60, Cadastro: 1234 → 006001234
+        
+        Formato esperado na linha:
+        Cadastro Nome_do_Funcionário CBO Empresa Local Departamento FL
+        692 VITORIA DE OLIVEIRA 411005 59 1 000501
         """
-        # Regex para encontrar o número de cadastro
+        # Regex para encontrar o número de cadastro (primeira coluna)
         cadastro_match = re.search(r'Cadastro\s*Nome\s*do\s*Funcionário\s*CBO\s*Empresa\s*Local\s*Departamento\s*FL\s*\n\s*(\d+)', text)
         cadastro_num = cadastro_match.group(1) if cadastro_match else None
         
-        # Regex para encontrar o número da empresa
-        empresa_field_match = re.search(r'(\d+)\s+[A-ZÀ-Ú\s]+(\d+)\s+(\d+)\s+\d+\s+\d+\s+\d+', text)
+        # Nova regex mais robusta para empresa: busca linha com padrão específico
+        # Formato: Cadastro(3-4 dígitos) Nome(letras) CBO(6 dígitos) Empresa(2 dígitos) Local Depto
+        empresa_field_match = re.search(
+            r'(\d{3,4})\s+[A-ZÀ-Úa-zà-ú\s]+\s+(\d{6})\s+(\d{1,3})\s+\d+\s+\d+',
+            text
+        )
         empresa_num = empresa_field_match.group(3) if empresa_field_match else None
+        
+        # Fallback: se não encontrou com a regex acima, tenta padrão alternativo
+        if not empresa_num and cadastro_num:
+            # Buscar linha que começa com o cadastro e extrair o número após o CBO
+            line_pattern = rf'{cadastro_num}\s+[A-ZÀ-Úa-zà-ú\s]+\s+\d{{6}}\s+(\d{{1,3}})'
+            alt_match = re.search(line_pattern, text)
+            empresa_num = alt_match.group(1) if alt_match else None
         
         if empresa_num and cadastro_num:
             # Formatação: XXXXYYYYY (empresa com 4 dígitos + cadastro com 5)

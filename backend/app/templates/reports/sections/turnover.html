@@ -1,0 +1,74 @@
+<div class="section">
+    <h2 class="section-title">🔄 Rotatividade - {{ period_display }}</h2>
+    
+    <!-- Métricas de Rotatividade -->
+    <div class="metrics-grid">
+        <div class="metric-card primary">
+            <div class="metric-label">Taxa de Rotatividade Média</div>
+            <div class="metric-value">{{ turnover.avg_rate|percentage }}%</div>
+        </div>
+        
+        <div class="metric-card success">
+            <div class="metric-label">Total de Admissões</div>
+            <div class="metric-value">{{ turnover.total_admissions }}</div>
+        </div>
+        
+        <div class="metric-card danger">
+            <div class="metric-label">Total de Desligamentos</div>
+            <div class="metric-value">{{ turnover.total_terminations }}</div>
+        </div>
+        
+        <div class="metric-card warning">
+            <div class="metric-label">Saldo Líquido</div>
+            <div class="metric-value">
+                {% if turnover.net_change >= 0 %}+{% endif %}{{ turnover.net_change }}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Gráfico de Evolução -->
+    {% if charts.turnover_line %}
+    <div class="chart-container">
+        <h3>Evolução da Rotatividade</h3>
+        {{ charts.turnover_line|safe }}
+    </div>
+    {% endif %}
+    
+    <!-- Tabela Detalhada por Mês -->
+    {% if turnover.by_month %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Mês</th>
+                <th style="text-align: right;">Efetivo Inicial</th>
+                <th style="text-align: right;">Admissões</th>
+                <th style="text-align: right;">Desligamentos</th>
+                <th style="text-align: right;">Efetivo Final</th>
+                <th style="text-align: right;">Taxa</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in turnover.by_month %}
+            <tr>
+                <td>{{ item.month_name }}</td>
+                <td style="text-align: right;">{{ item.initial_headcount }}</td>
+                <td style="text-align: right;">{{ item.admissions }}</td>
+                <td style="text-align: right;">{{ item.terminations }}</td>
+                <td style="text-align: right;">{{ item.final_headcount }}</td>
+                <td style="text-align: right;">{{ item.rate|percentage }}%</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr>
+                <th>Média/Total</th>
+                <th style="text-align: right;">-</th>
+                <th style="text-align: right;">{{ turnover.total_admissions }}</th>
+                <th style="text-align: right;">{{ turnover.total_terminations }}</th>
+                <th style="text-align: right;">-</th>
+                <th style="text-align: right;">{{ turnover.avg_rate|percentage }}%</th>
+            </tr>
+        </tfoot>
+    </table>
+    {% endif %}
+</div>

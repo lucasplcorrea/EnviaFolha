@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Import print styles */
+@import './styles/print.css';
+
 /* Tema Nexo RH - Configurações customizadas */
 .nexo-theme {
   --bg-primary: #0f172a; /* slate-900 */

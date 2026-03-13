@@ -334,8 +334,8 @@ def load_employees_data():
                     "id": emp.id,
                     "unique_id": emp.unique_id,
                     "full_name": emp.name,
-                    "cpf": emp.cpf,
-                    "phone_number": emp.phone,
+                    "cpf": emp.cpf or "",
+                    "phone_number": emp.phone or "",
                     "email": emp.email or "",
                     "department": emp.department or "",
                     "position": emp.position or "",
@@ -768,6 +768,7 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
             db.close()
         
         # Processar cada arquivo
+        last_selected_instance = None
         for idx, file_info in enumerate(selected_files):
             # 🛑 VERIFICAR SE FILA FOI CANCELADA OU PAUSADA
             if queue_id:
@@ -980,6 +981,8 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                             print(f"⚠️ [JOB {job_id[:8]}] Erro ao atualizar fila: {e}")
                     continue
                 
+                previous_instance = last_selected_instance
+                print(f"🔄 [JOB {job_id[:8]}] Round-robin (holerite): {previous_instance or 'N/A'} -> {next_instance}")
                 print(f"📱 [JOB {job_id[:8]}] Usando instância: {next_instance}")
                 
                 # Criar serviço com a instância selecionada
@@ -999,6 +1002,7 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                 
                 # Registrar envio na instância (para tracking de delays)
                 instance_manager.register_send(next_instance)
+                last_selected_instance = next_instance
                 print(f"✅ [JOB {job_id[:8]}] Envio registrado para instância: {next_instance}")
                 
                 # Verificar resultado
@@ -1075,6 +1079,42 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                         print(f"📦 [JOB {job_id[:8]}] Arquivo movido para enviados/")
                     except Exception as move_error:
                         print(f"⚠️ [JOB {job_id[:8]}] Erro ao mover arquivo: {move_error}")
+                    
+                    # 📝 REGISTRAR LOG DO SISTEMA - ENVIO SUCESSO
+                    try:
+                        from app.models.system_log import SystemLog, LogLevel, LogCategory
+                        log_db = SessionLocal()
+                        try:
+                            log_details = {
+                                'job_id': job_id,
+                                'queue_id': queue_id,
+                                'filename': filename,
+                                'month_year': month_year,
+                                'employee_name': employee_name,
+                                'employee_id': employee_id,
+                                'phone_number': phone_number,
+                                'instance': next_instance,
+                                'round_robin_previous': previous_instance,
+                                'message_id': result.get('message_id'),
+                                'send_type': 'payroll',
+                                'status': 'success'
+                            }
+                            log_entry = SystemLog(
+                                level=LogLevel.INFO,
+                                category=LogCategory.PAYROLL,
+                                message=f"Holerite enviado com sucesso: {employee_name} ({month_year})",
+                                details=json.dumps(log_details, ensure_ascii=False),
+                                user_id=user_id,
+                                entity_type='Employee',
+                                entity_id=str(employee_id)
+                            )
+                            log_db.add(log_entry)
+                            log_db.commit()
+                            print(f"📝 [JOB {job_id[:8]}] Log de sucesso registrado")
+                        finally:
+                            log_db.close()
+                    except Exception as log_error:
+                        print(f"⚠️ [JOB {job_id[:8]}] Erro ao registrar log: {log_error}")
                 
                 else:
                     # Falha no envio
@@ -1100,7 +1140,7 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                             item_id = queue_item_map.get(filename)
                             print(f"🔍 [JOB {job_id[:8]}] Procurando item (falha) para {filename}: item_id={item_id}")
                             if item_id:
-                                queue_service.update_item_status(item_id, 'failed', last_error)
+                                queue_service.update_item_status(item_id, 'failed', error_msg)
                                 print(f"❌ [JOB {job_id[:8]}] Item {item_id} marcado como 'failed'")
                             else:
                                 print(f"⚠️ [JOB {job_id[:8]}] Item não encontrado no mapa para {filename}")
@@ -1133,7 +1173,7 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                                 month=month_for_db,
                                 file_path=filename,
                                 status='failed',
-                                error_message=last_error,
+                                error_message=error_msg,
                                 user_id=user_id
                             )
                             db.add(payroll_send)
@@ -1144,7 +1184,43 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                     except Exception as db_error:
                         print(f"⚠️ [JOB {job_id[:8]}] Erro ao salvar falha no banco: {db_error}")
                     
-                    # Registrar log do sistema
+                    # 📝 REGISTRAR LOG DO SISTEMA - ENVIO FALHA
+                    try:
+                        from app.models.system_log import SystemLog, LogLevel, LogCategory
+                        log_db = SessionLocal()
+                        try:
+                            log_details = {
+                                'job_id': job_id,
+                                'queue_id': queue_id,
+                                'filename': filename,
+                                'month_year': month_year,
+                                'employee_name': employee_name,
+                                'employee_id': employee_id,
+                                'phone_number': phone_number,
+                                'instance': next_instance,
+                                'round_robin_previous': previous_instance,
+                                'send_type': 'payroll',
+                                'status': 'failed',
+                                'error': error_msg
+                            }
+                            log_entry = SystemLog(
+                                level=LogLevel.ERROR,
+                                category=LogCategory.PAYROLL,
+                                message=f"Falha ao enviar holerite: {employee_name} ({month_year})",
+                                details=json.dumps(log_details, ensure_ascii=False),
+                                user_id=user_id,
+                                entity_type='Employee',
+                                entity_id=str(employee_id)
+                            )
+                            log_db.add(log_entry)
+                            log_db.commit()
+                            print(f"📝 [JOB {job_id[:8]}] Log de falha registrado")
+                        finally:
+                            log_db.close()
+                    except Exception as log_error:
+                        print(f"⚠️ [JOB {job_id[:8]}] Erro ao registrar log: {log_error}")
+                    
+                    # Registrar log do sistema (antigo)
                     try:
                         log_system_event(
                             event_type='payroll_sent_failed',
@@ -1357,11 +1433,33 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         
         elif path == '/api/v1/payroll/periods':
             self.handle_payroll_periods_list()
+        elif path == '/api/v1/payroll/period-comparison':
+            self.handle_period_comparison()
         elif path == '/api/v1/payroll/templates':
             self.handle_payroll_templates_list()
         elif path.startswith('/api/v1/payroll/periods/'):
             period_id = path.split('/')[-1]
             self.handle_payroll_period_summary(period_id)
+        
+        # Rotas de benefícios
+        elif path == '/api/v1/benefits/periods':
+            self.handle_benefits_periods_list()
+        elif path == '/api/v1/benefits/processing-logs':
+            self.handle_benefits_processing_logs()
+        elif path.startswith('/api/v1/benefits/periods/'):
+            period_id = path.split('/')[-1]
+            self.handle_benefits_period_detail(period_id)
+        
+        # Rotas de cartão ponto
+        elif path == '/api/v1/timecard/periods':
+            self.handle_timecard_periods_list()
+        elif path == '/api/v1/timecard/processing-logs':
+            self.handle_timecard_processing_logs()
+        elif path.startswith('/api/v1/timecard/periods/'):
+            period_id = path.split('/')[-1]
+            self.handle_timecard_period_detail(period_id)
+        elif path == '/api/v1/timecard/stats':
+            self.handle_timecard_stats()
         elif path.startswith('/api/v1/employees/'):
             # IMPORTANTE: Verificar PRIMEIRO se é rota de leaves
             parts = path.split('/')
@@ -1425,12 +1523,34 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_indicators_tenure()
         elif path == '/api/v1/indicators/leaves':
             self.handle_indicators_leaves()
+        elif path == '/api/v1/reports/generate':
+            self.handle_report_generate()
         # ===================================
         
         elif path == '/api/v1/payrolls/processed':
             self.handle_payrolls_processed()
+        elif path == '/api/v1/tax-statements':
+            self.handle_list_tax_statements()
         elif path == '/api/v1/payrolls/periods':
             self.handle_list_payroll_periods()
+        elif path == '/api/v1/payroll/statistics':
+            self.handle_payroll_statistics()  # 🆕 Estatísticas dos dados CSV
+        elif path == '/api/v1/payroll/employees':
+            self.handle_payroll_employees()  # 🆕 Lista colaboradores
+        elif path == '/api/v1/payroll/divisions':
+            self.handle_payroll_divisions()  # 🆕 Lista setores
+        elif path == '/api/v1/payroll/companies':
+            self.handle_payroll_companies()  # 🆕 Lista empresas
+        elif path == '/api/v1/payroll/years':
+            self.handle_payroll_years()  # 🆕 Lista anos disponíveis
+        elif path == '/api/v1/payroll/months':
+            self.handle_payroll_months()  # 🆕 Lista meses disponíveis
+        elif path == '/api/v1/payroll/processing-history':
+            self.handle_payroll_processing_history()  # 🆕 Histórico de processamento
+        elif path.startswith('/api/v1/payroll/statistics-debug'):
+            self.handle_payroll_statistics_debug()  # 🆕 DEBUG - Lista nomes dos colaboradores
+        elif path.startswith('/api/v1/payroll/statistics-filtered'):
+            self.handle_payroll_statistics_filtered()  # 🆕 Estatísticas com filtros
         
         # ===== ROTAS DE JOBS EM BACKGROUND =====
         elif path.startswith('/api/v1/payrolls/bulk-send/') and path.endswith('/status'):
@@ -1525,6 +1645,21 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_create_payroll_template()
         elif path == '/api/v1/payroll/process' or path == '/api/v1/payrolls/process':
             self.handle_process_payroll_file()
+        elif path == '/api/v1/tax-statements/process':
+            self.handle_process_tax_statement_file()
+            return
+        elif path == '/api/v1/payroll/upload-csv':
+            self.handle_upload_payroll_csv()  # 🆕 Novo endpoint para CSVs da pasta Analiticos
+            return
+        elif path == '/api/v1/benefits/upload-xlsx':
+            self.handle_upload_benefits_xlsx()  # Upload de XLSX de benefícios
+            return
+        elif path == '/api/v1/timecard/upload-xlsx':
+            self.handle_upload_timecard_xlsx()  # Upload de XLSX de cartão ponto
+            return
+        elif path == '/api/v1/uploads/csv':
+            self.handle_csv_file_upload()  # 🆕 Upload de arquivo CSV
+            return
         elif path == '/api/v1/payrolls/periods':
             self.handle_list_payroll_periods()
         elif path == '/api/v1/payrolls/export-batch':
@@ -1599,6 +1734,15 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         elif path.startswith('/api/v1/users/'):
             user_id = path.split('/')[-1]
             self.handle_delete_user(user_id)
+        elif path.startswith('/api/v1/payroll/periods/'):
+            period_id = path.split('/')[-1]
+            self.handle_delete_payroll_period(period_id)
+        elif path.startswith('/api/v1/benefits/periods/'):
+            period_id = path.split('/')[-1]
+            self.handle_delete_benefits_period(period_id)
+        elif path.startswith('/api/v1/timecard/periods/'):
+            period_id = path.split('/')[-1]
+            self.handle_delete_timecard_period(period_id)
         else:
             self.send_json_response({"error": "Endpoint não encontrado"}, 404)
     
@@ -3268,11 +3412,16 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
                 periods_data = []
                 for period in periods:
+                    # Mapear código da empresa para nome
+                    company_name = "Empreendimentos" if period.company == "0060" else "Infraestrutura" if period.company == "0059" else period.company
+                    
                     periods_data.append({
                         "id": period.id,
                         "year": period.year,
                         "month": period.month,
                         "period_name": period.period_name,
+                        "company": period.company,
+                        "company_name": company_name,
                         "description": period.description,
                         "is_closed": period.is_closed,
                         "created_at": period.created_at.isoformat() if hasattr(period, 'created_at') else None
@@ -3318,6 +3467,113 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             print(f"❌ Erro ao listar templates: {e}")
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
     
+    def handle_delete_payroll_period(self, period_id: str):
+        """Deleta um período de folha e todos os dados relacionados"""
+        try:
+            print(f"🗑️ Deletando período ID: {period_id}")
+            
+            from sqlalchemy import text
+            
+            global db_engine
+            if not db_engine:
+                self.send_json_response({
+                    "success": False,
+                    "error": "Banco de dados não disponível"
+                }, 500)
+                return
+            
+            with db_engine.connect() as conn:
+                # Primeiro, verificar se o período existe e buscar informações
+                result = conn.execute(
+                    text("SELECT period_name, year, month FROM payroll_periods WHERE id = :period_id"),
+                    {"period_id": int(period_id)}
+                )
+                period_info = result.fetchone()
+                
+                if not period_info:
+                    self.send_json_response({
+                        "success": False,
+                        "error": f"Período {period_id} não encontrado"
+                    }, 404)
+                    return
+                
+                period_name = period_info[0]
+                
+                # Contar quantos registros serão deletados
+                count_result = conn.execute(
+                    text("SELECT COUNT(*) FROM payroll_data WHERE period_id = :period_id"),
+                    {"period_id": int(period_id)}
+                )
+                total_records = count_result.fetchone()[0]
+                
+                # 1. Deletar logs de processamento associados ao período
+                logs_result = conn.execute(
+                    text("DELETE FROM payroll_processing_logs WHERE period_id = :period_id"),
+                    {"period_id": int(period_id)}
+                )
+                deleted_logs = logs_result.rowcount
+                print(f"🗑️ {deleted_logs} log(s) de processamento deletado(s)")
+                
+                # 2. Deletar os dados de folha (relacionamento cascade)
+                conn.execute(
+                    text("DELETE FROM payroll_data WHERE period_id = :period_id"),
+                    {"period_id": int(period_id)}
+                )
+                
+                # 3. Deletar o período
+                conn.execute(
+                    text("DELETE FROM payroll_periods WHERE id = :period_id"),
+                    {"period_id": int(period_id)}
+                )
+                
+                conn.commit()
+                
+                print(f"✅ Período '{period_name}' deletado com sucesso ({total_records} registros removidos)")
+                
+                # 📝 REGISTRAR LOG DO SISTEMA - PERÍODO DELETADO
+                try:
+                    db = SessionLocal()
+                    try:
+                        from app.models.system_log import SystemLog, LogLevel, LogCategory
+                        
+                        # Obter user_id do usuário autenticado
+                        user_id = None
+                        authenticated_user = self.get_authenticated_user(db)
+                        if authenticated_user:
+                            user_id = authenticated_user.id
+                        
+                        log_entry = SystemLog(
+                            level=LogLevel.WARNING,
+                            category=LogCategory.PAYROLL,
+                            message=f"Período de folha deletado: {period_name}",
+                            details=f"Registros deletados: {total_records}, Logs removidos: {deleted_logs}",
+                            user_id=user_id,
+                            entity_type='PayrollPeriod',
+                            entity_id=str(period_id)
+                        )
+                        db.add(log_entry)
+                        db.commit()
+                        print(f"📝 Log de deleção registrado")
+                    finally:
+                        db.close()
+                except Exception as log_error:
+                    print(f"⚠️ Erro ao registrar log: {log_error}")
+                
+                self.send_json_response({
+                    "success": True,
+                    "message": f"Período '{period_name}' deletado com sucesso",
+                    "deleted_records": total_records
+                })
+                
+        except Exception as e:
+            print(f"❌ Erro ao deletar período: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({
+                "success": False,
+                "error": f"Erro ao deletar período: {str(e)}"
+            }, 500)
+    
     def handle_payroll_period_summary(self, period_id: str):
         """Retorna resumo de um período de folha de pagamento"""
         try:
@@ -3340,6 +3596,138 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
         except Exception as e:
             print(f"❌ Erro ao obter resumo do período: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_period_comparison(self):
+        """Retorna comparativo de períodos de folha"""
+        try:
+            # Obter parâmetros da query string
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            company = query_params.get('company', ['all'])[0]
+            period_filter = query_params.get('period', ['all'])[0]  # mensal, 13, all
+            start_month = query_params.get('start_month', [None])[0]  # formato: YYYY-MM
+            end_month = query_params.get('end_month', [None])[0]  # formato: YYYY-MM
+            
+            if SessionLocal:
+                from app.models.payroll import PayrollPeriod, PayrollData
+                from app.models.employee import Employee
+                from sqlalchemy import func, or_, and_
+                from decimal import Decimal
+                from collections import defaultdict
+                
+                db = SessionLocal()
+                
+                # Query para buscar todos os períodos
+                periods_query = db.query(PayrollPeriod)
+                
+                # Filtrar por tipo de período se especificado
+                if period_filter != 'all':
+                    if period_filter == 'mensal':
+                        periods_query = periods_query.filter(
+                            ~PayrollPeriod.period_name.ilike('%13%')
+                        )
+                    elif period_filter == '13':
+                        periods_query = periods_query.filter(
+                            PayrollPeriod.period_name.ilike('%13%')
+                        )
+                
+                # Filtrar por intervalo de datas se especificado
+                if start_month:
+                    start_year, start_mon = map(int, start_month.split('-'))
+                    periods_query = periods_query.filter(
+                        or_(
+                            PayrollPeriod.year > start_year,
+                            and_(
+                                PayrollPeriod.year == start_year,
+                                PayrollPeriod.month >= start_mon
+                            )
+                        )
+                    )
+                
+                if end_month:
+                    end_year, end_mon = map(int, end_month.split('-'))
+                    periods_query = periods_query.filter(
+                        or_(
+                            PayrollPeriod.year < end_year,
+                            and_(
+                                PayrollPeriod.year == end_year,
+                                PayrollPeriod.month <= end_mon
+                            )
+                        )
+                    )
+                
+                periods = periods_query.all()
+                
+                # Agrupar por ano/mês
+                grouped_data = defaultdict(lambda: {
+                    'employee_count': 0,
+                    'total_earnings': Decimal('0'),
+                    'total_deductions': Decimal('0'),
+                    'total_net': Decimal('0'),
+                    'period_names': set(),
+                    'employee_ids': set()
+                })
+                
+                for period in periods:
+                    key = (period.year, period.month)
+                    
+                    # Query para dados de folha do período
+                    payroll_query = db.query(PayrollData).filter(
+                        PayrollData.period_id == period.id
+                    )
+                    
+                    # Filtrar por empresa se especificado
+                    if company != 'all':
+                        employee_ids = db.query(Employee.id).filter(
+                            Employee.company == company
+                        ).all()
+                        employee_ids = [emp[0] for emp in employee_ids]
+                        payroll_query = payroll_query.filter(
+                            PayrollData.employee_id.in_(employee_ids)
+                        )
+                    
+                    payroll_records = payroll_query.all()
+                    
+                    # Adicionar period_name ao grupo
+                    grouped_data[key]['period_names'].add(period.period_name)
+                    
+                    # Calcular totais
+                    for record in payroll_records:
+                        # Rastrear employees únicos
+                        grouped_data[key]['employee_ids'].add(record.employee_id)
+                        
+                        # Somar valores
+                        if record.gross_salary:
+                            grouped_data[key]['total_earnings'] += Decimal(str(record.gross_salary))
+                        
+                        if record.net_salary:
+                            grouped_data[key]['total_net'] += Decimal(str(record.net_salary))
+                
+                # Converter para lista ordenada (mais recente primeiro)
+                periods_data = []
+                for (year, month), data in sorted(grouped_data.items(), key=lambda x: (x[0][0], x[0][1]), reverse=True):
+                    total_deductions = data['total_earnings'] - data['total_net']
+                    
+                    periods_data.append({
+                        "year": year,
+                        "month": month,
+                        "period_names": ', '.join(sorted(data['period_names'])),
+                        "employee_count": len(data['employee_ids']),
+                        "total_earnings": float(data['total_earnings']),
+                        "total_deductions": float(total_deductions),
+                        "total_net": float(data['total_net'])
+                    })
+                
+                db.close()
+                self.send_json_response({"periods": periods_data})
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar comparativo de períodos: {e}")
+            import traceback
+            traceback.print_exc()
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
     
     def handle_create_payroll_period(self):
@@ -3604,6 +3992,1334 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             traceback.print_exc()
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
     
+    def handle_upload_payroll_csv(self):
+        """
+        🆕 Processa CSV de folha de pagamento (formato Analiticos)
+        Endpoint: POST /api/v1/payroll/upload-csv
+        
+        Body: {
+            "file_path": "/caminho/para/01-2024.CSV",
+            "division_code": "0060",  # 0060=Empreendimentos, 0059=Infraestrutura
+            "auto_create_employees": false
+        }
+        """
+        try:
+            print("📊 === UPLOAD DE CSV DE FOLHA (ANALITICOS) ===")
+            
+            # Obter dados da requisição
+            data = self.get_request_data()
+            file_path = data.get('file_path')
+            division_code = data.get('division_code', '0060')
+            auto_create_employees = data.get('auto_create_employees', False)
+            
+            # Validar parâmetros
+            if not file_path:
+                self.send_json_response({
+                    "success": False,
+                    "error": "Parâmetro 'file_path' obrigatório"
+                }, 400)
+                return
+            
+            # Validar código da divisão
+            if division_code not in ['0060', '0059']:
+                self.send_json_response({
+                    "success": False,
+                    "error": "division_code deve ser '0060' (Empreendimentos) ou '0059' (Infraestrutura)"
+                }, 400)
+                return
+            
+            print(f"📁 Arquivo: {file_path}")
+            print(f"🏢 Divisão: {division_code} ({'Empreendimentos' if division_code == '0060' else 'Infraestrutura'})")
+            print(f"👤 Auto-criar funcionários: {auto_create_employees}")
+            
+            # Criar sessão do banco
+            db = SessionLocal()
+            
+            # Obter user_id do usuário autenticado
+            user_id = None
+            authenticated_user = self.get_authenticated_user(db)
+            if authenticated_user:
+                user_id = authenticated_user.id
+                print(f"👤 Processado por: {authenticated_user.username} (ID: {user_id})")
+            else:
+                print("⚠️ Upload sem usuário autenticado (processamento do sistema)")
+            
+            # Criar serviço de processamento
+            from app.services.payroll_csv_processor import PayrollCSVProcessor
+            try:
+                processor = PayrollCSVProcessor(db, user_id=user_id)
+                
+                # Processar CSV
+                result = processor.process_csv_file(
+                    file_path=file_path,
+                    division_code=division_code,
+                    auto_create_employees=auto_create_employees
+                )
+                
+                # Retornar resultado
+                if result['success']:
+                    print(f"✅ CSV processado com sucesso!")
+                    print(f"   📊 Estatísticas: {result['stats']}")
+                    self.send_json_response(result, 200)
+                else:
+                    print(f"❌ Erro ao processar CSV: {result.get('error')}")
+                    self.send_json_response(result, 400)
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro crítico ao processar CSV: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({
+                "success": False,
+                "error": f"Erro interno: {str(e)}"
+            }, 500)
+    
+    def handle_csv_file_upload(self):
+        """Upload simples de arquivo CSV para o servidor"""
+        print("🚀 INICIANDO handle_csv_file_upload")
+        try:
+            print("📤 Upload de arquivo CSV...")
+            print(f"📋 Headers: {dict(self.headers)}")
+            
+            # Parse multipart form data
+            content_type = self.headers.get('Content-Type', '')
+            if not content_type.startswith('multipart/form-data'):
+                self.send_json_response({"error": "Content-Type deve ser multipart/form-data"}, 400)
+                return
+            
+            # Get boundary
+            boundary = None
+            for part in content_type.split(';'):
+                if 'boundary=' in part:
+                    boundary = part.split('boundary=')[1].strip()
+                    break
+            
+            if not boundary:
+                self.send_json_response({"error": "Boundary não encontrado"}, 400)
+                return
+            
+            # Read body
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            
+            # Simple multipart parser
+            parts = body.split(f'--{boundary}'.encode())
+            file_data = None
+            filename = None
+            
+            for part in parts:
+                if b'Content-Disposition' in part and b'filename=' in part:
+                    # Extract filename
+                    disp_line = part.split(b'\r\n')[1].decode('utf-8', errors='ignore')
+                    if 'filename=' in disp_line:
+                        filename = disp_line.split('filename=')[1].strip('"').strip()
+                    
+                    # Extract file data (after double CRLF)
+                    if b'\r\n\r\n' in part:
+                        file_data = part.split(b'\r\n\r\n', 1)[1]
+                        # Remove trailing CRLF
+                        if file_data.endswith(b'\r\n'):
+                            file_data = file_data[:-2]
+                    break
+            
+            if not file_data or not filename:
+                self.send_json_response({"error": "Arquivo não encontrado no upload"}, 400)
+                return
+            
+            # Validar extensão
+            if not filename.lower().endswith('.csv'):
+                self.send_json_response({"error": "Apenas arquivos CSV são aceitos"}, 400)
+                return
+            
+            # Salvar arquivo temporariamente
+            import os
+            import time
+            timestamp = int(time.time())
+            safe_filename = f"{timestamp}_{filename}"
+            upload_dir = 'uploads'
+            
+            if not os.path.exists(upload_dir):
+                os.makedirs(upload_dir)
+            
+            file_path = os.path.join(upload_dir, safe_filename)
+            
+            with open(file_path, 'wb') as f:
+                f.write(file_data)
+            
+            print(f"✅ Arquivo salvo: {file_path}")
+            
+            # Retornar caminho absoluto
+            abs_path = os.path.abspath(file_path)
+            
+            self.send_json_response({
+                "success": True,
+                "file_path": abs_path,
+                "filename": filename,
+                "size": len(file_data)
+            })
+            
+        except Exception as e:
+            print(f"❌ Erro no upload: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({
+                "success": False,
+                "error": f"Erro no upload: {str(e)}"
+            }, 500)
+    
+    def handle_payroll_statistics(self):
+        """Retorna estatísticas consolidadas dos dados CSV processados (versão simplificada)"""
+        try:
+            print("📊 Carregando estatísticas de folha de pagamento...")
+            
+            from app.services.payroll_statistics import calculate_payroll_statistics
+            
+            # Usar a variável global SessionLocal
+            global SessionLocal
+            if not SessionLocal:
+                self.send_json_response({
+                    "success": False,
+                    "error": "Banco de dados não disponível"
+                }, 500)
+                return
+            
+            # Parse query parameters (ordem: Empresa, Anos, Meses, Período, Setores, Colaboradores)
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            
+            # Empresas (0060 = Empreendimentos, 0059 = Infraestrutura)
+            companies = None
+            if 'companies' in query_params and query_params['companies']:
+                comp_str = query_params['companies'][0]
+                companies = [c.strip() for c in comp_str.split(',') if c.strip()]
+                print(f"   Empresas selecionadas: {companies}")
+            
+            # Converter anos
+            years = None
+            if 'years' in query_params and query_params['years']:
+                years_str = query_params['years'][0]
+                years = [int(y.strip()) for y in years_str.split(',') if y.strip()]
+                print(f"   Anos selecionados: {years}")
+            
+            # Converter meses
+            months = None
+            if 'months' in query_params and query_params['months']:
+                months_str = query_params['months'][0]
+                months = [int(m.strip()) for m in months_str.split(',') if m.strip()]
+                print(f"   Meses selecionados: {months}")
+            
+            # Converter período IDs de string para lista de inteiros
+            period_ids = None
+            if 'periods' in query_params and query_params['periods']:
+                periods_str = query_params['periods'][0] if isinstance(query_params['periods'], list) else query_params['periods']
+                period_ids = [int(p.strip()) for p in periods_str.split(',') if p.strip()]
+                print(f"   Períodos selecionados: {period_ids}")
+            
+            # Departamentos
+            department_ids = None
+            if 'departments' in query_params and query_params['departments']:
+                dept_str = query_params['departments'][0]
+                department_ids = [d.strip() for d in dept_str.split(',') if d.strip()]
+                print(f"   Departamentos selecionados: {department_ids}")
+            
+            # Colaboradores
+            employee_ids = None
+            if 'employees' in query_params and query_params['employees']:
+                emp_str = query_params['employees'][0]
+                employee_ids = [int(e.strip()) for e in emp_str.split(',') if e.strip()]
+                print(f"   Colaboradores selecionados: {employee_ids}")
+            
+            # Criar sessão do banco
+            db = SessionLocal()
+            try:
+                # Chamar a nova função simplificada (com ordem: Empresa, Anos, Meses, Período, Setores, Colaboradores)
+                result = calculate_payroll_statistics(
+                    db_session=db,
+                    companies=companies,
+                    years=years,
+                    months=months,
+                    period_ids=period_ids,
+                    department_ids=department_ids,
+                    employee_ids=employee_ids
+                )
+                
+                print(f"✅ Estatísticas calculadas com sucesso")
+                self.send_json_response(result)
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao carregar estatísticas: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({
+                "success": False,
+                "error": f"Erro ao carregar estatísticas: {str(e)}"
+            }, 500)
+    
+    def handle_payroll_employees(self):
+        """Lista colaboradores que têm dados de folha de pagamento"""
+        try:
+            print("👥 Carregando lista de colaboradores...")
+            
+            from sqlalchemy import text
+            
+            global db_engine
+            if not db_engine:
+                self.send_json_response({
+                    "success": False,
+                    "error": "Banco de dados não disponível"
+                }, 500)
+                return
+            
+            with db_engine.connect() as conn:
+                result = conn.execute(text("""
+                    SELECT DISTINCT
+                        e.id,
+                        e.unique_id,
+                        e.name,
+                        COALESCE(e.department, e.position, 'Não especificado') as department,
+                        e.position,
+                        COUNT(DISTINCT pd.period_id) as total_periods
+                    FROM employees e
+                    INNER JOIN payroll_data pd ON pd.employee_id = e.id
+                    GROUP BY e.id, e.unique_id, e.name, e.department, e.position
+                    ORDER BY e.name
+                """))
+                
+                employees = []
+                for row in result:
+                    employees.append({
+                        "id": row[0],
+                        "unique_id": row[1],
+                        "name": row[2],
+                        "department": row[3],
+                        "position": row[4] or "Não especificado",
+                        "total_periods": row[5]
+                    })
+                
+                print(f"✅ {len(employees)} colaboradores encontrados")
+                self.send_json_response({
+                    "success": True,
+                    "employees": employees
+                })
+                
+        except Exception as e:
+            print(f"❌ Erro ao listar colaboradores: {e}")
+            self.send_json_response({
+                "success": False,
+                "error": str(e)
+            }, 500)
+    
+    def handle_payroll_divisions(self):
+        """Lista departamentos disponíveis"""
+        try:
+            print("🏢 Carregando departamentos...")
+            
+            from sqlalchemy import text
+            
+            global db_engine
+            if not db_engine:
+                self.send_json_response({
+                    "success": False,
+                    "error": "Banco de dados não disponível"
+                }, 500)
+                return
+            
+            with db_engine.connect() as conn:
+                result = conn.execute(text("""
+                    SELECT DISTINCT
+                        COALESCE(e.department, 'Sem departamento cadastrado') as dept,
+                        COUNT(DISTINCT e.id) as total_employees
+                    FROM employees e
+                    INNER JOIN payroll_data pd ON pd.employee_id = e.id
+                    GROUP BY COALESCE(e.department, 'Sem departamento cadastrado')
+                    ORDER BY dept
+                """))
+                
+                departments = []
+                for row in result:
+                    departments.append({
+                        "name": row[0],
+                        "total_employees": row[1]
+                    })
+                
+                print(f"✅ {len(departments)} departamentos encontrados")
+                self.send_json_response({
+                    "success": True,
+                    "departments": departments
+                })
+                
+        except Exception as e:
+            print(f"❌ Erro ao listar departamentos: {e}")
+            self.send_json_response({
+                "success": False,
+                "error": str(e)
+            }, 500)
+    
+    def handle_payroll_companies(self):
+        """Lista empresas disponíveis"""
+        try:
+            print("🏢 Carregando empresas disponíveis...")
+            
+            companies = [
+                {
+                    "code": "0060",
+                    "name": "Empreendimentos",
+                    "full_name": "0060 - Empreendimentos"
+                },
+                {
+                    "code": "0059",
+                    "name": "Infraestrutura",
+                    "full_name": "0059 - Infraestrutura"
+                }
+            ]
+            
+            print(f"✅ {len(companies)} empresas disponíveis")
+            self.send_json_response({
+                "success": True,
+                "companies": companies
+            })
+            
+        except Exception as e:
+            print(f"❌ Erro ao listar empresas: {e}")
+            self.send_json_response({
+                "success": False,
+                "error": str(e)
+            }, 500)
+    
+    def handle_payroll_years(self):
+        """Lista anos disponíveis nos períodos de folha"""
+        try:
+            print("📅 Carregando anos disponíveis...")
+            
+            from sqlalchemy import text
+            
+            global db_engine
+            if not db_engine:
+                self.send_json_response({
+                    "success": False,
+                    "error": "Banco de dados não disponível"
+                }, 500)
+                return
+            
+            with db_engine.connect() as conn:
+                result = conn.execute(text("""
+                    SELECT DISTINCT year
+                    FROM payroll_periods
+                    WHERE year IS NOT NULL
+                    ORDER BY year DESC
+                """))
+                
+                years = [row[0] for row in result]
+                
+                print(f"✅ {len(years)} anos encontrados")
+                self.send_json_response({
+                    "success": True,
+                    "years": years
+                })
+                
+        except Exception as e:
+            print(f"❌ Erro ao listar anos: {e}")
+            self.send_json_response({
+                "success": False,
+                "error": str(e)
+            }, 500)
+    
+    def handle_payroll_months(self):
+        """Lista meses disponíveis nos períodos de folha"""
+        try:
+            print("📅 Carregando meses disponíveis...")
+            
+            from sqlalchemy import text
+            
+            global db_engine
+            if not db_engine:
+                self.send_json_response({
+                    "success": False,
+                    "error": "Banco de dados não disponível"
+                }, 500)
+                return
+            
+            # Mapeamento de meses
+            month_names = {
+                1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+                5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+                9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+            }
+            
+            with db_engine.connect() as conn:
+                result = conn.execute(text("""
+                    SELECT DISTINCT month
+                    FROM payroll_periods
+                    WHERE month IS NOT NULL
+                    ORDER BY month
+                """))
+                
+                months = []
+                for row in result:
+                    month_num = row[0]
+                    months.append({
+                        "number": month_num,
+                        "name": month_names.get(month_num, f"Mês {month_num}")
+                    })
+                
+                print(f"✅ {len(months)} meses encontrados")
+                self.send_json_response({
+                    "success": True,
+                    "months": months
+                })
+                
+        except Exception as e:
+            print(f"❌ Erro ao listar meses: {e}")
+            self.send_json_response({
+                "success": False,
+                "error": str(e)
+            }, 500)
+    
+    def handle_payroll_statistics_filtered(self):
+        """Estatísticas de folha com filtros (períodos, setores, colaboradores)"""
+        try:
+            # Parse query parameters
+            from urllib.parse import parse_qs
+            query_string = self.path.split('?')[1] if '?' in self.path else ''
+            params = parse_qs(query_string)
+            
+            # Extrair filtros
+            period_ids = params.get('periods', [])
+            if period_ids and period_ids[0]:
+                period_ids = [int(p) for p in period_ids[0].split(',')]
+            else:
+                period_ids = []
+            
+            divisions = params.get('divisions', [])
+            if divisions and divisions[0]:
+                divisions = divisions[0].split(',')
+            else:
+                divisions = []
+            
+            employee_ids = params.get('employees', [])
+            if employee_ids and employee_ids[0]:
+                employee_ids = [int(e) for e in employee_ids[0].split(',')]
+            else:
+                employee_ids = []
+            
+            print(f"📊 Filtros aplicados: períodos={period_ids}, setores={divisions}, colaboradores={employee_ids}")
+            
+            from sqlalchemy import text
+            
+            global db_engine
+            if not db_engine:
+                self.send_json_response({
+                    "success": False,
+                    "error": "Banco de dados não disponível"
+                }, 500)
+                return
+            
+            with db_engine.connect() as conn:
+                # Construir WHERE clauses
+                where_clauses = []
+                query_params = {}
+                
+                if period_ids:
+                    placeholders = ', '.join([f':period_{i}' for i in range(len(period_ids))])
+                    where_clauses.append(f"pd.period_id IN ({placeholders})")
+                    for i, pid in enumerate(period_ids):
+                        query_params[f'period_{i}'] = pid
+                
+                if divisions:
+                    placeholders = ', '.join([f':div_{i}' for i in range(len(divisions))])
+                    where_clauses.append(f"COALESCE(e.department, e.position, 'Não especificado') IN ({placeholders})")
+                    for i, div in enumerate(divisions):
+                        query_params[f'div_{i}'] = div
+                
+                if employee_ids:
+                    placeholders = ', '.join([f':emp_{i}' for i in range(len(employee_ids))])
+                    where_clauses.append(f"e.id IN ({placeholders})")
+                    for i, eid in enumerate(employee_ids):
+                        query_params[f'emp_{i}'] = eid
+                
+                where_sql = " AND " + " AND ".join(where_clauses) if where_clauses else ""
+                
+                # Query estatísticas agregadas
+                stats_query = f"""
+                    SELECT 
+                        COUNT(DISTINCT e.id) as total_employees,
+                        COUNT(DISTINCT pd.period_id) as total_periods,
+                        COALESCE(SUM((additional_data->>'Valor Salário')::numeric), 0) as total_valor_salario,
+                        COALESCE(AVG((additional_data->>'Valor Salário')::numeric), 0) as avg_salario,
+                        COALESCE(AVG((additional_data->>'Líquido de Cálculo')::numeric), 0) as avg_liquido,
+                        COALESCE(SUM((additional_data->>'Salário Mensal')::numeric), 0) as total_salario_mensal,
+                        COALESCE(SUM((additional_data->>'Total de Proventos')::numeric), 0) as total_proventos,
+                        COALESCE(SUM((additional_data->>'Total de Descontos')::numeric), 0) as total_descontos,
+                        COALESCE(SUM((additional_data->>'Total de Vantagens')::numeric), 0) as total_vantagens,
+                        COALESCE(SUM((additional_data->>'Líquido de Cálculo')::numeric), 0) as total_liquido,
+                        COALESCE(SUM((deductions_data->>'INSS')::numeric), 0) as total_inss,
+                        COALESCE(SUM((deductions_data->>'IRRF')::numeric), 0) as total_irrf,
+                        COALESCE(SUM((deductions_data->>'FGTS')::numeric), 0) as total_fgts,
+                        COALESCE(SUM((earnings_data->>'HORAS_EXTRAS_50_DIURNAS')::numeric), 0) as total_he_50_diurnas,
+                        COALESCE(SUM((earnings_data->>'HORAS_EXTRAS_50_NOTURNAS')::numeric), 0) as total_he_50_noturnas,
+                        COALESCE(SUM((earnings_data->>'HORAS_EXTRAS_60_DIURNAS')::numeric), 0) as total_he_60,
+                        COALESCE(SUM((earnings_data->>'HORAS_EXTRAS_100_DIURNAS')::numeric), 0) as total_he_100_diurnas,
+                        COALESCE(SUM((earnings_data->>'HORAS_EXTRAS_100_NOTURNAS')::numeric), 0) as total_he_100_noturnas,
+                        COALESCE(SUM((earnings_data->>'ADICIONAL_NOTURNO')::numeric), 0) as total_adicional_noturno,
+                        (
+                            COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO')::numeric), 0) + 
+                            COALESCE(SUM((earnings_data->>'GRATIFICACAO_FUNCAO_20')::numeric), 0)
+                        ) as total_gratificacoes,
+                        -- 13º Salário - TODOS os componentes (Adiantamento Nov + Integral Dez + Proporcional + Indenizado)
+                        (
+                            COALESCE(SUM((earnings_data->>'13_SALARIO_ADIANTAMENTO')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_GRATIFICACAO_ADIANTAMENTO')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_MEDIA_EVENTOS_ADIANTAMENTO')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_MEDIA_HE_ADIANTAMENTO')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_SALARIO_INTEGRAL')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_GRATIFICACAO_INTEGRAL')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_MEDIA_EVENTOS_INTEGRAL')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_MEDIA_HE_INTEGRAL')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_SALARIO_PROPORCIONAL')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_SALARIO_PROPORCIONAL_APP')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_GRATIFICACAO_PROPORCIONAL')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_MEDIA_EVENTOS_PROPORCIONAL')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_MEDIA_HE_PROPORCIONAL')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_SALARIO_INDENIZADO')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_SALARIO_COMPLEMENTAR')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_SALARIO_LIC_MATER')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_SALARIO_MATERNIDADE_GPS')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_MEDIA_EVENTOS_INDENIZADO')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'13_MEDIA_HE_INDENIZADO')::numeric), 0)
+                        ) as total_13_salario,
+                        -- Férias - TODOS os componentes (Valor Base + 1/3 + Gratificações + Médias + Adiantamentos)
+                        (
+                            COALESCE(SUM((earnings_data->>'FERIAS_VALOR_BASE')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_VALOR_PROPORCIONAIS')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_VALOR_VENCIDAS')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_VALOR_APP')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_DIFERENCA')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_MULTA_DOBRO')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_ABONO_1_3')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_ABONO_1_3_PROPORCIONAIS')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_ABONO_1_3_VENCIDAS')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_ABONO_1_3_APP')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_ANTECIPACAO_1_3')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_GRATIFICACAO')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_GRATIFICACAO_PROPORC')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_EVENTOS')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_EVENTOS_PROPORC')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_EVENTOS_VENCIDAS')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_HE')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_HE_PROPORC')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_HE_VENCIDAS')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_ADIANTAMENTO_PAGO')::numeric), 0) +
+                            COALESCE(SUM((earnings_data->>'FERIAS_ABONO_ADIANTAMENTO')::numeric), 0)
+                        ) as total_ferias_pagas,
+                        -- 13º Salário - Componentes Agrupados
+                        (COALESCE(SUM((earnings_data->>'13_SALARIO_ADIANTAMENTO')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_GRATIFICACAO_ADIANTAMENTO')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_MEDIA_EVENTOS_ADIANTAMENTO')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_MEDIA_HE_ADIANTAMENTO')::numeric), 0)) as total_13_adiantamento,
+                        (COALESCE(SUM((earnings_data->>'13_SALARIO_INTEGRAL')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_GRATIFICACAO_INTEGRAL')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_MEDIA_EVENTOS_INTEGRAL')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_MEDIA_HE_INTEGRAL')::numeric), 0)) as total_13_integral,
+                        (COALESCE(SUM((earnings_data->>'13_SALARIO_PROPORCIONAL')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_SALARIO_PROPORCIONAL_APP')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_GRATIFICACAO_PROPORCIONAL')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_MEDIA_EVENTOS_PROPORCIONAL')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_MEDIA_HE_PROPORCIONAL')::numeric), 0)) as total_13_proporcional,
+                        (COALESCE(SUM((earnings_data->>'13_SALARIO_INDENIZADO')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_MEDIA_EVENTOS_INDENIZADO')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_MEDIA_HE_INDENIZADO')::numeric), 0)) as total_13_indenizado,
+                        (COALESCE(SUM((earnings_data->>'13_SALARIO_COMPLEMENTAR')::numeric), 0)) as total_13_complementar,
+                        (COALESCE(SUM((earnings_data->>'13_SALARIO_LIC_MATER')::numeric), 0) + COALESCE(SUM((earnings_data->>'13_SALARIO_MATERNIDADE_GPS')::numeric), 0)) as total_13_maternidade,
+                        -- Férias - Componentes Agrupados
+                        (COALESCE(SUM((earnings_data->>'FERIAS_VALOR_BASE')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_VALOR_PROPORCIONAIS')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_VALOR_VENCIDAS')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_VALOR_APP')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_DIFERENCA')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_MULTA_DOBRO')::numeric), 0)) as total_ferias_valor_base,
+                        (COALESCE(SUM((earnings_data->>'FERIAS_ABONO_1_3')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_ABONO_1_3_PROPORCIONAIS')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_ABONO_1_3_VENCIDAS')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_ABONO_1_3_APP')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_ANTECIPACAO_1_3')::numeric), 0)) as total_ferias_abono_1_3,
+                        (COALESCE(SUM((earnings_data->>'FERIAS_GRATIFICACAO')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_GRATIFICACAO_PROPORC')::numeric), 0)) as total_ferias_gratificacao,
+                        (COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_EVENTOS')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_EVENTOS_PROPORC')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_EVENTOS_VENCIDAS')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_HE')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_HE_PROPORC')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_MEDIA_HE_VENCIDAS')::numeric), 0)) as total_ferias_medias,
+                        (COALESCE(SUM((earnings_data->>'FERIAS_ADIANTAMENTO_PAGO')::numeric), 0) + COALESCE(SUM((earnings_data->>'FERIAS_ABONO_ADIANTAMENTO')::numeric), 0)) as total_ferias_adiantamento,
+                        -- Descontos de 13º (não mais desconto de férias!)
+                        COALESCE(SUM((deductions_data->>'DESCONTO_13_ADIANTAMENTO')::numeric), 0) as total_desconto_13_adiantamento,
+                        COALESCE(SUM((earnings_data->>'PERICULOSIDADE')::numeric), 0) as total_periculosidade,
+                        (COALESCE(SUM((earnings_data->>'INSALUBRIDADE')::numeric), 0) + COALESCE(SUM((earnings_data->>'INSALUBRIDADE_NORMATIVO')::numeric), 0)) as total_insalubridade,
+                        COALESCE(SUM((additional_data->>'Valor Salário')::numeric), 0) as total_valor_salario_2,
+                        COALESCE(SUM((additional_data->>'Salário Mensal')::numeric), 0) as total_salario_mensal_2,
+                        COALESCE(SUM((additional_data->>'Total de Proventos')::numeric), 0) as total_proventos_2,
+                        COALESCE(SUM((additional_data->>'Total de Descontos')::numeric), 0) as total_descontos_2,
+                        COALESCE(SUM((additional_data->>'Total de Vantagens')::numeric), 0) as total_vantagens_2,
+                        COALESCE(SUM((additional_data->>'Líquido de Cálculo')::numeric), 0) as total_liquido_2,
+                        COALESCE(AVG((additional_data->>'Valor Salário')::numeric), 0) as avg_salario_2,
+                        COALESCE(AVG((additional_data->>'Líquido de Cálculo')::numeric), 0) as avg_liquido_2,
+                        COALESCE(SUM((additional_data->>'Horas Extras 50% Diurnas')::numeric), 0) as total_he50_horas,
+                        COALESCE(SUM((additional_data->>'Horas Normais Noturnas')::numeric), 0) as total_horas_noturnas,
+                        COALESCE(SUM((benefits_data->>'PLANO_SAUDE')::numeric), 0) as total_plano_saude,
+                        COALESCE(SUM((benefits_data->>'VALE_TRANSPORTE')::numeric), 0) as total_vale_transporte,
+                        COUNT(CASE WHEN additional_data->>'Status' = 'Trabalhando' THEN 1 END) as trabalhando,
+                        COUNT(CASE WHEN additional_data->>'Status' = 'Férias' THEN 1 END) as ferias,
+                        COUNT(CASE WHEN 
+                            additional_data->>'Status' LIKE '%Afastado%' OR
+                            additional_data->>'Status' LIKE '%Auxílio Doença%' OR
+                            additional_data->>'Status' LIKE '%Auxilio Doenca%' OR
+                            additional_data->>'Status' LIKE '%Licença%' OR
+                            additional_data->>'Status' LIKE '%Licenca%' OR
+                            additional_data->>'Status' LIKE '%Paternidade%' OR
+                            additional_data->>'Status' LIKE '%Maternidade%' OR
+                            additional_data->>'Status' LIKE '%Acidente Trabalho%'
+                        THEN 1 END) as afastados,
+                        COUNT(CASE WHEN additional_data->>'Status' LIKE '%Demitido%' OR additional_data->>'Status' LIKE '%Rescisão%' THEN 1 END) as demitidos
+                    FROM payroll_data pd
+                    INNER JOIN employees e ON e.id = pd.employee_id
+                    WHERE 1=1 {where_sql}
+                """
+                
+                result = conn.execute(text(stats_query), query_params)
+                row = result.fetchone()
+                
+                response = {
+                    "success": True,
+                    "filters": {
+                        "periods": period_ids,
+                        "divisions": divisions,
+                        "employees": employee_ids
+                    },
+                    "stats": {
+                        "total_employees": row[0] if row else 0,
+                        "total_periods": row[1] if row else 0,
+                        "total_valor_salario": float(row[2]) if row and row[2] else 0,
+                        "avg_salario": float(row[3]) if row and row[3] else 0,
+                        "avg_liquido": float(row[4]) if row and row[4] else 0,
+                        "total_salario_mensal": float(row[5]) if row and row[5] else 0,
+                        "total_proventos": float(row[6]) if row and row[6] else 0,
+                        "total_descontos": float(row[7]) if row and row[7] else 0,
+                        "total_vantagens": float(row[8]) if row and row[8] else 0,
+                        "total_liquido": float(row[9]) if row and row[9] else 0,
+                        "total_inss": float(row[10]) if row and row[10] else 0,
+                        "total_irrf": float(row[11]) if row and row[11] else 0,
+                        "total_fgts": float(row[12]) if row and row[12] else 0,
+                        "total_he_50_diurnas": float(row[13]) if row and row[13] else 0,
+                        "total_he_50_noturnas": float(row[14]) if row and row[14] else 0,
+                        "total_he_60": float(row[15]) if row and row[15] else 0,
+                        "total_he_100_diurnas": float(row[16]) if row and row[16] else 0,
+                        "total_he_100_noturnas": float(row[17]) if row and row[17] else 0,
+                        "total_adicional_noturno": float(row[18]) if row and row[18] else 0,
+                        "total_gratificacoes": float(row[19]) if row and row[19] else 0,
+                        # 13º Salário e Férias - TOTAIS CONSOLIDADOS
+                        "total_13_salario": float(row[20]) if row and row[20] else 0,
+                        "total_ferias_pagas": float(row[21]) if row and row[21] else 0,
+                        # 13º Salário - Componentes detalhados (nova estrutura)
+                        "total_13_adiantamento": float(row[22]) if row and row[22] else 0,
+                        "total_13_integral": float(row[23]) if row and row[23] else 0,
+                        "total_13_proporcional": float(row[24]) if row and row[24] else 0,
+                        "total_13_indenizado": float(row[25]) if row and row[25] else 0,
+                        "total_13_complementar": float(row[26]) if row and row[26] else 0,
+                        "total_13_maternidade": float(row[27]) if row and row[27] else 0,
+                        # Férias - Componentes detalhados (nova estrutura)
+                        "total_ferias_valor_base": float(row[28]) if row and row[28] else 0,
+                        "total_ferias_abono_1_3": float(row[29]) if row and row[29] else 0,
+                        "total_ferias_gratificacao": float(row[30]) if row and row[30] else 0,
+                        "total_ferias_medias": float(row[31]) if row and row[31] else 0,
+                        "total_ferias_adiantamento": float(row[32]) if row and row[32] else 0,
+                        # Descontos
+                        "total_desconto_13_adiantamento": float(row[33]) if row and row[33] else 0,
+                        # Outros campos
+                        "total_periculosidade": float(row[34]) if row and row[34] else 0,
+                        "total_insalubridade": float(row[35]) if row and row[35] else 0,
+                        "total_he50_horas": float(row[44]) if row and row[44] else 0,
+                        "total_horas_noturnas": float(row[45]) if row and row[45] else 0,
+                        "total_plano_saude": float(row[46]) if row and row[46] else 0,
+                        "total_vale_transporte": float(row[47]) if row and row[47] else 0,
+                        "trabalhando": row[48] if row else 0,
+                        "ferias": row[49] if row else 0,
+                        "afastados": row[50] if row else 0,
+                        "demitidos": row[51] if row else 0,
+                        "contratados": 0,  # Será calculado se múltiplos períodos
+                    }
+                }
+                
+                # Se múltiplos períodos, calcular status baseado no PERÍODO MAIS RECENTE
+                # Primeiro identificar qual é o período mais recente
+                if period_ids and len(period_ids) > 1:
+                    # Buscar o período mais recente (maior year/month)
+                    most_recent_period_query = f"""
+                        SELECT id, month, year
+                        FROM payroll_periods
+                        WHERE id IN ({','.join([f':period_{i}' for i in range(len(period_ids))])})
+                        ORDER BY year DESC, month DESC
+                        LIMIT 1
+                    """
+                    most_recent_result = conn.execute(text(most_recent_period_query), query_params)
+                    most_recent_row = most_recent_result.fetchone()
+                    
+                    if most_recent_row:
+                        most_recent_period_id = most_recent_row[0]
+                        most_recent_month = most_recent_row[1]
+                        most_recent_year = most_recent_row[2]
+                        
+                        # Contar status APENAS do período mais recente
+                        status_query = f"""
+                            SELECT 
+                                COUNT(DISTINCT CASE WHEN additional_data->>'Status' = 'Trabalhando' THEN e.id END) as trabalhando,
+                                COUNT(DISTINCT CASE WHEN additional_data->>'Status' = 'Férias' THEN e.id END) as ferias,
+                                COUNT(DISTINCT CASE WHEN 
+                                    additional_data->>'Status' LIKE '%Afastado%' OR
+                                    additional_data->>'Status' LIKE '%Auxílio Doença%' OR
+                                    additional_data->>'Status' LIKE '%Auxilio Doenca%' OR
+                                    additional_data->>'Status' LIKE '%Licença%' OR
+                                    additional_data->>'Status' LIKE '%Licenca%' OR
+                                    additional_data->>'Status' LIKE '%Paternidade%' OR
+                                    additional_data->>'Status' LIKE '%Maternidade%' OR
+                                    additional_data->>'Status' LIKE '%Acidente Trabalho%'
+                                THEN e.id END) as afastados,
+                                COUNT(DISTINCT CASE WHEN additional_data->>'Status' LIKE '%Demitido%' OR additional_data->>'Status' LIKE '%Rescisão%' THEN e.id END) as demitidos
+                            FROM payroll_data pd
+                            INNER JOIN employees e ON e.id = pd.employee_id
+                            WHERE pd.period_id = :most_recent_period_id
+                        """
+                        status_params = {**query_params, 'most_recent_period_id': most_recent_period_id}
+                        status_result = conn.execute(text(status_query), status_params)
+                        status_row = status_result.fetchone()
+                        
+                        if status_row:
+                            response["stats"]["trabalhando"] = status_row[0]
+                            response["stats"]["ferias"] = status_row[1]
+                            response["stats"]["afastados"] = status_row[2]
+                            response["stats"]["demitidos"] = status_row[3]
+                        
+                        # Adicionar informações do período mais recente para o frontend exibir
+                        response["stats"]["most_recent_period"] = {
+                            "id": most_recent_period_id,
+                            "month": most_recent_month,
+                            "year": most_recent_year
+                        }
+                    
+                    # Calcular contratados = funcionários cuja DATA DE ADMISSÃO está dentro do range dos períodos selecionados
+                    # Buscar as datas dos períodos selecionados
+                    periods_dates_query = f"""
+                        SELECT 
+                            MIN(MAKE_DATE(year, month, 1)) as start_date,
+                            MAX(MAKE_DATE(year, month, 1) + INTERVAL '1 month' - INTERVAL '1 day') as end_date
+                        FROM payroll_periods
+                        WHERE id IN ({','.join([f':period_{i}' for i in range(len(period_ids))])})
+                    """
+                    periods_dates_result = conn.execute(text(periods_dates_query), query_params)
+                    periods_dates_row = periods_dates_result.fetchone()
+                    
+                    if periods_dates_row and periods_dates_row[0] and periods_dates_row[1]:
+                        start_date = periods_dates_row[0]
+                        end_date = periods_dates_row[1]
+                        
+                        print(f"🔍 DEBUG - Range de datas dos períodos: {start_date} até {end_date}")
+                        
+                        # Contar funcionários cuja admission_date está neste range E aparecem nos períodos filtrados
+                        contratados_query = f"""
+                            SELECT COUNT(DISTINCT e.id)
+                            FROM employees e
+                            INNER JOIN payroll_data pd ON pd.employee_id = e.id
+                            WHERE pd.period_id IN ({','.join([f':period_{i}' for i in range(len(period_ids))])})
+                            AND e.admission_date >= :start_date
+                            AND e.admission_date <= :end_date
+                        """
+                        
+                        contratados_params = {**query_params, 'start_date': start_date, 'end_date': end_date}
+                        contratados_result = conn.execute(text(contratados_query), contratados_params)
+                        contratados_row = contratados_result.fetchone()
+                        
+                        if contratados_row:
+                            response["stats"]["contratados"] = contratados_row[0]
+                            print(f"✅ Contratados (admission_date entre {start_date} e {end_date}): {contratados_row[0]}")
+                        
+                        # 🆕 Contar desligados usando termination_date (mesma lógica que contratados)
+                        desligados_query = f"""
+                            SELECT COUNT(DISTINCT e.id)
+                            FROM employees e
+                            INNER JOIN payroll_data pd ON pd.employee_id = e.id
+                            WHERE pd.period_id IN ({','.join([f':period_{i}' for i in range(len(period_ids))])})
+                            AND e.termination_date >= :start_date
+                            AND e.termination_date <= :end_date
+                        """
+                        
+                        desligados_result = conn.execute(text(desligados_query), contratados_params)
+                        desligados_row = desligados_result.fetchone()
+                        
+                        if desligados_row:
+                            response["stats"]["demitidos"] = desligados_row[0]
+                            print(f"✅ Desligados (termination_date entre {start_date} e {end_date}): {desligados_row[0]}")
+                    else:
+                        print(f"⚠️ Não foi possível determinar range de datas dos períodos")
+                
+                # 🆕 Para período único, também calcular contratados e desligados
+                elif period_ids and len(period_ids) == 1:
+                    period_query = "SELECT year, month FROM payroll_periods WHERE id = :period_0"
+                    period_result = conn.execute(text(period_query), query_params)
+                    period_row = period_result.fetchone()
+                    
+                    if period_row:
+                        year, month = period_row[0], period_row[1]
+                        from datetime import date
+                        import calendar
+                        
+                        start_date = date(year, month, 1)
+                        last_day = calendar.monthrange(year, month)[1]
+                        end_date = date(year, month, last_day)
+                        
+                        # Contratados no mês
+                        contratados_query = f"""
+                            SELECT COUNT(DISTINCT e.id)
+                            FROM employees e
+                            INNER JOIN payroll_data pd ON pd.employee_id = e.id
+                            WHERE 1=1 {where_sql}
+                            AND e.admission_date >= :start_date
+                            AND e.admission_date <= :end_date
+                        """
+                        
+                        single_params = {**query_params, 'start_date': start_date, 'end_date': end_date}
+                        contratados_result = conn.execute(text(contratados_query), single_params)
+                        contratados_row = contratados_result.fetchone()
+                        
+                        if contratados_row:
+                            response["stats"]["contratados"] = contratados_row[0]
+                            print(f"✅ Contratados em {month}/{year}: {contratados_row[0]}")
+                        
+                        # Desligados no mês
+                        desligados_query = f"""
+                            SELECT COUNT(DISTINCT e.id)
+                            FROM employees e
+                            INNER JOIN payroll_data pd ON pd.employee_id = e.id
+                            WHERE 1=1 {where_sql}
+                            AND e.termination_date >= :start_date
+                            AND e.termination_date <= :end_date
+                        """
+                        
+                        desligados_result = conn.execute(text(desligados_query), single_params)
+                        desligados_row = desligados_result.fetchone()
+                        
+                        if desligados_row:
+                            response["stats"]["demitidos"] = desligados_row[0]
+                            print(f"✅ Desligados em {month}/{year}: {desligados_row[0]}")
+
+                
+                print(f"✅ Estatísticas filtradas calculadas")
+                self.send_json_response(response)
+                
+        except Exception as e:
+            print(f"❌ Erro ao calcular estatísticas filtradas: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({
+                "success": False,
+                "error": str(e)
+            }, 500)
+    
+    def handle_payroll_statistics_debug(self):
+        """DEBUG - Retorna listas de nomes dos colaboradores em cada categoria"""
+        try:
+            from urllib.parse import parse_qs
+            query_string = self.path.split('?')[1] if '?' in self.path else ''
+            params = parse_qs(query_string)
+            
+            # Extrair filtros
+            period_ids = params.get('periods', [])
+            if period_ids and period_ids[0]:
+                period_ids = [int(p) for p in period_ids[0].split(',')]
+            else:
+                period_ids = []
+            
+            print(f"🔍 DEBUG - Períodos: {period_ids}")
+            
+            from sqlalchemy import text
+            
+            global db_engine
+            if not db_engine:
+                self.send_json_response({
+                    "success": False,
+                    "error": "Banco de dados não disponível"
+                }, 500)
+                return
+            
+            with db_engine.connect() as conn:
+                where_clauses = []
+                query_params = {}
+                
+                if period_ids:
+                    placeholders = ', '.join([f':period_{i}' for i in range(len(period_ids))])
+                    where_clauses.append(f"pd.period_id IN ({placeholders})")
+                    for i, pid in enumerate(period_ids):
+                        query_params[f'period_{i}'] = pid
+                
+                where_sql = " AND " + " AND ".join(where_clauses) if where_clauses else ""
+                
+                response = {
+                    "success": True,
+                    "periods": period_ids,
+                    "trabalhando": [],
+                    "contratados": [],
+                    "desligados": [],
+                    "ferias": [],
+                    "afastados": []
+                }
+                
+                # Lista de trabalhando - do PERÍODO MAIS RECENTE
+                if period_ids and len(period_ids) > 1:
+                    # Buscar período mais recente
+                    most_recent_period_query = f"""
+                        SELECT id FROM payroll_periods
+                        WHERE id IN ({','.join([f':period_{i}' for i in range(len(period_ids))])})
+                        ORDER BY year DESC, month DESC
+                        LIMIT 1
+                    """
+                    most_recent_result = conn.execute(text(most_recent_period_query), query_params)
+                    most_recent_row = most_recent_result.fetchone()
+                    
+                    if most_recent_row:
+                        most_recent_period_id = most_recent_row[0]
+                        
+                        trabalhando_query = f"""
+                            SELECT DISTINCT e.id, e.name, e.unique_id, e.admission_date
+                            FROM payroll_data pd
+                            INNER JOIN employees e ON e.id = pd.employee_id
+                            WHERE pd.period_id = :most_recent_period_id
+                            AND additional_data->>'Status' = 'Trabalhando'
+                            ORDER BY e.name
+                        """
+                        result = conn.execute(text(trabalhando_query), {'most_recent_period_id': most_recent_period_id})
+                        response["trabalhando"] = [
+                            {"id": row[0], "name": row[1], "unique_id": row[2], "admission_date": str(row[3]) if row[3] else None, "status": "Trabalhando"}
+                            for row in result.fetchall()
+                        ]
+                else:
+                    # Um período só - pega direto
+                    trabalhando_query = f"""
+                        SELECT DISTINCT e.id, e.name, e.unique_id, e.admission_date, additional_data->>'Status' as status
+                        FROM payroll_data pd
+                        INNER JOIN employees e ON e.id = pd.employee_id
+                        WHERE 1=1 {where_sql}
+                        AND additional_data->>'Status' = 'Trabalhando'
+                        ORDER BY e.name
+                    """
+                    result = conn.execute(text(trabalhando_query), query_params)
+                    response["trabalhando"] = [
+                        {"id": row[0], "name": row[1], "unique_id": row[2], "admission_date": str(row[3]) if row[3] else None, "status": row[4]}
+                        for row in result.fetchall()
+                    ]
+                
+                # Lista de contratados (admission_date dentro do range)
+                if period_ids and len(period_ids) > 1:
+                    periods_dates_query = f"""
+                        SELECT 
+                            MIN(MAKE_DATE(year, month, 1)) as start_date,
+                            MAX(MAKE_DATE(year, month, 1) + INTERVAL '1 month' - INTERVAL '1 day') as end_date
+                        FROM payroll_periods
+                        WHERE id IN ({','.join([f':period_{i}' for i in range(len(period_ids))])})
+                    """
+                    periods_dates_result = conn.execute(text(periods_dates_query), query_params)
+                    periods_dates_row = periods_dates_result.fetchone()
+                    
+                    if periods_dates_row and periods_dates_row[0] and periods_dates_row[1]:
+                        start_date = periods_dates_row[0]
+                        end_date = periods_dates_row[1]
+                        
+                        contratados_query = f"""
+                            SELECT DISTINCT e.id, e.name, e.unique_id, e.admission_date
+                            FROM employees e
+                            INNER JOIN payroll_data pd ON pd.employee_id = e.id
+                            WHERE pd.period_id IN ({','.join([f':period_{i}' for i in range(len(period_ids))])})
+                            AND e.admission_date >= :start_date
+                            AND e.admission_date <= :end_date
+                            ORDER BY e.admission_date, e.name
+                        """
+                        
+                        contratados_params = {**query_params, 'start_date': start_date, 'end_date': end_date}
+                        result = conn.execute(text(contratados_query), contratados_params)
+                        response["contratados"] = [
+                            {"id": row[0], "name": row[1], "unique_id": row[2], "admission_date": str(row[3]) if row[3] else None}
+                            for row in result.fetchall()
+                        ]
+                        response["date_range"] = {"start": str(start_date), "end": str(end_date)}
+                
+                # Lista de desligados (termination_date dentro do período)
+                if period_ids and len(period_ids) > 1:
+                    # Obter range de datas dos períodos
+                    periods_dates_query = f"""
+                        SELECT 
+                            MIN(MAKE_DATE(year, month, 1)) as start_date,
+                            MAX(MAKE_DATE(year, month, 1) + INTERVAL '1 month' - INTERVAL '1 day') as end_date
+                        FROM payroll_periods
+                        WHERE id IN ({','.join([':period_' + str(i) for i in range(len(period_ids))])})
+                    """
+                    date_result = conn.execute(text(periods_dates_query), query_params)
+                    date_row = date_result.fetchone()
+                    
+                    if date_row and date_row[0] and date_row[1]:
+                        start_date = date_row[0]
+                        end_date = date_row[1]
+                        
+                        # Buscar employees cujo termination_date está no range E que aparecem nos períodos
+                        desligados_query = f"""
+                            SELECT DISTINCT e.id, e.name, e.unique_id, e.termination_date, 'Demitido' as status
+                            FROM employees e
+                            INNER JOIN payroll_data pd ON pd.employee_id = e.id
+                            WHERE pd.period_id IN ({','.join([':period_' + str(i) for i in range(len(period_ids))])})
+                            AND e.termination_date >= :start_date
+                            AND e.termination_date <= :end_date
+                            ORDER BY e.termination_date DESC, e.name
+                        """
+                        
+                        desligados_params = query_params.copy()
+                        desligados_params['start_date'] = start_date
+                        desligados_params['end_date'] = end_date
+                        
+                        result = conn.execute(text(desligados_query), desligados_params)
+                        response["desligados"] = [
+                            {"id": row[0], "name": row[1], "unique_id": row[2], "termination_date": str(row[3]) if row[3] else None, "status": row[4]}
+                            for row in result.fetchall()
+                        ]
+                        
+                        print(f"   ✅ Desligados (termination_date entre {start_date} e {end_date}): {len(response['desligados'])}")
+                    else:
+                        response["desligados"] = []
+                else:
+                    # Período único - pegar employees com termination_date naquele mês
+                    if period_ids:
+                        period_query = "SELECT year, month FROM payroll_periods WHERE id = :period_0"
+                        period_result = conn.execute(text(period_query), query_params)
+                        period_row = period_result.fetchone()
+                        
+                        if period_row:
+                            year, month = period_row[0], period_row[1]
+                            from datetime import date
+                            import calendar
+                            
+                            start_date = date(year, month, 1)
+                            last_day = calendar.monthrange(year, month)[1]
+                            end_date = date(year, month, last_day)
+                            
+                            desligados_query = f"""
+                                SELECT DISTINCT e.id, e.name, e.unique_id, e.termination_date, 'Demitido' as status
+                                FROM employees e
+                                INNER JOIN payroll_data pd ON pd.employee_id = e.id
+                                WHERE 1=1 {where_sql}
+                                AND e.termination_date >= :start_date
+                                AND e.termination_date <= :end_date
+                                ORDER BY e.name
+                            """
+                            
+                            desligados_params = query_params.copy()
+                            desligados_params['start_date'] = start_date
+                            desligados_params['end_date'] = end_date
+                            
+                            result = conn.execute(text(desligados_query), desligados_params)
+                            response["desligados"] = [
+                                {"id": row[0], "name": row[1], "unique_id": row[2], "termination_date": str(row[3]) if row[3] else None, "status": row[4]}
+                                for row in result.fetchall()
+                            ]
+                        else:
+                            response["desligados"] = []
+                    else:
+                        response["desligados"] = []
+                
+                # 🆕 Lista de férias - do PERÍODO MAIS RECENTE da seleção
+                if period_ids and len(period_ids) > 1:
+                    # Buscar período mais recente (maior year/month)
+                    most_recent_period_query = f"""
+                        SELECT id, month, year
+                        FROM payroll_periods
+                        WHERE id IN ({','.join([f':period_{i}' for i in range(len(period_ids))])})
+                        ORDER BY year DESC, month DESC
+                        LIMIT 1
+                    """
+                    most_recent_result = conn.execute(text(most_recent_period_query), query_params)
+                    most_recent_row = most_recent_result.fetchone()
+                    
+                    if most_recent_row:
+                        most_recent_period_id, most_recent_month, most_recent_year = most_recent_row[0], most_recent_row[1], most_recent_row[2]
+                        
+                        ferias_query = """
+                            SELECT DISTINCT e.id, e.name, e.unique_id,
+                                   additional_data->>'Status' as status,
+                                   :month as month, :year as year
+                            FROM payroll_data pd
+                            INNER JOIN employees e ON e.id = pd.employee_id
+                            WHERE pd.period_id = :most_recent_period_id
+                            AND additional_data->>'Status' = 'Férias'
+                            ORDER BY e.name
+                        """
+                        result = conn.execute(text(ferias_query), {
+                            'most_recent_period_id': most_recent_period_id,
+                            'month': most_recent_month,
+                            'year': most_recent_year
+                        })
+                        response["ferias"] = [
+                            {"id": row[0], "name": row[1], "unique_id": row[2], "status": row[3], "month": row[4], "year": row[5]}
+                            for row in result.fetchall()
+                        ]
+                    else:
+                        response["ferias"] = []
+                else:
+                    # Período único
+                    ferias_query = f"""
+                        SELECT DISTINCT e.id, e.name, e.unique_id, additional_data->>'Status' as status, pp.month, pp.year
+                        FROM payroll_data pd
+                        INNER JOIN employees e ON e.id = pd.employee_id
+                        INNER JOIN payroll_periods pp ON pp.id = pd.period_id
+                        WHERE 1=1 {where_sql}
+                        AND additional_data->>'Status' = 'Férias'
+                        ORDER BY e.name
+                    """
+                    result = conn.execute(text(ferias_query), query_params)
+                    response["ferias"] = [
+                        {"id": row[0], "name": row[1], "unique_id": row[2], "status": row[3], "month": row[4], "year": row[5]}
+                        for row in result.fetchall()
+                    ]
+                
+                # 🆕 Lista de afastados - do PERÍODO MAIS RECENTE da seleção
+                if period_ids and len(period_ids) > 1:
+                    # Buscar período mais recente (maior year/month)
+                    most_recent_period_query = f"""
+                        SELECT id, month, year
+                        FROM payroll_periods
+                        WHERE id IN ({','.join([f':period_{i}' for i in range(len(period_ids))])})
+                        ORDER BY year DESC, month DESC
+                        LIMIT 1
+                    """
+                    most_recent_result = conn.execute(text(most_recent_period_query), query_params)
+                    most_recent_row = most_recent_result.fetchone()
+                    
+                    if most_recent_row:
+                        most_recent_period_id, most_recent_month, most_recent_year = most_recent_row[0], most_recent_row[1], most_recent_row[2]
+                        
+                        afastados_query = """
+                            SELECT DISTINCT e.id, e.name, e.unique_id,
+                                   additional_data->>'Status' as status,
+                                   :month as month, :year as year
+                            FROM payroll_data pd
+                            INNER JOIN employees e ON e.id = pd.employee_id
+                            WHERE pd.period_id = :most_recent_period_id
+                            AND (
+                                additional_data->>'Status' LIKE '%Afastado%' OR
+                                additional_data->>'Status' LIKE '%Auxílio Doença%' OR
+                                additional_data->>'Status' LIKE '%Auxilio Doenca%' OR
+                                additional_data->>'Status' LIKE '%Licença%' OR
+                                additional_data->>'Status' LIKE '%Licenca%' OR
+                                additional_data->>'Status' LIKE '%Paternidade%' OR
+                                additional_data->>'Status' LIKE '%Maternidade%' OR
+                                additional_data->>'Status' LIKE '%Acidente Trabalho%'
+                            )
+                            ORDER BY e.name
+                        """
+                        result = conn.execute(text(afastados_query), {
+                            'most_recent_period_id': most_recent_period_id,
+                            'month': most_recent_month,
+                            'year': most_recent_year
+                        })
+                        response["afastados"] = [
+                            {"id": row[0], "name": row[1], "unique_id": row[2], "status": row[3], "month": row[4], "year": row[5]}
+                            for row in result.fetchall()
+                        ]
+                    else:
+                        response["afastados"] = []
+                else:
+                    # Período único
+                    afastados_query = f"""
+                        SELECT DISTINCT e.id, e.name, e.unique_id, additional_data->>'Status' as status, pp.month, pp.year
+                        FROM payroll_data pd
+                        INNER JOIN employees e ON e.id = pd.employee_id
+                        INNER JOIN payroll_periods pp ON pp.id = pd.period_id
+                        WHERE 1=1 {where_sql}
+                        AND (
+                            additional_data->>'Status' LIKE '%Afastado%' OR
+                            additional_data->>'Status' LIKE '%Auxílio Doença%' OR
+                            additional_data->>'Status' LIKE '%Auxilio Doenca%' OR
+                            additional_data->>'Status' LIKE '%Licença%' OR
+                            additional_data->>'Status' LIKE '%Licenca%' OR
+                            additional_data->>'Status' LIKE '%Paternidade%' OR
+                            additional_data->>'Status' LIKE '%Maternidade%' OR
+                            additional_data->>'Status' LIKE '%Acidente Trabalho%'
+                        )
+                        ORDER BY e.name
+                    """
+                    result = conn.execute(text(afastados_query), query_params)
+                    response["afastados"] = [
+                        {"id": row[0], "name": row[1], "unique_id": row[2], "status": row[3], "month": row[4], "year": row[5]}
+                        for row in result.fetchall()
+                    ]
+                
+                print(f"✅ DEBUG - Trabalhando: {len(response['trabalhando'])}, Contratados: {len(response['contratados'])}, Desligados: {len(response['desligados'])}, Férias: {len(response['ferias'])}, Afastados: {len(response['afastados'])}")
+                self.send_json_response(response)
+                
+        except Exception as e:
+            print(f"❌ Erro ao gerar debug: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({
+                "success": False,
+                "error": str(e)
+            }, 500)
+            traceback.print_exc()
+            self.send_json_response({
+                "success": False,
+                "error": str(e)
+            }, 500)
+    
+    def handle_payroll_processing_history(self):
+        """Retorna histórico de processamento de CSVs"""
+        try:
+            print("📋 Buscando histórico de processamento...")
+            
+            from sqlalchemy import text
+            
+            global db_engine
+            if not db_engine:
+                self.send_json_response({
+                    "success": False,
+                    "error": "Banco de dados não disponível"
+                }, 500)
+                return
+            
+            with db_engine.connect() as conn:
+                result = conn.execute(text("""
+                    SELECT 
+                        ppl.id,
+                        ppl.filename,
+                        ppl.file_size,
+                        ppl.total_rows,
+                        ppl.processed_rows,
+                        ppl.error_rows,
+                        ppl.status,
+                        ppl.error_message,
+                        ppl.processing_time,
+                        ppl.created_at,
+                        pp.period_name,
+                        u.username
+                    FROM payroll_processing_logs ppl
+                    LEFT JOIN payroll_periods pp ON pp.id = ppl.period_id
+                    LEFT JOIN users u ON u.id = ppl.processed_by
+                    ORDER BY ppl.created_at DESC
+                    LIMIT 50
+                """))
+                
+                history = []
+                for row in result:
+                    history.append({
+                        "id": row[0],
+                        "filename": row[1],
+                        "file_size": row[2],
+                        "total_rows": row[3],
+                        "processed_rows": row[4],
+                        "error_rows": row[5],
+                        "status": row[6],
+                        "error_message": row[7],
+                        "processing_time": float(row[8]) if row[8] else 0,
+                        "timestamp": row[9].isoformat() if row[9] else None,
+                        "period_name": row[10],
+                        "user": row[11] or "Sistema"
+                    })
+                
+                print(f"✅ {len(history)} registros de histórico encontrados")
+                self.send_json_response({
+                    "success": True,
+                    "history": history
+                })
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar histórico: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({
+                "success": False,
+                "error": str(e)
+            }, 500)
+    
     def handle_list_payroll_periods(self):
         """Lista períodos disponíveis para download"""
         try:
@@ -3686,21 +5402,222 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     # ==========================================
     
     def handle_indicators_overview(self):
-        """Retorna visão geral dos indicadores de RH"""
+        """Retorna visão geral dos indicadores de RH com filtros de mês/ano/empresa/setor"""
         try:
-            from app.services.hr_indicators import HRIndicatorsService
-            
-            # Parse query params para controle de cache
+            # Parse query params
             query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            use_cache = query_params.get('use_cache', ['true'])[0].lower() != 'false'
+            company = query_params.get('company', ['all'])[0]
+            division = query_params.get('division', ['all'])[0]
+            year = query_params.get('year', [None])[0]
+            month = query_params.get('month', [None])[0]
             
-            db = SessionLocal()
-            try:
-                service = HRIndicatorsService(db)
-                result = service.get_overview_metrics(use_cache=use_cache)
-                self.send_json_response(result)
-            finally:
+            if SessionLocal:
+                from app.models.payroll import PayrollPeriod, PayrollData
+                from app.models.employee import Employee
+                from sqlalchemy import func, or_, and_
+                from decimal import Decimal
+                from datetime import date, datetime
+                
+                db = SessionLocal()
+                
+                # Se não especificou ano/mês, pegar o mais recente
+                if not year or not month:
+                    latest_period = db.query(PayrollPeriod).order_by(
+                        PayrollPeriod.year.desc(),
+                        PayrollPeriod.month.desc()
+                    ).first()
+                    
+                    if not latest_period:
+                        db.close()
+                        self.send_json_response({"error": "Nenhum período encontrado"}, 404)
+                        return
+                    
+                    year = latest_period.year
+                    month = latest_period.month
+                else:
+                    year = int(year)
+                    month = int(month)
+                
+                # Buscar todos os períodos do mês/ano especificado (mensal e 13º)
+                # FILTRAR POR EMPRESA AQUI - usando payroll_periods.company
+                period_query = db.query(PayrollPeriod).filter(
+                    PayrollPeriod.year == year,
+                    PayrollPeriod.month == month
+                )
+                
+                # Filtrar por empresa no período (NÃO no employee, pois company_code pode ser NULL)
+                if company != 'all':
+                    period_query = period_query.filter(PayrollPeriod.company == company)
+                    print(f"🔍 Filtrando períodos por empresa: '{company}'")
+                
+                periods = period_query.all()
+                
+                if not periods:
+                    db.close()
+                    self.send_json_response({"error": f"Nenhum período encontrado para {month:02d}/{year}"}, 404)
+                    return
+                
+                period_ids = [p.id for p in periods]
+                print(f"📊 Períodos encontrados: {[(p.id, p.company, p.period_name) for p in periods]}")
+                
+                # Buscar dados de folha dos períodos
+                payroll_query = db.query(PayrollData).filter(
+                    PayrollData.period_id.in_(period_ids)
+                )
+                
+                payroll_records = payroll_query.all()
+                print(f"📊 Payroll records encontrados: {len(payroll_records)}")
+                
+                # Obter employee_ids dos registros de folha
+                unique_employee_ids = set([r.employee_id for r in payroll_records])
+                print(f"📊 Unique employee IDs em payroll: {len(unique_employee_ids)}")
+                
+                # Buscar dados dos employees para filtro por departamento
+                employee_map = {}
+                if unique_employee_ids:
+                    employees = db.query(Employee).filter(
+                        Employee.id.in_(unique_employee_ids)
+                    ).all()
+                    employee_map = {e.id: e for e in employees}
+                    print(f"📊 Employees encontrados: {len(employees)}")
+                
+                # Filtrar por departamento/setor se especificado
+                if division != 'all':
+                    print(f"🔍 Filtrando por departamento: '{division}'")
+                    # Filtrar payroll_records apenas para employees do departamento
+                    dept_employee_ids = [e.id for e in employee_map.values() if e.department == division]
+                    payroll_records = [r for r in payroll_records if r.employee_id in dept_employee_ids]
+                    unique_employee_ids = set([r.employee_id for r in payroll_records])
+                    print(f"📊 Após filtro de departamento: {len(payroll_records)} records, {len(unique_employee_ids)} employees")
+                
+                # Calcular métricas principais
+                total_employees = len(unique_employee_ids)
+                total_cost = sum([Decimal(str(r.net_salary or 0)) for r in payroll_records])
+                
+                # Buscar mês anterior para calcular variação
+                if month == 1:
+                    prev_year = year - 1
+                    prev_month = 12
+                else:
+                    prev_year = year
+                    prev_month = month - 1
+                
+                prev_period_query = db.query(PayrollPeriod).filter(
+                    PayrollPeriod.year == prev_year,
+                    PayrollPeriod.month == prev_month
+                )
+                if company != 'all':
+                    prev_period_query = prev_period_query.filter(PayrollPeriod.company == company)
+                
+                prev_periods = prev_period_query.all()
+                
+                employee_variation = None
+                cost_variation = None
+                
+                if prev_periods:
+                    prev_period_ids = [p.id for p in prev_periods]
+                    prev_records = db.query(PayrollData).filter(
+                        PayrollData.period_id.in_(prev_period_ids)
+                    ).all()
+                    
+                    # Aplicar filtro de departamento se necessário
+                    if division != 'all':
+                        dept_employee_ids = [e.id for e in employee_map.values() if e.department == division]
+                        prev_records = [r for r in prev_records if r.employee_id in dept_employee_ids]
+                    
+                    prev_employees = len(set([r.employee_id for r in prev_records]))
+                    prev_cost = sum([Decimal(str(r.net_salary or 0)) for r in prev_records])
+                    
+                    if prev_employees > 0:
+                        employee_variation = ((total_employees - prev_employees) / prev_employees) * 100
+                    if prev_cost > 0:
+                        cost_variation = ((total_cost - prev_cost) / prev_cost) * 100
+                
+                # Distribuição por empresa (só faz sentido quando company='all')
+                by_company = []
+                if company == 'all':
+                    # Agrupar por company do período
+                    periods_by_company = {}
+                    for p in periods:
+                        if p.company not in periods_by_company:
+                            periods_by_company[p.company] = []
+                        periods_by_company[p.company].append(p.id)
+                    
+                    for comp_code, comp_period_ids in periods_by_company.items():
+                        comp_records = [r for r in payroll_records if r.period_id in comp_period_ids]
+                        comp_count = len(set([r.employee_id for r in comp_records]))
+                        comp_cost = sum([Decimal(str(r.net_salary or 0)) for r in comp_records])
+                        by_company.append({
+                            'company': comp_code,
+                            'count': comp_count,
+                            'total_cost': float(comp_cost)
+                        })
+                
+                # Top 5 setores
+                employees_by_division = {}
+                for emp_id in unique_employee_ids:
+                    emp = employee_map.get(emp_id)
+                    if emp:
+                        div = emp.department or 'Não informado'
+                        if div not in employees_by_division:
+                            employees_by_division[div] = set()
+                        employees_by_division[div].add(emp_id)
+                
+                top_divisions = sorted(
+                    [{'division': k, 'count': len(v)} for k, v in employees_by_division.items()],
+                    key=lambda x: x['count'],
+                    reverse=True
+                )[:5]
+                
+                # Contar admissões e desligamentos no mês
+                period_start = date(year, month, 1)
+                if month == 12:
+                    period_end = date(year + 1, 1, 1)
+                else:
+                    period_end = date(year, month + 1, 1)
+                
+                # Contar admissões e desligamentos - restringir aos employees que estão no payroll
+                admissions_query = db.query(Employee).filter(
+                    Employee.admission_date >= period_start,
+                    Employee.admission_date < period_end,
+                    Employee.id.in_(unique_employee_ids) if unique_employee_ids else False
+                )
+                terminations_query = db.query(Employee).filter(
+                    Employee.termination_date >= period_start,
+                    Employee.termination_date < period_end,
+                    Employee.id.in_(unique_employee_ids) if unique_employee_ids else False
+                )
+                
+                # Filtro por departamento se aplicável
+                if division != 'all':
+                    admissions_query = admissions_query.filter(Employee.department == division)
+                    terminations_query = terminations_query.filter(Employee.department == division)
+                
+                admissions = admissions_query.count()
+                terminations = terminations_query.count()
+                
+                result = {
+                    'filters': {
+                        'year': year,
+                        'month': month,
+                        'company': company,
+                        'division': division
+                    },
+                    'total_employees': total_employees,
+                    'total_payroll_cost': float(total_cost),
+                    'employee_variation': float(employee_variation) if employee_variation is not None else None,
+                    'cost_variation': float(cost_variation) if cost_variation is not None else None,
+                    'admissions': admissions,
+                    'terminations': terminations,
+                    'by_company': by_company,
+                    'top_divisions': top_divisions
+                }
+                
                 db.close()
+                self.send_json_response(result)
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
                 
         except Exception as e:
             print(f"❌ Erro ao buscar overview de indicadores: {e}")
@@ -3709,6 +5626,281 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json_response({"error": str(e)}, 500)
     
     def handle_indicators_headcount(self):
+        """Retorna métricas de headcount com evolução temporal e distribuições"""
+        try:
+            # Parse query params
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            company = query_params.get('company', ['all'])[0]
+            division = query_params.get('division', ['all'])[0]
+            year = query_params.get('year', [None])[0]
+            month = query_params.get('month', [None])[0]
+            months_range = int(query_params.get('months_range', ['12'])[0])  # Últimos N meses
+            
+            if SessionLocal:
+                from app.models.payroll import PayrollPeriod, PayrollData
+                from app.models.employee import Employee
+                from sqlalchemy import func, or_, and_
+                from decimal import Decimal
+                from datetime import date, datetime
+                from dateutil.relativedelta import relativedelta
+                
+                db = SessionLocal()
+                
+                # Se não especificou período, usar o mais recente
+                if not year or not month:
+                    latest_period = db.query(PayrollPeriod).order_by(
+                        PayrollPeriod.year.desc(),
+                        PayrollPeriod.month.desc()
+                    ).first()
+                    
+                    if not latest_period:
+                        db.close()
+                        self.send_json_response({"error": "Nenhum período encontrado"}, 404)
+                        return
+                    
+                    year = latest_period.year
+                    month = latest_period.month
+                else:
+                    year = int(year)
+                    month = int(month)
+                
+                # Calcular período atual
+                current_date = date(year, month, 1)
+                
+                # MÉTRICA ATUAL (mês selecionado)
+                current_metrics = self._get_headcount_for_period(db, year, month, company, division)
+                
+                # EVOLUÇÃO TEMPORAL (últimos N meses)
+                evolution_data = []
+                month_names_pt = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 
+                                  'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+                for i in range(months_range - 1, -1, -1):
+                    period_date = current_date - relativedelta(months=i)
+                    p_year = period_date.year
+                    p_month = period_date.month
+                    
+                    metrics = self._get_headcount_for_period(db, p_year, p_month, company, division)
+                    evolution_data.append({
+                        'year': p_year,
+                        'month': p_month,
+                        'month_name': f"{month_names_pt[p_month-1]}/{str(p_year)[2:]}",
+                        'headcount': metrics['headcount'],
+                        'total_cost': metrics['total_cost'],
+                        'avg_cost_per_employee': metrics['avg_cost_per_employee']
+                    })
+                
+                # DISTRIBUIÇÃO POR EMPRESA (só se company='all')
+                by_company = current_metrics.get('by_company', [])
+                
+                # TOP 10 SETORES
+                top_divisions = current_metrics.get('top_divisions', [])[:10]
+                
+                # TOP 10 CARGOS
+                top_positions = self._get_top_positions(
+                    db, year, month, company, division, limit=10
+                )
+                
+                result = {
+                    'filters': {
+                        'year': year,
+                        'month': month,
+                        'company': company,
+                        'division': division,
+                        'months_range': months_range
+                    },
+                    'current': {
+                        'headcount': current_metrics['headcount'],
+                        'total_cost': current_metrics['total_cost'],
+                        'avg_cost_per_employee': current_metrics['avg_cost_per_employee'],
+                        'variation_vs_previous': current_metrics['variation_vs_previous']
+                    },
+                    'evolution': evolution_data,
+                    'by_company': by_company,
+                    'top_divisions': top_divisions,
+                    'top_positions': top_positions
+                }
+                
+                db.close()
+                self.send_json_response(result)
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar headcount: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": str(e)}, 500)
+    
+    def _get_headcount_for_period(self, db, year, month, company='all', division='all'):
+        """Helper para calcular headcount de um período específico"""
+        from app.models.payroll import PayrollPeriod, PayrollData
+        from app.models.employee import Employee
+        from decimal import Decimal
+        
+        # Buscar períodos do mês/ano filtrado por empresa
+        period_query = db.query(PayrollPeriod).filter(
+            PayrollPeriod.year == year,
+            PayrollPeriod.month == month
+        )
+        
+        if company != 'all':
+            period_query = period_query.filter(PayrollPeriod.company == company)
+        
+        periods = period_query.all()
+        
+        if not periods:
+            return {
+                'headcount': 0,
+                'total_cost': 0.0,
+                'avg_cost_per_employee': 0.0,
+                'variation_vs_previous': None,
+                'by_company': [],
+                'top_divisions': []
+            }
+        
+        period_ids = [p.id for p in periods]
+        
+        # Buscar dados de folha
+        payroll_records = db.query(PayrollData).filter(
+            PayrollData.period_id.in_(period_ids)
+        ).all()
+        
+        unique_employee_ids = set([r.employee_id for r in payroll_records])
+        
+        # Buscar dados dos employees
+        employee_map = {}
+        if unique_employee_ids:
+            employees = db.query(Employee).filter(
+                Employee.id.in_(unique_employee_ids)
+            ).all()
+            employee_map = {e.id: e for e in employees}
+        
+        # Filtrar por departamento se especificado
+        if division != 'all':
+            dept_employee_ids = [e.id for e in employee_map.values() if e.department == division]
+            payroll_records = [r for r in payroll_records if r.employee_id in dept_employee_ids]
+            unique_employee_ids = set([r.employee_id for r in payroll_records])
+        
+        headcount = len(unique_employee_ids)
+        total_cost = sum([Decimal(str(r.net_salary or 0)) for r in payroll_records])
+        avg_cost = float(total_cost / headcount) if headcount > 0 else 0.0
+        
+        # Calcular variação vs mês anterior
+        if month == 1:
+            prev_year = year - 1
+            prev_month = 12
+        else:
+            prev_year = year
+            prev_month = month - 1
+        
+        prev_metrics = self._get_headcount_for_period(db, prev_year, prev_month, company, division)
+        prev_headcount = prev_metrics['headcount']
+        variation = None
+        if prev_headcount > 0:
+            variation = ((headcount - prev_headcount) / prev_headcount) * 100
+        
+        # Distribuição por empresa
+        by_company = []
+        if company == 'all':
+            periods_by_company = {}
+            for p in periods:
+                if p.company not in periods_by_company:
+                    periods_by_company[p.company] = []
+                periods_by_company[p.company].append(p.id)
+            
+            for comp_code, comp_period_ids in periods_by_company.items():
+                comp_records = [r for r in payroll_records if r.period_id in comp_period_ids]
+                comp_count = len(set([r.employee_id for r in comp_records]))
+                comp_cost = sum([Decimal(str(r.net_salary or 0)) for r in comp_records])
+                by_company.append({
+                    'company': comp_code,
+                    'headcount': comp_count,
+                    'total_cost': float(comp_cost)
+                })
+        
+        # Top setores
+        employees_by_division = {}
+        for emp_id in unique_employee_ids:
+            emp = employee_map.get(emp_id)
+            if emp:
+                div = emp.department or 'Não informado'
+                if div not in employees_by_division:
+                    employees_by_division[div] = set()
+                employees_by_division[div].add(emp_id)
+        
+        top_divisions = sorted(
+            [{'division': k, 'count': len(v)} for k, v in employees_by_division.items()],
+            key=lambda x: x['count'],
+            reverse=True
+        )
+        
+        return {
+            'headcount': headcount,
+            'total_cost': float(total_cost),
+            'avg_cost_per_employee': avg_cost,
+            'variation_vs_previous': float(variation) if variation is not None else None,
+            'by_company': by_company,
+            'top_divisions': top_divisions
+        }
+    
+    def _get_top_positions(self, db, year, month, company='all', division='all', limit=10):
+        """Helper para calcular top cargos"""
+        from app.models.payroll import PayrollPeriod, PayrollData
+        from app.models.employee import Employee
+        
+        # Buscar períodos
+        period_query = db.query(PayrollPeriod).filter(
+            PayrollPeriod.year == year,
+            PayrollPeriod.month == month
+        )
+        
+        if company != 'all':
+            period_query = period_query.filter(PayrollPeriod.company == company)
+        
+        periods = period_query.all()
+        if not periods:
+            return []
+        
+        period_ids = [p.id for p in periods]
+        
+        # Buscar dados de folha
+        payroll_records = db.query(PayrollData).filter(
+            PayrollData.period_id.in_(period_ids)
+        ).all()
+        
+        unique_employee_ids = set([r.employee_id for r in payroll_records])
+        
+        # Buscar employees
+        if not unique_employee_ids:
+            return []
+        
+        employees = db.query(Employee).filter(
+            Employee.id.in_(unique_employee_ids)
+        ).all()
+        
+        # Filtrar por departamento se especificado
+        if division != 'all':
+            employees = [e for e in employees if e.department == division]
+        
+        # Agrupar por cargo
+        employees_by_position = {}
+        for emp in employees:
+            pos = emp.position or 'Não informado'
+            if pos not in employees_by_position:
+                employees_by_position[pos] = set()
+            employees_by_position[pos].add(emp.id)
+        
+        # Ordenar e limitar
+        top_positions = sorted(
+            [{'position': k, 'count': len(v)} for k, v in employees_by_position.items()],
+            key=lambda x: x['count'],
+            reverse=True
+        )[:limit]
+        
+        return top_positions
+    
+    def handle_indicators_demographics(self):
         """Retorna métricas de headcount (efetivo)"""
         try:
             from app.services.hr_indicators import HRIndicatorsService
@@ -3731,34 +5923,100 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json_response({"error": str(e)}, 500)
     
     def handle_indicators_turnover(self):
-        """Retorna métricas de turnover"""
+        """Retorna métricas de turnover (rotatividade) com evolução temporal"""
         try:
-            from app.services.hr_indicators import HRIndicatorsService
-            from datetime import datetime, timedelta
-            
+            # Parse query params
             query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            use_cache = query_params.get('use_cache', ['true'])[0].lower() != 'false'
+            company = query_params.get('company', ['all'])[0]
+            division = query_params.get('division', ['all'])[0]
+            year = query_params.get('year', [None])[0]
+            month = query_params.get('month', [None])[0]
+            months_range = int(query_params.get('months_range', ['12'])[0])
             
-            # Parse período se fornecido
-            period_start = None
-            period_end = None
-            
-            if 'period_start' in query_params:
-                period_start = datetime.strptime(query_params['period_start'][0], '%Y-%m-%d').date()
-            if 'period_end' in query_params:
-                period_end = datetime.strptime(query_params['period_end'][0], '%Y-%m-%d').date()
-            
-            db = SessionLocal()
-            try:
-                service = HRIndicatorsService(db)
-                result = service.get_turnover_metrics(
-                    period_start=period_start,
-                    period_end=period_end,
-                    use_cache=use_cache
-                )
-                self.send_json_response(result)
-            finally:
+            if SessionLocal:
+                from app.models.payroll import PayrollPeriod, PayrollData
+                from app.models.employee import Employee
+                from sqlalchemy import func, or_, and_
+                from decimal import Decimal
+                from datetime import date, datetime
+                from dateutil.relativedelta import relativedelta
+                
+                db = SessionLocal()
+                
+                # Se não especificou período, usar o mais recente
+                if not year or not month:
+                    latest_period = db.query(PayrollPeriod).order_by(
+                        PayrollPeriod.year.desc(),
+                        PayrollPeriod.month.desc()
+                    ).first()
+                    
+                    if not latest_period:
+                        db.close()
+                        self.send_json_response({"error": "Nenhum período encontrado"}, 404)
+                        return
+                    
+                    year = latest_period.year
+                    month = latest_period.month
+                else:
+                    year = int(year)
+                    month = int(month)
+                
+                # Calcular período atual
+                current_date = date(year, month, 1)
+                
+                # MÉTRICA ATUAL (mês selecionado)
+                current_metrics = self._get_turnover_for_period(db, year, month, company, division)
+                
+                # EVOLUÇÃO TEMPORAL (últimos N meses)
+                evolution_data = []
+                month_names_pt = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 
+                                  'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+                for i in range(months_range - 1, -1, -1):
+                    period_date = current_date - relativedelta(months=i)
+                    p_year = period_date.year
+                    p_month = period_date.month
+                    
+                    metrics = self._get_turnover_for_period(db, p_year, p_month, company, division)
+                    evolution_data.append({
+                        'year': p_year,
+                        'month': p_month,
+                        'month_name': f"{month_names_pt[p_month-1]}/{str(p_year)[2:]}",
+                        'turnover_rate': metrics['turnover_rate'],
+                        'admissions': metrics['admissions'],
+                        'terminations': metrics['terminations'],
+                        'avg_headcount': metrics['avg_headcount']
+                    })
+                
+                # DISTRIBUIÇÃO POR EMPRESA E SETORES - DESABILITADO POR PERFORMANCE
+                # Esses cálculos fazem N queries adicionais e tornam a tela muito lenta
+                # Podem ser reabilitados se necessário com otimização via query única
+                by_company = []
+                top_divisions = []
+                
+                result = {
+                    'filters': {
+                        'year': year,
+                        'month': month,
+                        'company': company,
+                        'division': division,
+                        'months_range': months_range
+                    },
+                    'current': {
+                        'turnover_rate': current_metrics['turnover_rate'],
+                        'admissions': current_metrics['admissions'],
+                        'terminations': current_metrics['terminations'],
+                        'avg_headcount': current_metrics['avg_headcount']
+                    },
+                    'evolution': evolution_data,
+                    'by_company': by_company,
+                    'top_divisions': top_divisions
+                }
+                
                 db.close()
+                self.send_json_response(result)
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
                 
         except Exception as e:
             print(f"❌ Erro ao buscar turnover: {e}")
@@ -3766,21 +6024,309 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             traceback.print_exc()
             self.send_json_response({"error": str(e)}, 500)
     
+    def _get_turnover_for_period(self, db, year, month, company='all', division='all'):
+        """Helper OTIMIZADO para calcular turnover de um período específico"""
+        from app.models.payroll import PayrollPeriod, PayrollData
+        from app.models.employee import Employee
+        from sqlalchemy import func
+        from datetime import date
+        
+        # Calcular datas do período
+        period_start = date(year, month, 1)
+        if month == 12:
+            period_end = date(year + 1, 1, 1)
+        else:
+            period_end = date(year, month + 1, 1)
+        
+        # Mês anterior
+        if month == 1:
+            prev_year, prev_month = year - 1, 12
+        else:
+            prev_year, prev_month = year, month - 1
+        
+        prev_start = date(prev_year, prev_month, 1)
+        
+        # Query única para headcount atual e anterior
+        periods_query = db.query(PayrollPeriod).filter(
+            ((PayrollPeriod.year == year) & (PayrollPeriod.month == month)) |
+            ((PayrollPeriod.year == prev_year) & (PayrollPeriod.month == prev_month))
+        )
+        
+        if company != 'all':
+            periods_query = periods_query.filter(PayrollPeriod.company == company)
+        
+        periods = periods_query.all()
+        
+        current_period_ids = [p.id for p in periods if p.year == year and p.month == month]
+        prev_period_ids = [p.id for p in periods if p.year == prev_year and p.month == prev_month]
+        
+        # Contar headcount de cada período
+        current_headcount = 0
+        prev_headcount = 0
+        employee_ids_current = set()
+        
+        if current_period_ids:
+            hc_query = db.query(func.count(func.distinct(PayrollData.employee_id))).filter(
+                PayrollData.period_id.in_(current_period_ids)
+            )
+            if division != 'all':
+                hc_query = hc_query.join(Employee).filter(Employee.department == division)
+            current_headcount = hc_query.scalar() or 0
+            
+            # IDs dos funcionários no período atual
+            emp_query = db.query(PayrollData.employee_id).filter(
+                PayrollData.period_id.in_(current_period_ids)
+            ).distinct()
+            employee_ids_current = set([r[0] for r in emp_query.all()])
+        
+        if prev_period_ids:
+            hc_query = db.query(func.count(func.distinct(PayrollData.employee_id))).filter(
+                PayrollData.period_id.in_(prev_period_ids)
+            )
+            if division != 'all':
+                hc_query = hc_query.join(Employee).filter(Employee.department == division)
+            prev_headcount = hc_query.scalar() or 0
+        
+        avg_headcount = (current_headcount + prev_headcount) / 2 if (current_headcount + prev_headcount) > 0 else 0
+        
+        # Contar admissões e desligamentos
+        admissions_query = db.query(func.count(Employee.id)).filter(
+            Employee.admission_date >= period_start,
+            Employee.admission_date < period_end
+        )
+        terminations_query = db.query(func.count(Employee.id)).filter(
+            Employee.termination_date >= period_start,
+            Employee.termination_date < period_end
+        )
+        
+        if division != 'all':
+            admissions_query = admissions_query.filter(Employee.department == division)
+            terminations_query = terminations_query.filter(Employee.department == division)
+        
+        if employee_ids_current:
+            admissions_query = admissions_query.filter(Employee.id.in_(employee_ids_current))
+            terminations_query = terminations_query.filter(Employee.id.in_(employee_ids_current))
+        
+        admissions = admissions_query.scalar() or 0
+        terminations = terminations_query.scalar() or 0
+        
+        # Taxa de turnover
+        turnover_rate = 0.0
+        if avg_headcount > 0:
+            turnover_rate = ((admissions + terminations) / 2) / avg_headcount * 100
+        
+        return {
+            'turnover_rate': round(turnover_rate, 2),
+            'admissions': admissions,
+            'terminations': terminations,
+            'avg_headcount': round(avg_headcount, 1),
+            'by_company': [],
+            'top_divisions_turnover': []
+        }
+    
+    def _get_demographics_for_period(self, db, year, month, company='all', division='all'):
+        """Helper para calcular métricas demográficas de um período específico"""
+        from app.models.payroll import PayrollPeriod, PayrollData
+        from app.models.employee import Employee
+        from sqlalchemy import func, case
+        
+        # Buscar períodos do mês especificado
+        periods_query = db.query(PayrollPeriod).filter(
+            PayrollPeriod.year == year,
+            PayrollPeriod.month == month
+        )
+        
+        if company != 'all':
+            periods_query = periods_query.filter(PayrollPeriod.company == company)
+        
+        periods = periods_query.all()
+        if not periods:
+            return {
+                'average_age': 0,
+                'male_count': 0,
+                'female_count': 0,
+                'total_employees': 0,
+                'by_sex': [],
+                'age_ranges': []
+            }
+        
+        period_ids = [p.id for p in periods]
+        
+        # Obter IDs únicos de funcionários do período
+        employee_ids_query = db.query(PayrollData.employee_id).filter(
+            PayrollData.period_id.in_(period_ids)
+        ).distinct()
+        
+        employee_ids = [r[0] for r in employee_ids_query.all()]
+        
+        if not employee_ids:
+            return {
+                'average_age': 0,
+                'male_count': 0,
+                'female_count': 0,
+                'total_employees': 0,
+                'by_sex': [],
+                'age_ranges': []
+            }
+        
+        # Query base de employees do período
+        emp_query = db.query(Employee).filter(Employee.id.in_(employee_ids))
+        
+        if division != 'all':
+            emp_query = emp_query.filter(Employee.department == division)
+        
+        # Distribuição por sexo
+        by_sex_query = db.query(
+            Employee.sex,
+            func.count(Employee.id).label('count')
+        ).filter(
+            Employee.id.in_(employee_ids),
+            Employee.sex.isnot(None)
+        )
+        
+        if division != 'all':
+            by_sex_query = by_sex_query.filter(Employee.department == division)
+        
+        by_sex = by_sex_query.group_by(Employee.sex).all()
+        
+        # Faixas etárias
+        age_ranges_query = db.query(
+            case(
+                (func.extract('year', func.age(Employee.birth_date)) < 25, '18-24'),
+                (func.extract('year', func.age(Employee.birth_date)) < 35, '25-34'),
+                (func.extract('year', func.age(Employee.birth_date)) < 45, '35-44'),
+                (func.extract('year', func.age(Employee.birth_date)) < 55, '45-54'),
+                else_='55+'
+            ).label('age_range'),
+            func.count(Employee.id).label('count')
+        ).filter(
+            Employee.id.in_(employee_ids),
+            Employee.birth_date.isnot(None)
+        )
+        
+        if division != 'all':
+            age_ranges_query = age_ranges_query.filter(Employee.department == division)
+        
+        age_ranges = age_ranges_query.group_by('age_range').all()
+        
+        # Idade média
+        avg_age_query = db.query(
+            func.avg(func.extract('year', func.age(Employee.birth_date)))
+        ).filter(
+            Employee.id.in_(employee_ids),
+            Employee.birth_date.isnot(None)
+        )
+        
+        if division != 'all':
+            avg_age_query = avg_age_query.filter(Employee.department == division)
+        
+        avg_age = avg_age_query.scalar()
+        
+        # Ordenar faixas etárias
+        age_range_order = {'18-24': 1, '25-34': 2, '35-44': 3, '45-54': 4, '55+': 5}
+        sorted_age_ranges = sorted(age_ranges, key=lambda x: age_range_order.get(x[0], 99))
+        
+        # Extrair contagens por sexo
+        male_count = 0
+        female_count = 0
+        for s, c in by_sex:
+            if s == 'M':
+                male_count = c
+            elif s == 'F':
+                female_count = c
+        
+        total_employees = male_count + female_count
+        
+        return {
+            'average_age': int(round(float(avg_age))) if avg_age else 0,
+            'male_count': male_count,
+            'female_count': female_count,
+            'total_employees': total_employees,
+            'by_sex': [{'sex': s or 'Não informado', 'count': c} for s, c in by_sex],
+            'age_ranges': [{'range': r, 'count': c} for r, c in sorted_age_ranges]
+        }
+    
     def handle_indicators_demographics(self):
-        """Retorna perfil demográfico"""
+        """Retorna perfil demográfico com evolução temporal"""
         try:
-            from app.services.hr_indicators import HRIndicatorsService
-            
+            # Parse query params
             query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            use_cache = query_params.get('use_cache', ['true'])[0].lower() != 'false'
+            company = query_params.get('company', ['all'])[0]
+            division = query_params.get('division', ['all'])[0]
+            year = query_params.get('year', [None])[0]
+            month = query_params.get('month', [None])[0]
+            months_range = int(query_params.get('months_range', ['12'])[0])
             
-            db = SessionLocal()
-            try:
-                service = HRIndicatorsService(db)
-                result = service.get_demographic_metrics(use_cache=use_cache)
-                self.send_json_response(result)
-            finally:
+            if SessionLocal:
+                from app.models.payroll import PayrollPeriod, PayrollData
+                from app.models.employee import Employee
+                from sqlalchemy import func, case
+                from datetime import date
+                from dateutil.relativedelta import relativedelta
+                
+                db = SessionLocal()
+                
+                # Se não especificou período, usar o mais recente
+                if not year or not month:
+                    latest_period = db.query(PayrollPeriod).order_by(
+                        PayrollPeriod.year.desc(),
+                        PayrollPeriod.month.desc()
+                    ).first()
+                    
+                    if not latest_period:
+                        db.close()
+                        self.send_json_response({"error": "Nenhum período encontrado"}, 404)
+                        return
+                    
+                    year = latest_period.year
+                    month = latest_period.month
+                else:
+                    year = int(year)
+                    month = int(month)
+                
+                # Calcular período atual
+                current_date = date(year, month, 1)
+                
+                # MÉTRICA ATUAL (mês selecionado)
+                current_metrics = self._get_demographics_for_period(db, year, month, company, division)
+                
+                # EVOLUÇÃO TEMPORAL (últimos N meses)
+                evolution_data = []
+                month_names_pt = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 
+                                  'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+                for i in range(months_range - 1, -1, -1):
+                    period_date = current_date - relativedelta(months=i)
+                    p_year = period_date.year
+                    p_month = period_date.month
+                    
+                    metrics = self._get_demographics_for_period(db, p_year, p_month, company, division)
+                    evolution_data.append({
+                        'year': p_year,
+                        'month': p_month,
+                        'month_name': f"{month_names_pt[p_month-1]}/{str(p_year)[2:]}",
+                        'average_age': metrics['average_age'],
+                        'male_count': metrics['male_count'],
+                        'female_count': metrics['female_count'],
+                        'total_employees': metrics['total_employees']
+                    })
+                
+                result = {
+                    'filters': {
+                        'year': year,
+                        'month': month,
+                        'company': company,
+                        'division': division,
+                        'months_range': months_range
+                    },
+                    'current': current_metrics,
+                    'evolution': evolution_data
+                }
+                
                 db.close()
+                self.send_json_response(result)
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
                 
         except Exception as e:
             print(f"❌ Erro ao buscar demographics: {e}")
@@ -3789,20 +6335,85 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json_response({"error": str(e)}, 500)
     
     def handle_indicators_tenure(self):
-        """Retorna métricas de tempo de casa"""
+        """Retorna métricas de tempo de casa com evolução temporal"""
         try:
-            from app.services.hr_indicators import HRIndicatorsService
-            
+            # Parse query params
             query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            use_cache = query_params.get('use_cache', ['true'])[0].lower() != 'false'
+            company = query_params.get('company', ['all'])[0]
+            division = query_params.get('division', ['all'])[0]
+            year = query_params.get('year', [None])[0]
+            month = query_params.get('month', [None])[0]
+            months_range = int(query_params.get('months_range', ['12'])[0])
             
-            db = SessionLocal()
-            try:
-                service = HRIndicatorsService(db)
-                result = service.get_tenure_metrics(use_cache=use_cache)
-                self.send_json_response(result)
-            finally:
+            if SessionLocal:
+                from app.models.payroll import PayrollPeriod, PayrollData
+                from app.models.employee import Employee
+                from sqlalchemy import func, case
+                from datetime import date
+                from dateutil.relativedelta import relativedelta
+                
+                db = SessionLocal()
+                
+                # Se não especificou período, usar o mais recente
+                if not year or not month:
+                    latest_period = db.query(PayrollPeriod).order_by(
+                        PayrollPeriod.year.desc(),
+                        PayrollPeriod.month.desc()
+                    ).first()
+                    
+                    if not latest_period:
+                        db.close()
+                        self.send_json_response({"error": "Nenhum período encontrado"}, 404)
+                        return
+                    
+                    year = latest_period.year
+                    month = latest_period.month
+                else:
+                    year = int(year)
+                    month = int(month)
+                
+                # Calcular período atual
+                current_date = date(year, month, 1)
+                
+                # MÉTRICA ATUAL (mês selecionado)
+                current_metrics = self._get_tenure_for_period(db, year, month, company, division)
+                
+                # EVOLUÇÃO TEMPORAL (últimos N meses)
+                evolution_data = []
+                month_names_pt = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 
+                                  'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+                for i in range(months_range - 1, -1, -1):
+                    period_date = current_date - relativedelta(months=i)
+                    p_year = period_date.year
+                    p_month = period_date.month
+                    
+                    metrics = self._get_tenure_for_period(db, p_year, p_month, company, division)
+                    evolution_data.append({
+                        'year': p_year,
+                        'month': p_month,
+                        'month_name': f"{month_names_pt[p_month-1]}/{str(p_year)[2:]}",
+                        'average_tenure_years': metrics['average_tenure_years'],
+                        'average_tenure_months': metrics['average_tenure_months'],
+                        'total_employees': metrics['total_employees']
+                    })
+                
+                result = {
+                    'filters': {
+                        'year': year,
+                        'month': month,
+                        'company': company,
+                        'division': division,
+                        'months_range': months_range
+                    },
+                    'current': current_metrics,
+                    'evolution': evolution_data
+                }
+                
                 db.close()
+                self.send_json_response(result)
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
                 
         except Exception as e:
             print(f"❌ Erro ao buscar tenure: {e}")
@@ -3810,18 +6421,203 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             traceback.print_exc()
             self.send_json_response({"error": str(e)}, 500)
     
+    def _get_tenure_for_period(self, db, year, month, company='all', division='all'):
+        """Helper para calcular métricas de tempo de casa de um período específico"""
+        from app.models.payroll import PayrollPeriod, PayrollData
+        from app.models.employee import Employee
+        from sqlalchemy import func, case
+        from datetime import date
+        
+        # Buscar períodos do mês especificado
+        periods_query = db.query(PayrollPeriod).filter(
+            PayrollPeriod.year == year,
+            PayrollPeriod.month == month
+        )
+        
+        if company != 'all':
+            periods_query = periods_query.filter(PayrollPeriod.company == company)
+        
+        periods = periods_query.all()
+        if not periods:
+            return {
+                'average_tenure_years': 0,
+                'average_tenure_months': 0,
+                'total_employees': 0,
+                'tenure_ranges': [],
+                'by_department': []
+            }
+        
+        period_ids = [p.id for p in periods]
+        
+        # Obter IDs únicos de funcionários do período
+        employee_ids_query = db.query(PayrollData.employee_id).filter(
+            PayrollData.period_id.in_(period_ids)
+        ).distinct()
+        
+        employee_ids = [r[0] for r in employee_ids_query.all()]
+        
+        if not employee_ids:
+            return {
+                'average_tenure_years': 0,
+                'average_tenure_months': 0,
+                'total_employees': 0,
+                'tenure_ranges': [],
+                'by_department': []
+            }
+        
+        # Data de referência para o cálculo
+        reference_date = date(year, month, 1)
+        
+        # Filtrar employee_ids por division se necessário
+        filtered_employee_ids = employee_ids
+        if division != 'all':
+            filtered_ids_query = db.query(Employee.id).filter(
+                Employee.id.in_(employee_ids),
+                Employee.department == division
+            )
+            filtered_employee_ids = [r[0] for r in filtered_ids_query.all()]
+            
+            if not filtered_employee_ids:
+                return {
+                    'average_tenure_years': 0,
+                    'average_tenure_months': 0,
+                    'total_employees': 0,
+                    'tenure_ranges': [],
+                    'by_department': []
+                }
+        
+        # Tempo médio de casa (em dias, depois convertido para anos e meses)
+        # IMPORTANTE: Não usar func.age() com extract('day') pois retorna apenas a parte de dias do interval
+        # Usar subtração direta de datas para obter o total de dias
+        avg_tenure_days_query = db.query(
+            func.avg(
+                reference_date - Employee.admission_date
+            )
+        ).filter(
+            Employee.id.in_(filtered_employee_ids),
+            Employee.admission_date.isnot(None)
+        )
+        
+        avg_tenure_days = avg_tenure_days_query.scalar()
+        
+        # Converter para anos e meses
+        if avg_tenure_days:
+            # avg_tenure_days pode vir como timedelta ou float dependendo do DB
+            if hasattr(avg_tenure_days, 'days'):
+                total_days = avg_tenure_days.days
+            else:
+                total_days = float(avg_tenure_days)
+            
+            avg_tenure_years = total_days / 365.25
+            avg_tenure_months = int(round(total_days / 30.44))
+        else:
+            avg_tenure_years = 0
+            avg_tenure_months = 0
+        
+        # Distribuição por tempo de casa
+        # Calcular anos de tempo de casa corretamente usando subtração de datas
+        tenure_ranges_query = db.query(
+            case(
+                ((reference_date - Employee.admission_date) < 365, '0-1 ano'),
+                ((reference_date - Employee.admission_date) < 1095, '1-3 anos'),  # 365 * 3
+                ((reference_date - Employee.admission_date) < 1825, '3-5 anos'),  # 365 * 5
+                ((reference_date - Employee.admission_date) < 3650, '5-10 anos'), # 365 * 10
+                else_='10+ anos'
+            ).label('tenure_range'),
+            func.count(Employee.id).label('count')
+        ).filter(
+            Employee.id.in_(filtered_employee_ids),
+            Employee.admission_date.isnot(None)
+        )
+        
+        tenure_ranges = tenure_ranges_query.group_by('tenure_range').all()
+        
+        # Ordenar faixas de tenure
+        tenure_order = {'0-1 ano': 1, '1-3 anos': 2, '3-5 anos': 3, '5-10 anos': 4, '10+ anos': 5}
+        sorted_tenure_ranges = sorted(tenure_ranges, key=lambda x: tenure_order.get(x[0], 99))
+        
+        # Tempo médio por departamento
+        avg_tenure_by_dept_query = db.query(
+            Employee.department,
+            func.avg(reference_date - Employee.admission_date).label('avg_days')
+        ).filter(
+            Employee.id.in_(filtered_employee_ids),
+            Employee.admission_date.isnot(None),
+            Employee.department.isnot(None)
+        )
+        
+        avg_tenure_by_dept = avg_tenure_by_dept_query.group_by(Employee.department).order_by(Employee.department).all()
+        
+        # Converter avg_days para meses para cada departamento
+        by_department_results = []
+        for dept_name, avg_days in avg_tenure_by_dept:
+            if avg_days:
+                if hasattr(avg_days, 'days'):
+                    total_days = avg_days.days
+                else:
+                    total_days = float(avg_days)
+                avg_months = int(round(total_days / 30.44))
+            else:
+                avg_months = 0
+            by_department_results.append({'department': dept_name, 'avg_months': avg_months})
+        
+        total_employees = sum(c for _, c in tenure_ranges)
+        
+        return {
+            'average_tenure_years': int(round(avg_tenure_years)),
+            'average_tenure_months': avg_tenure_months,
+            'total_employees': total_employees,
+            'tenure_ranges': [{'range': r, 'count': int(c)} for r, c in sorted_tenure_ranges],
+            'by_department': by_department_results
+        }
+    
     def handle_indicators_leaves(self):
-        """Retorna métricas de afastamentos"""
+        """Retorna métricas de afastamentos com filtros e evolução"""
         try:
-            from app.services.hr_indicators import HRIndicatorsService
+            from sqlalchemy import func, and_
+            from app.models.employee import Employee
+            from app.models.leave import LeaveRecord
+            from datetime import datetime, date
+            from dateutil.relativedelta import relativedelta
             
             query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            use_cache = query_params.get('use_cache', ['true'])[0].lower() != 'false'
+            
+            # Filtros
+            company = query_params.get('company', [None])[0]
+            division = query_params.get('division', [None])[0]
+            leave_type = query_params.get('leave_type', [None])[0]
+            year = query_params.get('year', [None])[0]
+            month = query_params.get('month', [None])[0]
+            months_range = int(query_params.get('months_range', ['6'])[0])
             
             db = SessionLocal()
             try:
-                service = HRIndicatorsService(db)
-                result = service.get_leave_metrics(use_cache=use_cache)
+                # Determinar período de referência
+                if year and month:
+                    reference_date = date(int(year), int(month), 1)
+                else:
+                    reference_date = date.today().replace(day=1)
+                
+                # Buscar tipos de afastamento disponíveis
+                leave_types = db.query(LeaveRecord.leave_type).distinct().all()
+                leave_types_list = [lt[0] for lt in leave_types if lt[0]]
+                
+                # Calcular evolução dos últimos N meses
+                evolution = []
+                for i in range(months_range - 1, -1, -1):
+                    period_date = reference_date - relativedelta(months=i)
+                    period_metrics = self._get_leaves_for_period(db, period_date, company, division, leave_type)
+                    evolution.append(period_metrics)
+                
+                # Métricas do período atual
+                current_metrics = evolution[-1] if evolution else {}
+                
+                result = {
+                    'evolution': evolution,
+                    'current': current_metrics,
+                    'leave_types': leave_types_list
+                }
+                
                 self.send_json_response(result)
             finally:
                 db.close()
@@ -3831,6 +6627,775 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             import traceback
             traceback.print_exc()
             self.send_json_response({"error": str(e)}, 500)
+    
+    def _get_leaves_for_period(self, db, reference_date, company=None, division=None, leave_type=None):
+        """Calcula métricas de afastamentos para um período específico usando LeaveRecord"""
+        from sqlalchemy import func, and_, or_
+        from app.models.employee import Employee
+        from app.models.leave import LeaveRecord
+        from datetime import date
+        from dateutil.relativedelta import relativedelta
+        
+        # Último dia do mês
+        if reference_date.month == 12:
+            last_day = reference_date.replace(day=31)
+        else:
+            last_day = (reference_date.replace(day=1) + relativedelta(months=1)) - relativedelta(days=1)
+        
+        # Total de colaboradores ativos
+        employees_query = db.query(Employee).filter(Employee.is_active == True)
+        if company:
+            employees_query = employees_query.filter(Employee.company_code == company)
+        if division:
+            employees_query = employees_query.filter(Employee.department == division)
+        
+        total_employees = employees_query.count()
+        
+        # Query base de afastamentos no período
+        # (afastamento começa antes ou durante o mês E termina depois ou durante o mês)
+        leaves_query = db.query(LeaveRecord).join(Employee).filter(
+            and_(
+                Employee.is_active == True,
+                LeaveRecord.start_date <= last_day,
+                LeaveRecord.end_date >= reference_date
+            )
+        )
+        
+        # Aplicar filtros
+        if company:
+            leaves_query = leaves_query.filter(Employee.company_code == company)
+        if division:
+            leaves_query = leaves_query.filter(Employee.department == division)
+        if leave_type:
+            leaves_query = leaves_query.filter(LeaveRecord.leave_type == leave_type)
+        
+        # Contar afastamentos únicos por colaborador no período
+        total_on_leave = db.query(func.count(func.distinct(LeaveRecord.employee_id))).join(Employee).filter(
+            and_(
+                Employee.is_active == True,
+                LeaveRecord.start_date <= last_day,
+                LeaveRecord.end_date >= reference_date
+            )
+        )
+        
+        if company:
+            total_on_leave = total_on_leave.filter(Employee.company_code == company)
+        if division:
+            total_on_leave = total_on_leave.filter(Employee.department == division)
+        if leave_type:
+            total_on_leave = total_on_leave.filter(LeaveRecord.leave_type == leave_type)
+        
+        total_on_leave = total_on_leave.scalar() or 0
+        
+        # Taxa de absenteísmo
+        absenteeism_rate = (total_on_leave / total_employees * 100) if total_employees > 0 else 0
+        
+        # Afastamentos por tipo
+        by_type_query = db.query(
+            LeaveRecord.leave_type,
+            func.count(LeaveRecord.id).label('count')
+        ).join(Employee).filter(
+            and_(
+                Employee.is_active == True,
+                LeaveRecord.start_date <= last_day,
+                LeaveRecord.end_date >= reference_date
+            )
+        )
+        
+        if company:
+            by_type_query = by_type_query.filter(Employee.company_code == company)
+        if division:
+            by_type_query = by_type_query.filter(Employee.department == division)
+        
+        by_type = by_type_query.group_by(LeaveRecord.leave_type).all()
+        
+        total_leaves = sum(count for _, count in by_type)
+        by_type_results = []
+        for type_name, count in by_type:
+            by_type_results.append({
+                'type': type_name if type_name else 'Não especificado',
+                'count': count,
+                'percentage': round((count / total_leaves * 100), 1) if total_leaves > 0 else 0
+            })
+        
+        # Duração média dos afastamentos (em dias) - usando campo days se disponível
+        avg_duration_query = db.query(
+            func.avg(LeaveRecord.days)
+        ).join(Employee).filter(
+            and_(
+                Employee.is_active == True,
+                LeaveRecord.start_date <= last_day,
+                LeaveRecord.end_date >= reference_date,
+                LeaveRecord.days.isnot(None)
+            )
+        )
+        
+        if company:
+            avg_duration_query = avg_duration_query.filter(Employee.company_code == company)
+        if division:
+            avg_duration_query = avg_duration_query.filter(Employee.department == division)
+        if leave_type:
+            avg_duration_query = avg_duration_query.filter(LeaveRecord.leave_type == leave_type)
+        
+        avg_duration = avg_duration_query.scalar()
+        
+        # Se days não estiver preenchido, calcular pela diferença de datas
+        if avg_duration is None:
+            avg_duration_query = db.query(
+                func.avg(LeaveRecord.end_date - LeaveRecord.start_date)
+            ).join(Employee).filter(
+                and_(
+                    Employee.is_active == True,
+                    LeaveRecord.start_date <= last_day,
+                    LeaveRecord.end_date >= reference_date
+                )
+            )
+            
+            if company:
+                avg_duration_query = avg_duration_query.filter(Employee.company_code == company)
+            if division:
+                avg_duration_query = avg_duration_query.filter(Employee.department == division)
+            if leave_type:
+                avg_duration_query = avg_duration_query.filter(LeaveRecord.leave_type == leave_type)
+            
+            avg_duration = avg_duration_query.scalar()
+        
+        # Afastamentos por departamento
+        by_department_query = db.query(
+            Employee.department,
+            func.count(LeaveRecord.id).label('count')
+        ).join(Employee).filter(
+            and_(
+                Employee.is_active == True,
+                LeaveRecord.start_date <= last_day,
+                LeaveRecord.end_date >= reference_date
+            )
+        )
+        
+        if company:
+            by_department_query = by_department_query.filter(Employee.company_code == company)
+        if division:
+            by_department_query = by_department_query.filter(Employee.department == division)
+        if leave_type:
+            by_department_query = by_department_query.filter(LeaveRecord.leave_type == leave_type)
+        
+        by_department = by_department_query.group_by(Employee.department).all()
+        
+        by_department_results = []
+        for dept, count in by_department:
+            by_department_results.append({
+                'department': dept if dept else 'Não especificado',
+                'count': count,
+                'percentage': round((count / total_leaves * 100), 1) if total_leaves > 0 else 0
+            })
+        
+        return {
+            'year': reference_date.year,
+            'month': reference_date.month,
+            'total_employees': total_employees,
+            'total_on_leave': total_on_leave,
+            'total_leave_records': total_leaves,
+            'absenteeism_rate': round(absenteeism_rate, 2),
+            'average_duration_days': round(float(avg_duration), 1) if avg_duration else 0,
+            'by_type': by_type_results,
+            'by_department': by_department_results
+        }
+    
+    def handle_report_generate(self):
+        """Gera relatório PDF com indicadores de RH"""
+        try:
+            from app.services.report_generator import ReportGeneratorService
+            import urllib.parse
+            
+            # Parse query parameters
+            query_string = urllib.parse.urlparse(self.path).query
+            params = urllib.parse.parse_qs(query_string)
+            
+            report_type = params.get('report_type', ['consolidated'])[0]
+            sections = params.get('sections', ['overview'])[0].split(',')
+            year = int(params.get('year', [datetime.now().year])[0])
+            month = int(params.get('month', [datetime.now().month])[0])
+            months_range = int(params.get('months_range', ['6'])[0])
+            company = params.get('company', [None])[0]
+            division = params.get('division', [None])[0]
+            
+            # Obter informações do usuário logado
+            user_info = None
+            current_user = getattr(self, 'current_user', None)
+            if current_user:
+                # current_user é um dict com os dados do usuário
+                user_info = {
+                    'name': current_user.get('name', 'Usuário'),
+                    'email': current_user.get('email', '')
+                }
+            
+            print(f"📊 Gerando relatório PDF: {report_type}")
+            print(f"   Seções: {sections}")
+            print(f"   Período: {month}/{year}")
+            print(f"   Empresa: {company}, Setor: {division}")
+            if user_info:
+                print(f"   Emitido por: {user_info.get('name', 'N/A')}")
+            
+            db = SessionLocal()
+            try:
+                # Coletar dados de cada seção necessária
+                data = {}
+                
+                if 'overview' in sections:
+                    # Reutilizar lógica existente
+                    data['overview'] = self._get_overview_data(db, year, month, company, division)
+                
+                if 'headcount' in sections:
+                    data['headcount'] = self._get_headcount_data(db, year, month, months_range, company, division)
+                
+                if 'turnover' in sections:
+                    data['turnover'] = self._get_turnover_data(db, year, month, months_range, company, division)
+                
+                if 'demographics' in sections:
+                    data['demographics'] = self._get_demographics_data(db, year, month, company, division)
+                
+                if 'tenure' in sections:
+                    data['tenure'] = self._get_tenure_data(db, year, month, company, division)
+                
+                if 'leaves' in sections:
+                    data['leaves'] = self._get_leaves_data_for_report(db, year, month, months_range, company, division)
+                
+                if 'payroll' in sections:
+                    data['payroll'] = self._get_payroll_data_for_report(db, year, month, company, division)
+                
+                # Gerar relatório moderno em HTML
+                from app.services.modern_report_generator import ModernReportGenerator
+                modern_service = ModernReportGenerator(db)
+                html_content = modern_service.generate_report(
+                    report_type=report_type,
+                    sections=sections,
+                    year=year,
+                    month=month,
+                    months_range=months_range,
+                    company=company,
+                    division=division,
+                    data=data,
+                    user_info=user_info
+                )
+                
+                # Salvar HTML temporário e retornar URL para abrir no navegador
+                import tempfile
+                import webbrowser
+                
+                temp_dir = tempfile.gettempdir()
+                month_names = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+                filename = f"NexoRH_{report_type}_{month_names[month-1]}_{year}.html"
+                temp_path = os.path.join(temp_dir, filename)
+                
+                with open(temp_path, 'w', encoding='utf-8') as f:
+                    f.write(html_content)
+                
+                # Retornar resposta JSON com caminho do arquivo
+                response_data = {
+                    'success': True,
+                    'message': 'Relatório gerado com sucesso',
+                    'file_path': temp_path,
+                    'filename': filename
+                }
+                
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps(response_data).encode())
+                
+                # Abrir no navegador automaticamente
+                print(f"🌐 Abrindo relatório no navegador: {filename}")
+                webbrowser.open(f'file:///{temp_path}')
+                
+                print(f"✅ Relatório HTML gerado com sucesso: {filename}")
+                print(f"📁 Arquivo salvo em: {temp_path}")
+                print(f"💡 Dica: Use Ctrl+P no navegador para imprimir ou salvar como PDF")
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"❌ Erro ao gerar relatório: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": str(e)}, 500)
+    
+    def _get_overview_data(self, db, year, month, company, division):
+        """Coleta dados de overview para o relatório - usa headcount existente"""
+        from datetime import date
+        from sqlalchemy import func
+        from app.models.leave import LeaveRecord
+        from app.models.employee import Employee
+        
+        # Usar o método _get_headcount_for_period que já funciona
+        headcount_data = self._get_headcount_for_period(db, year, month, company or 'all', division or 'all')
+        
+        # Período de referência para afastamentos
+        reference_date = date(year, month, 1)
+        last_day = date(year, month, 28)
+        
+        # Contar afastamentos
+        on_leave = 0
+        try:
+            leave_query = db.query(func.count(LeaveRecord.id)).join(Employee).filter(
+                LeaveRecord.start_date <= last_day,
+                LeaveRecord.end_date >= reference_date
+            )
+            if company and company != 'all':
+                leave_query = leave_query.filter(Employee.company_code == company)
+            if division and division != 'all':
+                leave_query = leave_query.filter(Employee.department == division)
+            on_leave = leave_query.scalar() or 0
+        except Exception as e:
+            print(f"⚠️ Erro ao buscar afastamentos: {e}")
+        
+        # Calcular admissões e demissões a partir dos dados de headcount
+        admissions = headcount_data.get('admissions', 0) if headcount_data.get('admissions') else 0
+        terminations = headcount_data.get('terminations', 0) if headcount_data.get('terminations') else 0
+        
+        total_employees = headcount_data.get('headcount', 0)
+        avg_employees = total_employees + (admissions - terminations) / 2
+        turnover_rate = ((admissions + terminations) / (2 * avg_employees) * 100) if avg_employees > 0 else 0
+        
+        return {
+            'current': {
+                'total_employees': total_employees,
+                'admissions': admissions,
+                'terminations': terminations,
+                'turnover_rate': turnover_rate,
+                'on_leave': on_leave,
+                'total_cost': headcount_data.get('total_cost', 0),
+                'avg_cost_per_employee': headcount_data.get('avg_cost_per_employee', 0)
+            }
+        }
+    
+    def _get_headcount_data(self, db, year, month, months_range, company, division):
+        """Coleta dados de headcount para o relatório"""
+        current = self._get_headcount_for_period(db, year, month, company or 'all', division or 'all')
+        
+        # Formatar dados para o PDF com by_department
+        by_department = []
+        for div_data in current.get('top_divisions', []):
+            by_department.append({
+                'department': div_data.get('division', 'Não informado'),
+                'count': div_data.get('count', 0)
+            })
+        
+        return {
+            'current': {
+                'headcount': current.get('headcount', 0),
+                'total_cost': current.get('total_cost', 0),
+                'avg_cost_per_employee': current.get('avg_cost_per_employee', 0),
+                'by_department': by_department,
+                'by_company': current.get('by_company', [])
+            }
+        }
+    
+    def _get_turnover_data(self, db, year, month, months_range, company, division):
+        """Coleta dados de turnover para o relatório - calcula admissões e demissões por mês"""
+        from datetime import date
+        from calendar import monthrange
+        from app.models.payroll import PayrollPeriod, PayrollData
+        from app.models.employee import Employee
+        
+        evolution = []
+        current_date = date(year, month, 1)
+        month_names = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+        
+        for i in range(months_range):
+            m = current_date.month - i
+            y = current_date.year
+            while m <= 0:
+                m += 12
+                y -= 1
+            
+            # Definir período do mês
+            _, last_day = monthrange(y, m)
+            period_start = date(y, m, 1)
+            period_end = date(y, m, last_day)
+            period_label = f"{month_names[m-1]}/{y}"
+            
+            # Buscar funcionários ativos no período via PayrollData
+            period_query = db.query(PayrollPeriod).filter(
+                PayrollPeriod.year == y,
+                PayrollPeriod.month == m
+            )
+            if company and company != 'all':
+                period_query = period_query.filter(PayrollPeriod.company == company)
+            periods = period_query.all()
+            
+            headcount = 0
+            if periods:
+                period_ids = [p.id for p in periods]
+                employee_ids = db.query(PayrollData.employee_id).filter(
+                    PayrollData.period_id.in_(period_ids)
+                ).distinct().all()
+                employee_ids = [e[0] for e in employee_ids]
+                
+                # Aplicar filtro de divisão
+                if division and division != 'all' and employee_ids:
+                    employees = db.query(Employee).filter(
+                        Employee.id.in_(employee_ids),
+                        Employee.department == division
+                    ).all()
+                    headcount = len(employees)
+                else:
+                    headcount = len(employee_ids)
+            
+            # Contar admissões no mês (funcionários com admission_date no mês)
+            admissions_query = db.query(Employee).filter(
+                Employee.admission_date >= period_start,
+                Employee.admission_date <= period_end
+            )
+            if division and division != 'all':
+                admissions_query = admissions_query.filter(Employee.department == division)
+            admissions = admissions_query.count()
+            
+            # Contar demissões no mês (funcionários com termination_date no mês)
+            terminations_query = db.query(Employee).filter(
+                Employee.termination_date >= period_start,
+                Employee.termination_date <= period_end
+            )
+            if division and division != 'all':
+                terminations_query = terminations_query.filter(Employee.department == division)
+            terminations = terminations_query.count()
+            
+            # Calcular turnover: (admissões + demissões) / média funcionários * 100
+            avg_emp = headcount + (admissions - terminations) / 2 if headcount > 0 else 1
+            turnover = ((admissions + terminations) / (2 * avg_emp) * 100) if avg_emp > 0 else 0
+            
+            evolution.insert(0, {
+                'period': period_label,
+                'headcount': headcount,
+                'admissions': admissions,
+                'terminations': terminations,
+                'turnover_rate': round(turnover, 2)
+            })
+        
+        # Dados do período atual (último da lista após ordenação)
+        current_data = evolution[-1] if evolution else {'admissions': 0, 'terminations': 0, 'turnover_rate': 0, 'headcount': 0}
+        
+        return {
+            'current': {
+                'headcount': current_data.get('headcount', 0),
+                'admissions': current_data.get('admissions', 0),
+                'terminations': current_data.get('terminations', 0),
+                'turnover_rate': current_data.get('turnover_rate', 0)
+            },
+            'evolution': evolution
+        }
+    
+    def _get_demographics_data(self, db, year, month, company, division):
+        """Coleta dados demográficos para o relatório"""
+        from sqlalchemy import func, case
+        from app.models.payroll import PayrollPeriod, PayrollData
+        from app.models.employee import Employee
+        
+        # Buscar período usando PayrollPeriod (mesmo padrão do _get_headcount_for_period)
+        period_query = db.query(PayrollPeriod).filter(
+            PayrollPeriod.year == year,
+            PayrollPeriod.month == month
+        )
+        if company and company != 'all':
+            period_query = period_query.filter(PayrollPeriod.company == company)
+        
+        periods = period_query.all()
+        if not periods:
+            return {'current': {'by_gender': [], 'by_age_range': [], 'by_education': []}}
+        
+        period_ids = [p.id for p in periods]
+        
+        # Funcionários no período
+        payroll_records = db.query(PayrollData.employee_id).filter(
+            PayrollData.period_id.in_(period_ids)
+        ).distinct().all()
+        employee_ids = [r[0] for r in payroll_records]
+        
+        if not employee_ids:
+            return {'current': {'by_gender': [], 'by_age_range': [], 'by_education': []}}
+        
+        # Buscar employees com filtro de divisão
+        emp_query = db.query(Employee).filter(Employee.id.in_(employee_ids))
+        if division and division != 'all':
+            emp_query = emp_query.filter(Employee.department == division)
+        employees = emp_query.all()
+        
+        if not employees:
+            return {'current': {'by_gender': [], 'by_age_range': [], 'by_education': []}}
+        
+        # Calcular distribuições manualmente (sem funções SQL complexas)
+        from datetime import date
+        today = date.today()
+        
+        # Gênero
+        gender_counts = {}
+        for emp in employees:
+            gender = 'Masculino' if emp.sex == 'M' else 'Feminino' if emp.sex == 'F' else 'Não informado'
+            gender_counts[gender] = gender_counts.get(gender, 0) + 1
+        by_gender = [{'gender': k, 'count': v} for k, v in gender_counts.items()]
+        
+        # Faixa etária
+        age_counts = {'18-24': 0, '25-34': 0, '35-44': 0, '45-54': 0, '55+': 0}
+        for emp in employees:
+            if emp.birth_date:
+                age = (today - emp.birth_date).days // 365
+                if age < 25:
+                    age_counts['18-24'] += 1
+                elif age < 35:
+                    age_counts['25-34'] += 1
+                elif age < 45:
+                    age_counts['35-44'] += 1
+                elif age < 55:
+                    age_counts['45-54'] += 1
+                else:
+                    age_counts['55+'] += 1
+        by_age = [{'age_range': k, 'count': v} for k, v in age_counts.items() if v > 0]
+        
+        return {
+            'current': {
+                'by_gender': by_gender,
+                'by_age_range': by_age,
+                'total_employees': len(employees)
+            }
+        }
+    
+    def _get_tenure_data(self, db, year, month, company, division):
+        """Coleta dados de tempo de casa para o relatório"""
+        from datetime import date
+        from app.models.payroll import PayrollPeriod, PayrollData
+        from app.models.employee import Employee
+        
+        reference_date = date(year, month, 1)
+        
+        # Buscar período usando PayrollPeriod
+        period_query = db.query(PayrollPeriod).filter(
+            PayrollPeriod.year == year,
+            PayrollPeriod.month == month
+        )
+        if company and company != 'all':
+            period_query = period_query.filter(PayrollPeriod.company == company)
+        
+        periods = period_query.all()
+        if not periods:
+            return {'current': {'average_tenure_months': 0, 'by_tenure_range': []}}
+        
+        period_ids = [p.id for p in periods]
+        
+        # Funcionários no período
+        payroll_records = db.query(PayrollData.employee_id).filter(
+            PayrollData.period_id.in_(period_ids)
+        ).distinct().all()
+        employee_ids = [r[0] for r in payroll_records]
+        
+        if not employee_ids:
+            return {'current': {'average_tenure_months': 0, 'by_tenure_range': []}}
+        
+        # Buscar employees com filtro de divisão
+        emp_query = db.query(Employee).filter(Employee.id.in_(employee_ids))
+        if division and division != 'all':
+            emp_query = emp_query.filter(Employee.department == division)
+        employees = emp_query.all()
+        
+        if not employees:
+            return {'current': {'average_tenure_months': 0, 'by_tenure_range': []}}
+        
+        # Calcular tempo de casa manualmente
+        tenure_counts = {
+            'Até 6 meses': 0,
+            '6 meses - 1 ano': 0,
+            '1 - 2 anos': 0,
+            '2 - 5 anos': 0,
+            'Mais de 5 anos': 0
+        }
+        total_months = 0
+        count_with_admission = 0
+        
+        for emp in employees:
+            if emp.admission_date:
+                months_tenure = (reference_date - emp.admission_date).days / 30
+                total_months += months_tenure
+                count_with_admission += 1
+                
+                if months_tenure < 6:
+                    tenure_counts['Até 6 meses'] += 1
+                elif months_tenure < 12:
+                    tenure_counts['6 meses - 1 ano'] += 1
+                elif months_tenure < 24:
+                    tenure_counts['1 - 2 anos'] += 1
+                elif months_tenure < 60:
+                    tenure_counts['2 - 5 anos'] += 1
+                else:
+                    tenure_counts['Mais de 5 anos'] += 1
+        
+        avg_tenure = total_months / count_with_admission if count_with_admission > 0 else 0
+        by_range = [{'range': k, 'count': v} for k, v in tenure_counts.items() if v > 0]
+        
+        return {
+            'current': {
+                'average_tenure_months': avg_tenure,
+                'by_tenure_range': by_range
+            }
+        }
+    
+    def _get_leaves_data_for_report(self, db, year, month, months_range, company, division):
+        """Coleta dados de afastamentos para o relatório"""
+        from datetime import date
+        from sqlalchemy import and_, func
+        from app.models.employee import Employee
+        from app.models.leave import LeaveRecord
+        
+        reference_date = date(year, month, 1)
+        last_day = date(year, month, 28)
+        
+        # Total de afastamentos
+        total_query = db.query(func.count(LeaveRecord.id)).join(Employee).filter(
+            and_(
+                Employee.is_active == True,
+                LeaveRecord.start_date <= last_day,
+                LeaveRecord.end_date >= reference_date
+            )
+        )
+        if company and company != 'all':
+            total_query = total_query.filter(Employee.company_code == company)
+        if division and division != 'all':
+            total_query = total_query.filter(Employee.department == division)
+        
+        total = total_query.scalar() or 0
+        
+        # Por tipo
+        by_type_query = db.query(
+            LeaveRecord.leave_type, func.count(LeaveRecord.id)
+        ).join(Employee).filter(
+            and_(
+                Employee.is_active == True,
+                LeaveRecord.start_date <= last_day,
+                LeaveRecord.end_date >= reference_date
+            )
+        )
+        if company and company != 'all':
+            by_type_query = by_type_query.filter(Employee.company_code == company)
+        if division and division != 'all':
+            by_type_query = by_type_query.filter(Employee.department == division)
+        
+        by_type_results = by_type_query.group_by(LeaveRecord.leave_type).all()
+        
+        by_type = [{'type': t or 'Não especificado', 'count': c} for t, c in by_type_results]
+        
+        return {
+            'current': {
+                'total': total,
+                'by_type': by_type
+            }
+        }
+    
+    def _get_payroll_data_for_report(self, db, year, month, company, division):
+        """Coleta dados de folha de pagamento para o relatório"""
+        from decimal import Decimal
+        from app.models.payroll import PayrollPeriod, PayrollData
+        from app.models.employee import Employee
+        
+        # Buscar período usando PayrollPeriod
+        period_query = db.query(PayrollPeriod).filter(
+            PayrollPeriod.year == year,
+            PayrollPeriod.month == month
+        )
+        if company and company != 'all':
+            period_query = period_query.filter(PayrollPeriod.company == company)
+        
+        periods = period_query.all()
+        if not periods:
+            return {'current': {}}
+        
+        period_ids = [p.id for p in periods]
+        
+        # Buscar dados de folha
+        payroll_records = db.query(PayrollData).filter(
+            PayrollData.period_id.in_(period_ids)
+        ).all()
+        
+        if not payroll_records:
+            return {'current': {}}
+        
+        # Buscar employees para filtro de divisão
+        employee_ids = list(set(r.employee_id for r in payroll_records))
+        emp_query = db.query(Employee).filter(Employee.id.in_(employee_ids))
+        employees = {e.id: e for e in emp_query.all()}
+        
+        # Filtrar por divisão se necessário
+        if division and division != 'all':
+            payroll_records = [r for r in payroll_records if employees.get(r.employee_id) and employees[r.employee_id].department == division]
+        
+        if not payroll_records:
+            return {'current': {}}
+        
+        # Calcular totais
+        total_salary = sum(float(r.gross_salary or 0) for r in payroll_records)
+        total_net = sum(float(r.net_salary or 0) for r in payroll_records)
+        
+        # Calcular proventos e descontos dos campos JSON
+        total_earnings = 0
+        total_deductions = 0
+        for r in payroll_records:
+            if r.earnings_data:
+                for val in r.earnings_data.values():
+                    try:
+                        total_earnings += float(val) if val else 0
+                    except:
+                        pass
+            if r.deductions_data:
+                for val in r.deductions_data.values():
+                    try:
+                        total_deductions += float(val) if val else 0
+                    except:
+                        pass
+        
+        # Se não tiver dados JSON, usar gross e net
+        if total_earnings == 0:
+            total_earnings = total_salary
+        if total_deductions == 0 and total_salary > total_net:
+            total_deductions = total_salary - total_net
+        
+        employee_count = len(set(r.employee_id for r in payroll_records))
+        avg_salary = total_salary / employee_count if employee_count > 0 else 0
+        
+        # Por setor
+        by_department = {}
+        for r in payroll_records:
+            emp = employees.get(r.employee_id)
+            if emp:
+                dept = emp.department or 'Não especificado'
+                if dept not in by_department:
+                    by_department[dept] = {'count': 0, 'total_salary': 0, 'total_net': 0, 'emp_ids': set()}
+                if r.employee_id not in by_department[dept]['emp_ids']:
+                    by_department[dept]['emp_ids'].add(r.employee_id)
+                    by_department[dept]['count'] += 1
+                by_department[dept]['total_salary'] += float(r.gross_salary or 0)
+                by_department[dept]['total_net'] += float(r.net_salary or 0)
+        
+        by_department_list = [
+            {
+                'department': dept,
+                'employee_count': data['count'],
+                'total_salary': data['total_salary'],
+                'total_earnings': data['total_salary'],  # Usando salário bruto como proventos
+                'total_net': data['total_net']
+            }
+            for dept, data in by_department.items()
+        ]
+        by_department_list.sort(key=lambda x: x['total_salary'], reverse=True)
+        
+        return {
+            'current': {
+                'employee_count': employee_count,
+                'total_salary': total_salary,
+                'total_earnings': total_earnings,
+                'total_deductions': total_deductions,
+                'total_net': total_net,
+                'average_salary': avg_salary,
+                'by_department': by_department_list
+            }
+        }
     
     def handle_indicators_invalidate_cache(self):
         """Invalida cache de indicadores e employees"""
@@ -3975,7 +7540,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     empresa_num = 'UNKNOWN_EMP'
                     header_match = re.search(
                         r'Cadastro\s+Nome\s+do\s+Funcionário\s+CBO\s+Empresa\s+Local\s+Departamento\s+FL\s*\n\s*'
-                        r'(\d+)\s+([A-ZÀ-Ú\s\d]+?)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)',
+                        r'(\d+)\s+([A-ZÀ-Úa-zà-ú\s\d]+?)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)',
                         text
                     )
                     
@@ -3984,7 +7549,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     else:
                         # Fallback: padrão mais genérico (linha com vários números após o nome)
                         # Ex: "189 CRISTINA APARECIDA STOROZ WIL 421310 60 1 000101"
-                        generic_match = re.search(r'^\s*(\d+)\s+[\w\sÀ-Ú]+\s+(\d{4,6})\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)', text, re.MULTILINE)
+                        # Ex: "692 VITORIA DE OLIVEIRA 411005 59 1 000501"
+                        generic_match = re.search(r'^\s*(\d+)\s+[A-ZÀ-Úa-zà-ú\s]+\s+(\d{4,6})\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)', text, re.MULTILINE)
                         if generic_match:
                             empresa_num = generic_match.group(3)  # Terceiro número = empresa
                     
@@ -4351,7 +7917,29 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                             except Exception as db_error:
                                 print(f"⚠️ Erro ao salvar recipient no banco: {db_error}")
                         
-                        # Registrar no log
+                        # 📝 REGISTRAR LOG DO SISTEMA - COMUNICADO SUCESSO
+                        try:
+                            from app.models.system_log import SystemLog, LogLevel, LogCategory
+                            log_db = SessionLocal()
+                            try:
+                                log_entry = SystemLog(
+                                    level=LogLevel.INFO,
+                                    category=LogCategory.COMMUNICATION,
+                                    message=f"Comunicado enviado: {employee.get('full_name')}",
+                                    details=f"Mensagem: {message[:100] if message else '[Arquivo]'}, Telefone: {phone}, Instância: {next_instance}",
+                                    user_id=user_id,
+                                    entity_type='Employee',
+                                    entity_id=str(emp_id)
+                                )
+                                log_db.add(log_entry)
+                                log_db.commit()
+                                print(f"📝 Log de sucesso registrado")
+                            finally:
+                                log_db.close()
+                        except Exception as log_error:
+                            print(f"⚠️ Erro ao registrar log: {log_error}")
+                        
+                        # Registrar no log (antigo)
                         try:
                             log_system_event(
                                 event_type='communication_sent',
@@ -4400,6 +7988,28 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                             except Exception as db_error:
                                 print(f"⚠️ Erro ao salvar falha no banco: {db_error}")
                         
+                        # 📝 REGISTRAR LOG DO SISTEMA - COMUNICADO FALHA  
+                        try:
+                            from app.models.system_log import SystemLog, LogLevel, LogCategory
+                            log_db = SessionLocal()
+                            try:
+                                log_entry = SystemLog(
+                                    level=LogLevel.ERROR,
+                                    category=LogCategory.COMMUNICATION,
+                                    message=f"Falha ao enviar comunicado: {employee.get('full_name')}",
+                                    details=f"Erro: {result.get('message', 'Erro desconhecido')}, Telefone: {phone}",
+                                    user_id=user_id,
+                                    entity_type='Employee',
+                                    entity_id=str(emp_id)
+                                )
+                                log_db.add(log_entry)
+                                log_db.commit()
+                                print(f"📝 Log de falha registrado")
+                            finally:
+                                log_db.close()
+                        except Exception as log_error:
+                            print(f"⚠️ Erro ao registrar log: {log_error}")
+                
                 except Exception as send_error:
                     print(f"❌ Erro no envio para {employee.get('full_name')}: {send_error}")
                     failed_employees.append({
@@ -5632,6 +9242,1105 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"❌ Erro ao invalidar cache: {e}")
             self.send_json_response({"error": str(e)}, 500)
+    
+    # ========================================
+    # HANDLERS DE BENEFÍCIOS (iFood)
+    # ========================================
+    
+    def handle_upload_benefits_xlsx(self):
+        """
+        Upload e processamento de arquivo XLSX de benefícios
+        Endpoint: POST /api/v1/benefits/upload-xlsx
+        """
+        try:
+            print("📊 === UPLOAD DE XLSX DE BENEFÍCIOS ===")
+            
+            # Parse multipart form data
+            content_type = self.headers.get('Content-Type', '')
+            if not content_type.startswith('multipart/form-data'):
+                self.send_json_response({"error": "Content-Type deve ser multipart/form-data"}, 400)
+                return
+            
+            # Get boundary
+            boundary = None
+            for part in content_type.split(';'):
+                if 'boundary=' in part:
+                    boundary = part.split('boundary=')[1].strip()
+                    break
+            
+            if not boundary:
+                self.send_json_response({"error": "Boundary não encontrado"}, 400)
+                return
+            
+            # Read body
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            
+            # Parse multipart data manualmente
+            import re
+            import tempfile
+            import shutil
+            
+            # Converter boundary para bytes
+            boundary_bytes = f'--{boundary}'.encode()
+            
+            # Dividir por boundary
+            parts = body.split(boundary_bytes)
+            
+            file_data = None
+            year = None
+            month = None
+            company = '0060'
+            
+            for part in parts:
+                if not part or part == b'--\r\n' or part == b'--':
+                    continue
+                    
+                # Procurar por headers
+                if b'Content-Disposition' in part:
+                    # Extrair nome do campo
+                    if b'name="file"' in part:
+                        # Extrair dados do arquivo
+                        # Formato: headers\r\n\r\nbody
+                        split_point = part.find(b'\r\n\r\n')
+                        if split_point != -1:
+                            file_data = part[split_point + 4:].rstrip(b'\r\n')
+                    
+                    elif b'name="year"' in part:
+                        split_point = part.find(b'\r\n\r\n')
+                        if split_point != -1:
+                            year = int(part[split_point + 4:].strip())
+                    
+                    elif b'name="month"' in part:
+                        split_point = part.find(b'\r\n\r\n')
+                        if split_point != -1:
+                            month = int(part[split_point + 4:].strip())
+                    
+                    elif b'name="company"' in part:
+                        split_point = part.find(b'\r\n\r\n')
+                        if split_point != -1:
+                            company = part[split_point + 4:].strip().decode('utf-8')
+            
+            # Validar dados extraídos
+            if not file_data:
+                self.send_json_response({"error": "Arquivo não enviado"}, 400)
+                return
+            
+            if not year or not month:
+                self.send_json_response({"error": "Ano e mês são obrigatórios"}, 400)
+                return
+            
+            # Validar parâmetros
+            if not (1 <= month <= 12):
+                self.send_json_response({"error": "Mês deve estar entre 1 e 12"}, 400)
+                return
+            
+            if company not in ['0060', '0059']:
+                self.send_json_response({"error": "Empresa deve ser '0060' ou '0059'"}, 400)
+                return
+            
+            # Salvar arquivo temporariamente
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+                tmp_file.write(file_data)
+                tmp_filepath = tmp_file.name
+            
+            print(f"📁 Arquivo temporário: {tmp_filepath}")
+            print(f"📅 Período: {month}/{year}")
+            print(f"🏢 Empresa: {company}")
+            
+            try:
+                # Criar sessão do banco
+                db = SessionLocal()
+                
+                # Obter user_id do usuário autenticado
+                user_id = None
+                authenticated_user = self.get_authenticated_user(db)
+                if authenticated_user:
+                    user_id = authenticated_user.id
+                    print(f"👤 Processado por: {authenticated_user.username} (ID: {user_id})")
+                
+                # Processar arquivo
+                from app.services.benefits_xlsx_processor import BenefitsXLSXProcessor
+                processor = BenefitsXLSXProcessor(db, user_id=user_id)
+                
+                result = processor.process_xlsx_file(
+                    file_path=tmp_filepath,
+                    year=year,
+                    month=month,
+                    company=company
+                )
+                
+                db.close()
+                
+                # Remover arquivo temporário
+                import os
+                os.unlink(tmp_filepath)
+                
+                if result['success']:
+                    print(f"✅ XLSX processado com sucesso!")
+                    self.send_json_response(result, 200)
+                else:
+                    print(f"❌ Erro ao processar XLSX: {result.get('error')}")
+                    self.send_json_response(result, 400)
+                    
+            except Exception as e:
+                # Limpar arquivo temporário em caso de erro
+                import os
+                if os.path.exists(tmp_filepath):
+                    os.unlink(tmp_filepath)
+                raise
+                
+        except Exception as e:
+            print(f"❌ Erro crítico ao processar XLSX: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({
+                "success": False,
+                "error": f"Erro interno: {str(e)}"
+            }, 500)
+    
+    def handle_benefits_periods_list(self):
+        """Lista períodos de benefícios"""
+        try:
+            if SessionLocal:
+                from app.models.payroll import BenefitsPeriod
+                
+                db = SessionLocal()
+                periods = db.query(BenefitsPeriod).filter(
+                    BenefitsPeriod.is_active == True
+                ).order_by(
+                    BenefitsPeriod.year.desc(), 
+                    BenefitsPeriod.month.desc()
+                ).all()
+                
+                periods_data = []
+                for period in periods:
+                    # Mapear código da empresa para nome
+                    company_name = "Empreendimentos" if period.company == "0060" else "Infraestrutura" if period.company == "0059" else period.company
+                    
+                    # Contar registros
+                    from app.models.payroll import BenefitsData
+                    total_records = db.query(BenefitsData).filter(
+                        BenefitsData.period_id == period.id
+                    ).count()
+                    
+                    periods_data.append({
+                        "id": period.id,
+                        "year": period.year,
+                        "month": period.month,
+                        "period_name": period.period_name,
+                        "company": period.company,
+                        "company_name": company_name,
+                        "description": period.description,
+                        "total_records": total_records,
+                        "created_at": period.created_at.isoformat() if hasattr(period, 'created_at') and period.created_at else None
+                    })
+                
+                db.close()
+                self.send_json_response({"periods": periods_data, "total": len(periods_data)})
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao listar períodos de benefícios: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_benefits_period_detail(self, period_id: str):
+        """Detalhes de um período de benefícios"""
+        try:
+            if SessionLocal:
+                from app.models.payroll import BenefitsPeriod, BenefitsData, BenefitsProcessingLog
+                from app.models.employee import Employee
+                
+                db = SessionLocal()
+                period = db.query(BenefitsPeriod).filter(BenefitsPeriod.id == int(period_id)).first()
+                
+                if not period:
+                    db.close()
+                    self.send_json_response({"error": "Período não encontrado"}, 404)
+                    return
+                
+                # Buscar dados de benefícios
+                benefits_records = db.query(BenefitsData, Employee).join(
+                    Employee, BenefitsData.employee_id == Employee.id
+                ).filter(BenefitsData.period_id == period.id).all()
+                
+                records_data = []
+                for benefit, employee in benefits_records:
+                    records_data.append({
+                        "id": benefit.id,
+                        "employee_id": employee.id,
+                        "employee_name": employee.name,
+                        "cpf": benefit.cpf,
+                        "refeicao": float(benefit.refeicao) if benefit.refeicao else 0,
+                        "alimentacao": float(benefit.alimentacao) if benefit.alimentacao else 0,
+                        "mobilidade": float(benefit.mobilidade) if benefit.mobilidade else 0,
+                        "livre": float(benefit.livre) if benefit.livre else 0,
+                        "total": benefit.get_total_benefits()
+                    })
+                
+                # Buscar logs de processamento
+                logs = db.query(BenefitsProcessingLog).filter(
+                    BenefitsProcessingLog.period_id == period.id
+                ).order_by(BenefitsProcessingLog.created_at.desc()).all()
+                
+                logs_data = []
+                for log in logs:
+                    logs_data.append({
+                        "id": log.id,
+                        "filename": log.filename,
+                        "status": log.status,
+                        "total_rows": log.total_rows,
+                        "processed_rows": log.processed_rows,
+                        "error_rows": log.error_rows,
+                        "processing_time": float(log.processing_time) if log.processing_time else 0,
+                        "created_at": log.created_at.isoformat() if log.created_at else None
+                    })
+                
+                db.close()
+                
+                self.send_json_response({
+                    "period": {
+                        "id": period.id,
+                        "year": period.year,
+                        "month": period.month,
+                        "period_name": period.period_name,
+                        "company": period.company,
+                        "company_name": "Empreendimentos" if period.company == "0060" else "Infraestrutura",
+                        "description": period.description
+                    },
+                    "records": records_data,
+                    "logs": logs_data,
+                    "total_records": len(records_data)
+                })
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar detalhes do período: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_delete_benefits_period(self, period_id: str):
+        """Deleta um período de benefícios e todos os dados relacionados"""
+        try:
+            print(f"🗑️ Deletando período de benefícios ID: {period_id}")
+            
+            if SessionLocal:
+                from app.models.payroll import BenefitsPeriod
+                
+                db = SessionLocal()
+                period = db.query(BenefitsPeriod).filter(BenefitsPeriod.id == int(period_id)).first()
+                
+                if not period:
+                    db.close()
+                    self.send_json_response({
+                        "success": False,
+                        "error": "Período não encontrado"
+                    }, 404)
+                    return
+                
+                period_name = period.period_name
+                
+                # Deletar período (cascade vai deletar dados e logs)
+                db.delete(period)
+                db.commit()
+                db.close()
+                
+                print(f"✅ Período deletado: {period_name}")
+                self.send_json_response({
+                    "success": True,
+                    "message": f"Período '{period_name}' deletado com sucesso"
+                })
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao deletar período: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({
+                "success": False,
+                "error": f"Erro interno: {str(e)}"
+            }, 500)
+    
+    def handle_benefits_processing_logs(self):
+        """Retorna histórico de processamento de arquivos de benefícios"""
+        try:
+            if SessionLocal:
+                from app.models.payroll import BenefitsProcessingLog, BenefitsPeriod
+                
+                db = SessionLocal()
+                logs = db.query(
+                    BenefitsProcessingLog,
+                    BenefitsPeriod.year,
+                    BenefitsPeriod.month
+                ).join(
+                    BenefitsPeriod,
+                    BenefitsProcessingLog.period_id == BenefitsPeriod.id
+                ).order_by(
+                    BenefitsProcessingLog.created_at.desc()
+                ).limit(50).all()
+                
+                logs_data = []
+                for log, year, month in logs:
+                    logs_data.append({
+                        "id": log.id,
+                        "filename": log.filename,
+                        "year": year,
+                        "month": month,
+                        "status": log.status,
+                        "total_rows": log.total_rows,
+                        "processed_rows": log.processed_rows,
+                        "error_rows": log.error_rows,
+                        "processing_time": float(log.processing_time) if log.processing_time else 0,
+                        "created_at": log.created_at.isoformat() if log.created_at else None
+                    })
+                
+                db.close()
+                self.send_json_response({"logs": logs_data, "total": len(logs_data)})
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar histórico de processamento: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    # ============================
+    # TIMECARD HANDLERS
+    # ============================
+    
+    def handle_timecard_periods_list(self):
+        """Lista períodos de cartão ponto"""
+        try:
+            if SessionLocal:
+                from app.models.timecard import TimecardPeriod, TimecardData
+                from sqlalchemy import func
+                from decimal import Decimal
+                
+                db = SessionLocal()
+                periods = db.query(TimecardPeriod).filter(
+                    TimecardPeriod.is_active == True
+                ).order_by(
+                    TimecardPeriod.year.desc(), 
+                    TimecardPeriod.month.desc()
+                ).all()
+                
+                periods_data = []
+                for period in periods:
+                    # Contar funcionários
+                    employee_count = db.query(TimecardData).filter(
+                        TimecardData.period_id == period.id
+                    ).count()
+                    
+                    # Calcular totais detalhados por tipo de hora
+                    totals = db.query(
+                        func.sum(TimecardData.overtime_50).label('overtime_50'),
+                        func.sum(TimecardData.overtime_100).label('overtime_100'),
+                        func.sum(TimecardData.night_overtime_50).label('night_overtime_50'),
+                        func.sum(TimecardData.night_overtime_100).label('night_overtime_100'),
+                        func.sum(TimecardData.night_hours).label('night_hours')
+                    ).filter(
+                        TimecardData.period_id == period.id
+                    ).first()
+                    
+                    # Converter para Decimal com valores default
+                    ot50 = totals.overtime_50 or Decimal('0')
+                    ot100 = totals.overtime_100 or Decimal('0')
+                    not50 = totals.night_overtime_50 or Decimal('0')
+                    not100 = totals.night_overtime_100 or Decimal('0')
+                    nh = totals.night_hours or Decimal('0')
+                    
+                    periods_data.append({
+                        "id": period.id,
+                        "year": period.year,
+                        "month": period.month,
+                        "period_name": period.period_name,
+                        "start_date": period.start_date.isoformat() if period.start_date else None,
+                        "end_date": period.end_date.isoformat() if period.end_date else None,
+                        "description": period.description,
+                        "is_active": period.is_active,
+                        "employee_count": employee_count,
+                        # Campos individuais
+                        "overtime_50": float(ot50),
+                        "overtime_100": float(ot100),
+                        "night_overtime_50": float(not50),
+                        "night_overtime_100": float(not100),
+                        "night_hours": float(nh),
+                        # Totais agregados
+                        "total_overtime": float(ot50 + ot100),
+                        "total_night_hours": float(not50 + not100 + nh),
+                        "created_at": period.created_at.isoformat() if hasattr(period, 'created_at') and period.created_at else None
+                    })
+                
+                db.close()
+                self.send_json_response({"periods": periods_data, "total": len(periods_data)})
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao listar períodos de cartão ponto: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_timecard_period_detail(self, period_id: str):
+        """Detalhes de um período de cartão ponto"""
+        try:
+            if SessionLocal:
+                from app.models.timecard import TimecardPeriod, TimecardData, TimecardProcessingLog
+                from decimal import Decimal
+                
+                db = SessionLocal()
+                period = db.query(TimecardPeriod).filter(TimecardPeriod.id == int(period_id)).first()
+                
+                if not period:
+                    db.close()
+                    self.send_json_response({"error": "Período não encontrado"}, 404)
+                    return
+                
+                # Buscar dados de cartão ponto
+                timecard_records = db.query(TimecardData).filter(
+                    TimecardData.period_id == period.id
+                ).order_by(TimecardData.employee_name).all()
+                
+                records_data = []
+                for record in timecard_records:
+                    records_data.append({
+                        "id": record.id,
+                        "employee_number": record.employee_number,
+                        "employee_name": record.employee_name,
+                        "company": record.company,
+                        "normal_hours": float(record.normal_hours or Decimal('0')),
+                        "overtime_50": float(record.overtime_50 or Decimal('0')),
+                        "overtime_100": float(record.overtime_100 or Decimal('0')),
+                        "night_overtime_50": float(record.night_overtime_50 or Decimal('0')),
+                        "night_overtime_100": float(record.night_overtime_100 or Decimal('0')),
+                        "night_hours": float(record.night_hours or Decimal('0')),
+                        "absences": float(record.absences or Decimal('0')),
+                        "dsr_debit": float(record.dsr_debit or Decimal('0')),
+                        "bonus_hours": float(record.bonus_hours or Decimal('0')),
+                        "total_overtime": float(record.get_total_overtime()),
+                        "total_night_hours": float(record.get_total_night_hours())
+                    })
+                
+                # Buscar logs de processamento
+                logs = db.query(TimecardProcessingLog).filter(
+                    TimecardProcessingLog.period_id == period.id
+                ).order_by(TimecardProcessingLog.created_at.desc()).all()
+                
+                logs_data = []
+                for log in logs:
+                    logs_data.append({
+                        "id": log.id,
+                        "filename": log.filename,
+                        "status": log.status,
+                        "total_rows": log.total_rows,
+                        "processed_rows": log.processed_rows,
+                        "error_rows": log.error_rows,
+                        "processing_time": float(log.processing_time) if log.processing_time else 0,
+                        "created_at": log.created_at.isoformat() if log.created_at else None
+                    })
+                
+                db.close()
+                
+                self.send_json_response({
+                    "period": {
+                        "id": period.id,
+                        "year": period.year,
+                        "month": period.month,
+                        "period_name": period.period_name,
+                        "start_date": period.start_date.isoformat() if period.start_date else None,
+                        "end_date": period.end_date.isoformat() if period.end_date else None,
+                        "description": period.description
+                    },
+                    "records": records_data,
+                    "logs": logs_data,
+                    "total_records": len(records_data)
+                })
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar detalhes do período: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_timecard_stats(self):
+        """Retorna estatísticas de cartão ponto"""
+        try:
+            if SessionLocal:
+                from app.models.timecard import TimecardData, TimecardPeriod
+                from decimal import Decimal
+                
+                # Obter parâmetros da query string
+                query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                period_id = query_params.get('period_id', [None])[0]
+                year = query_params.get('year', [None])[0]
+                month = query_params.get('month', [None])[0]
+                employees_param = query_params.get('employees', [None])[0]
+                
+                db = SessionLocal()
+                query = db.query(TimecardData)
+                
+                # Filtrar por período
+                if period_id:
+                    query = query.filter(TimecardData.period_id == int(period_id))
+                    print(f"🔍 Filtrando por period_id: {period_id}")
+                elif year and month:
+                    period = db.query(TimecardPeriod).filter(
+                        TimecardPeriod.year == int(year),
+                        TimecardPeriod.month == int(month)
+                    ).first()
+                    if period:
+                        query = query.filter(TimecardData.period_id == period.id)
+                        print(f"✅ Período encontrado: {period.period_name} (ID: {period.id})")
+                    else:
+                        print(f"❌ Período NÃO encontrado para year={year}, month={month}")
+                        # IMPORTANTE: Retornar dados zerados se não encontrar período
+                        db.close()
+                        self.send_json_response({
+                            "total_employees": 0,
+                            "overtime_50": 0,
+                            "overtime_100": 0,
+                            "night_overtime_50": 0,
+                            "night_overtime_100": 0,
+                            "night_hours": 0,
+                            "total_overtime_hours": 0,
+                            "total_night_hours": 0,
+                            "employees_with_overtime": 0,
+                            "employees_with_night_hours": 0,
+                            "average_overtime": 0,
+                            "average_night_hours": 0,
+                            "by_company": {}
+                        })
+                        return
+                else:
+                    print(f"⚠️ Sem filtros de período - retornando TODOS os dados de timecard")
+                
+                # Filtrar por colaboradores (employee_id do banco de employees)
+                if employees_param:
+                    employee_ids = employees_param.split(',')
+                    print(f"🔍 DEBUG: employees_param recebido: '{employees_param}'")
+                    print(f"🔍 DEBUG: employee_ids split: {employee_ids}")
+                    
+                    # O frontend envia os IDs da tabela employees (employee.id)
+                    # Precisamos filtrar por employee_id (FK para employees)
+                    employee_ids_int = [int(emp_id) for emp_id in employee_ids]
+                    
+                    query = query.filter(TimecardData.employee_id.in_(employee_ids_int))
+                    print(f"✅ Filtrando por {len(employee_ids_int)} colaboradores (employee_id)")
+                    print(f"   IDs: {employee_ids_int}")
+                
+                timecard_data = query.all()
+                print(f"📊 Total de registros retornados: {len(timecard_data)}")
+                
+                # DEBUG: Mostrar alguns employee_numbers encontrados
+                if employees_param and len(timecard_data) > 0:
+                    sample = timecard_data[:5]
+                    print(f"🔍 DEBUG: Primeiros employee_numbers encontrados:")
+                    for d in sample:
+                        print(f"   employee_number='{d.employee_number}', nome='{d.employee_name}'")
+                elif employees_param and len(timecard_data) == 0:
+                    # Verificar se há ALGUM registro no período
+                    all_in_period = db.query(TimecardData).filter(
+                        TimecardData.period_id == query.whereclause.right.value if hasattr(query.whereclause, 'right') else None
+                    ).limit(5).all()
+                    if all_in_period:
+                        print(f"⚠️ DEBUG: Há {len(all_in_period)} registros no período, mas nenhum match. Exemplos:")
+                        for d in all_in_period:
+                            print(f"   employee_number='{d.employee_number}', nome='{d.employee_name}'")
+                
+                if not timecard_data:
+                    db.close()
+                    self.send_json_response({
+                        "total_employees": 0,
+                        "total_overtime_hours": 0,
+                        "total_night_hours": 0,
+                        "employees_with_overtime": 0,
+                        "employees_with_night_hours": 0,
+                        "average_overtime": 0,
+                        "average_night_hours": 0,
+                        "by_company": {}
+                    })
+                    return
+                
+                # Calcular estatísticas detalhadas por tipo de hora
+                total_employees = len(timecard_data)
+                
+                # Somar cada tipo de hora separadamente
+                sum_overtime_50 = sum((d.overtime_50 or Decimal('0') for d in timecard_data), Decimal('0'))
+                sum_overtime_100 = sum((d.overtime_100 or Decimal('0') for d in timecard_data), Decimal('0'))
+                sum_night_overtime_50 = sum((d.night_overtime_50 or Decimal('0') for d in timecard_data), Decimal('0'))
+                sum_night_overtime_100 = sum((d.night_overtime_100 or Decimal('0') for d in timecard_data), Decimal('0'))
+                sum_night_hours = sum((d.night_hours or Decimal('0') for d in timecard_data), Decimal('0'))
+                
+                # Totais agregados
+                total_overtime = sum_overtime_50 + sum_overtime_100
+                total_night = sum_night_overtime_50 + sum_night_overtime_100 + sum_night_hours
+                
+                employees_with_overtime = sum(1 for d in timecard_data if d.get_total_overtime() > 0)
+                employees_with_night = sum(1 for d in timecard_data if d.get_total_night_hours() > 0)
+                
+                avg_overtime = total_overtime / total_employees if total_employees > 0 else Decimal('0')
+                avg_night = total_night / total_employees if total_employees > 0 else Decimal('0')
+                
+                # Estatísticas por empresa
+                by_company = {}
+                for company in ['0059', '0060']:
+                    company_data = [d for d in timecard_data if d.company == company]
+                    if company_data:
+                        by_company[company] = {
+                            'employees': len(company_data),
+                            'total_overtime': float(sum((d.get_total_overtime() for d in company_data), Decimal('0'))),
+                            'total_night_hours': float(sum((d.get_total_night_hours() for d in company_data), Decimal('0'))),
+                            'average_overtime': float(sum((d.get_total_overtime() for d in company_data), Decimal('0')) / len(company_data)),
+                            'average_night_hours': float(sum((d.get_total_night_hours() for d in company_data), Decimal('0')) / len(company_data))
+                        }
+                
+                db.close()
+                
+                self.send_json_response({
+                    "total_employees": total_employees,
+                    # Horas extras detalhadas
+                    "overtime_50": float(sum_overtime_50),
+                    "overtime_100": float(sum_overtime_100),
+                    "night_overtime_50": float(sum_night_overtime_50),
+                    "night_overtime_100": float(sum_night_overtime_100),
+                    "night_hours": float(sum_night_hours),
+                    # Totais agregados
+                    "total_overtime_hours": float(total_overtime),
+                    "total_night_hours": float(total_night),
+                    # Contadores
+                    "employees_with_overtime": employees_with_overtime,
+                    "employees_with_night_hours": employees_with_night,
+                    "average_overtime": float(avg_overtime),
+                    "average_night_hours": float(avg_night),
+                    "by_company": by_company
+                })
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar estatísticas: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_timecard_processing_logs(self):
+        """Retorna histórico de processamento de arquivos de cartão ponto"""
+        try:
+            if SessionLocal:
+                from app.models.timecard import TimecardProcessingLog, TimecardPeriod
+                
+                db = SessionLocal()
+                logs = db.query(
+                    TimecardProcessingLog,
+                    TimecardPeriod.year,
+                    TimecardPeriod.month
+                ).join(
+                    TimecardPeriod,
+                    TimecardProcessingLog.period_id == TimecardPeriod.id
+                ).order_by(
+                    TimecardProcessingLog.created_at.desc()
+                ).limit(50).all()
+                
+                logs_data = []
+                for log, year, month in logs:
+                    logs_data.append({
+                        "id": log.id,
+                        "filename": log.filename,
+                        "year": year,
+                        "month": month,
+                        "status": log.status,
+                        "total_rows": log.total_rows,
+                        "processed_rows": log.processed_rows,
+                        "error_rows": log.error_rows,
+                        "processing_time": float(log.processing_time) if log.processing_time else 0,
+                        "created_at": log.created_at.isoformat() if log.created_at else None
+                    })
+                
+                db.close()
+                self.send_json_response({"logs": logs_data, "total": len(logs_data)})
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao buscar histórico de processamento: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+    
+    def handle_upload_timecard_xlsx(self):
+        """Handle upload e processamento de arquivo XLSX de cartão ponto"""
+        try:
+            from app.services.timecard_xlsx_processor import TimecardXLSXProcessor
+            import tempfile
+            
+            # Parse multipart form data
+            content_type = self.headers.get('Content-Type', '')
+            if 'multipart/form-data' not in content_type:
+                self.send_json_response({"error": "Content-Type deve ser multipart/form-data"}, 400)
+                return
+            
+            # Obter boundary
+            boundary = content_type.split('boundary=')[1].strip()
+            
+            # Ler corpo da requisição
+            content_length = int(self.headers.get('Content-Length', 0))
+            raw_data = self.rfile.read(content_length)
+            
+            # Parsear multipart data
+            parts = raw_data.split(f'--{boundary}'.encode())
+            
+            file_content = None
+            year = None
+            month = None
+            start_date = None
+            end_date = None
+            filename = None
+            
+            for part in parts:
+                if b'Content-Disposition' in part:
+                    # Extrair nome do campo
+                    if b'name="file"' in part:
+                        # Extrair filename
+                        filename_match = re.search(b'filename="([^"]+)"', part)
+                        if filename_match:
+                            filename = filename_match.group(1).decode('utf-8')
+                        
+                        # Extrair conteúdo do arquivo
+                        file_start = part.find(b'\r\n\r\n') + 4
+                        file_end = len(part) - 2  # Remove trailing \r\n
+                        file_content = part[file_start:file_end]
+                    
+                    elif b'name="year"' in part:
+                        value_start = part.find(b'\r\n\r\n') + 4
+                        year = int(part[value_start:].strip())
+                    
+                    elif b'name="month"' in part:
+                        value_start = part.find(b'\r\n\r\n') + 4
+                        month = int(part[value_start:].strip())
+                    
+                    elif b'name="start_date"' in part:
+                        value_start = part.find(b'\r\n\r\n') + 4
+                        start_date_bytes = part[value_start:].strip()
+                        start_date = start_date_bytes.decode('utf-8') if start_date_bytes else None
+                    
+                    elif b'name="end_date"' in part:
+                        value_start = part.find(b'\r\n\r\n') + 4
+                        end_date_bytes = part[value_start:].strip()
+                        end_date = end_date_bytes.decode('utf-8') if end_date_bytes else None
+            
+            if not file_content or not year or not month:
+                self.send_json_response({
+                    "error": "Arquivo, ano e mês são obrigatórios"
+                }, 400)
+                return
+            
+            # Validar extensão
+            if not filename or not filename.endswith(('.xlsx', '.xls')):
+                self.send_json_response({
+                    "error": "Arquivo deve ser no formato XLSX ou XLS"
+                }, 400)
+                return
+            
+            # Salvar arquivo temporariamente
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+                tmp_file.write(file_content)
+                tmp_path = tmp_file.name
+            
+            print(f"📁 Arquivo temporário salvo: {tmp_path}")
+            
+            # Processar arquivo
+            db = SessionLocal()
+            current_user = getattr(self, 'current_user', None)
+            user_id = current_user.get('id') if current_user else None
+            
+            processor = TimecardXLSXProcessor(db=db, user_id=user_id)
+            result = processor.process_xlsx_file(
+                file_path=tmp_path,
+                year=year,
+                month=month,
+                start_date=start_date,
+                end_date=end_date
+            )
+            
+            db.close()
+            
+            # Remover arquivo temporário
+            try:
+                os.remove(tmp_path)
+            except:
+                pass
+            
+            if not result['success']:
+                self.send_json_response({
+                    "success": False,
+                    "error": result.get('error', 'Erro ao processar arquivo')
+                }, 400)
+                return
+            
+            self.send_json_response({
+                "success": True,
+                "message": "Arquivo processado com sucesso",
+                "period_id": result['period_id'],
+                "period_name": result['period_name'],
+                "total_rows": result['total_rows'],
+                "processed_rows": result['processed_rows'],
+                "error_rows": result['error_rows'],
+                "warnings": result.get('warnings', []),
+                "errors": result.get('errors', []),
+                "processing_time": result.get('processing_time', 0)
+            })
+            
+        except Exception as e:
+            print(f"❌ Erro ao processar upload de cartão ponto: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({
+                "success": False,
+                "error": f"Erro interno: {str(e)}"
+            }, 500)
+    
+    def handle_delete_timecard_period(self, period_id: str):
+        """Deleta um período de cartão ponto e todos os dados relacionados"""
+        try:
+            print(f"🗑️ Deletando período de cartão ponto ID: {period_id}")
+            
+            if SessionLocal:
+                from app.models.timecard import TimecardPeriod
+                
+                db = SessionLocal()
+                period = db.query(TimecardPeriod).filter(TimecardPeriod.id == int(period_id)).first()
+                
+                if not period:
+                    db.close()
+                    self.send_json_response({
+                        "success": False,
+                        "error": "Período não encontrado"
+                    }, 404)
+                    return
+                
+                period_name = period.period_name
+                
+                # Deletar período (cascade vai deletar dados e logs)
+                db.delete(period)
+                db.commit()
+                db.close()
+                
+                print(f"✅ Período deletado: {period_name}")
+                self.send_json_response({
+                    "success": True,
+                    "message": f"Período '{period_name}' deletado com sucesso"
+                })
+                
+            else:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                
+        except Exception as e:
+            print(f"❌ Erro ao deletar período: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_json_response({
+                "success": False,
+                "error": f"Erro interno: {str(e)}"
+            }, 500)
+
+    def handle_process_tax_statement_file(self):
+        """Processa PDF consolidado de informes de rendimentos."""
+        try:
+            if not SessionLocal:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                return
+
+            db = SessionLocal()
+            try:
+                user = self.get_authenticated_user(db)
+                if not user:
+                    self.send_json_response({"error": "Token de acesso necessário"}, 401)
+                    return
+
+                content_type = self.headers.get('Content-Type', '')
+                if 'multipart/form-data' not in content_type:
+                    self.send_json_response({"error": "Content-Type deve ser multipart/form-data"}, 400)
+                    return
+
+                boundary = None
+                for part in content_type.split(';'):
+                    if 'boundary=' in part:
+                        boundary = part.split('boundary=')[1].strip()
+                        break
+
+                if not boundary:
+                    self.send_json_response({"error": "Boundary não encontrado"}, 400)
+                    return
+
+                content_length = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(content_length)
+                file_data, filename = self.parse_multipart_data(body, boundary)
+
+                if not file_data or not filename:
+                    self.send_json_response({"error": "Arquivo não encontrado no upload"}, 400)
+                    return
+
+                if not filename.lower().endswith('.pdf'):
+                    self.send_json_response({"error": "Apenas arquivos PDF são aceitos"}, 400)
+                    return
+
+                parsed = urllib.parse.urlparse(self.path)
+                query = urllib.parse.parse_qs(parsed.query)
+
+                company = query.get('company', [None])[0]
+                ref_year_raw = query.get('ref_year', [None])[0]
+                ref_year = int(ref_year_raw) if ref_year_raw and str(ref_year_raw).isdigit() else None
+
+                uploads_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads', 'tax_statements')
+                os.makedirs(uploads_dir, exist_ok=True)
+
+                timestamp = int(time.time())
+                safe_filename = f"{timestamp}_{filename}"
+                upload_path = os.path.join(uploads_dir, safe_filename)
+
+                with open(upload_path, 'wb') as fp:
+                    fp.write(file_data)
+
+                from app.models.tax_statement import TaxStatementUpload
+                from app.services.tax_statement_processing import process_tax_statement_pdf
+
+                batch = TaxStatementUpload(
+                    original_filename=filename,
+                    file_path=upload_path,
+                    file_size=len(file_data),
+                    ref_year=ref_year or datetime.now().year,
+                    company=company,
+                    status='processing',
+                    total_statements=0,
+                    statements_processed=0,
+                    statements_failed=0,
+                    processing_started_at=datetime.now(),
+                    uploaded_by=user.id,
+                )
+                db.add(batch)
+                db.commit()
+                db.refresh(batch)
+
+                result = process_tax_statement_pdf(
+                    db=db,
+                    source_pdf_path=upload_path,
+                    uploaded_by=user.id,
+                    company=company,
+                    fallback_year=ref_year,
+                    output_root_dir=os.path.dirname(os.path.abspath(__file__)),
+                )
+
+                batch.status = 'completed'
+                batch.total_statements = result.get('chunks_detected', 0)
+                batch.statements_processed = result.get('processed_success', 0)
+                batch.statements_failed = result.get('processed_failed', 0)
+                batch.processing_completed_at = datetime.now()
+                batch.processing_log = json.dumps(result, ensure_ascii=False)
+                db.commit()
+
+                self.send_json_response({
+                    "success": True,
+                    "message": "Informe de rendimentos processado com sucesso",
+                    "batch_id": batch.id,
+                    "summary": result,
+                }, 200)
+
+            except Exception as process_error:
+                db.rollback()
+                self.send_json_response({"error": f"Erro ao processar IR: {str(process_error)}"}, 500)
+            finally:
+                db.close()
+
+        except Exception as e:
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_list_tax_statements(self):
+        """Lista informes de rendimentos com filtros básicos para frontend."""
+        try:
+            if not SessionLocal:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                return
+
+            parsed = urllib.parse.urlparse(self.path)
+            query = urllib.parse.parse_qs(parsed.query)
+
+            page = int(query.get('page', ['1'])[0])
+            page_size = int(query.get('page_size', ['50'])[0])
+            ref_year = query.get('ref_year', [None])[0]
+            status = query.get('status', [None])[0]
+            company = query.get('company', [None])[0]
+
+            page = max(page, 1)
+            page_size = min(max(page_size, 1), 200)
+
+            from app.models.tax_statement import TaxStatement
+
+            db = SessionLocal()
+            try:
+                q = db.query(TaxStatement)
+
+                if ref_year and str(ref_year).isdigit():
+                    q = q.filter(TaxStatement.ref_year == int(ref_year))
+                if status:
+                    q = q.filter(TaxStatement.status == status)
+                if company:
+                    q = q.filter(TaxStatement.company == company)
+
+                total = q.count()
+                items = (
+                    q.order_by(TaxStatement.created_at.desc())
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
+                    .all()
+                )
+
+                payload = []
+                for item in items:
+                    payload.append({
+                        "id": item.id,
+                        "unique_id": item.unique_id,
+                        "ref_year": item.ref_year,
+                        "cpf": item.cpf,
+                        "employee_id": item.employee_id,
+                        "employee_unique_id": item.employee_unique_id,
+                        "employee_name": item.employee_name,
+                        "status": item.status,
+                        "file_path": item.file_path,
+                        "pages_count": item.pages_count,
+                        "company": item.company,
+                        "processing_error": item.processing_error,
+                        "created_at": item.created_at.isoformat() if item.created_at else None,
+                    })
+
+                self.send_json_response({
+                    "tax_statements": payload,
+                    "total": total,
+                    "page": page,
+                    "page_size": page_size,
+                }, 200)
+            finally:
+                db.close()
+
+        except Exception as e:
+            self.send_json_response({"error": f"Erro ao listar IR: {str(e)}"}, 500)
 
 if __name__ == "__main__":
     import time

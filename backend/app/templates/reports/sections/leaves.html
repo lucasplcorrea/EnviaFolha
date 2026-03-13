@@ -1,0 +1,99 @@
+<div class="section">
+    <h2 class="section-title">🏥 Afastamentos - {{ period_display }}</h2>
+    
+    <!-- Métricas de Afastamentos -->
+    <div class="metrics-grid">
+        <div class="metric-card primary">
+            <div class="metric-label">Total de Afastamentos</div>
+            <div class="metric-value">{{ leaves.total_leaves }}</div>
+        </div>
+        
+        <div class="metric-card warning">
+            <div class="metric-label">Taxa de Afastamento</div>
+            <div class="metric-value">{{ leaves.leave_rate|percentage }}%</div>
+            <div class="metric-change">do efetivo total</div>
+        </div>
+        
+        {% if leaves.avg_duration %}
+        <div class="metric-card info">
+            <div class="metric-label">Duração Média</div>
+            <div class="metric-value">{{ leaves.avg_duration }} dias</div>
+        </div>
+        {% endif %}
+        
+        {% if leaves.most_common_type %}
+        <div class="metric-card success">
+            <div class="metric-label">Motivo Mais Comum</div>
+            <div class="metric-value" style="font-size: 1rem;">{{ leaves.most_common_type }}</div>
+        </div>
+        {% endif %}
+    </div>
+    
+    <!-- Gráfico de Pizza por Tipo -->
+    {% if charts.leaves_pie %}
+    <div class="chart-container">
+        <h3>Distribuição por Tipo de Afastamento</h3>
+        {{ charts.leaves_pie|safe }}
+    </div>
+    {% endif %}
+    
+    <!-- Tabela Detalhada por Tipo -->
+    {% if leaves.by_type %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Tipo de Afastamento</th>
+                <th style="text-align: right;">Quantidade</th>
+                <th style="text-align: right;">Percentual</th>
+                <th style="text-align: right;">Dias Totais</th>
+                <th style="text-align: right;">Média de Dias</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in leaves.by_type %}
+            <tr>
+                <td>{{ item.type }}</td>
+                <td style="text-align: right;">{{ item.count }}</td>
+                <td style="text-align: right;">{{ item.percentage|percentage }}%</td>
+                <td style="text-align: right;">{{ item.total_days }}</td>
+                <td style="text-align: right;">{{ item.avg_days|round(1) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr>
+                <th>Total</th>
+                <th style="text-align: right;">{{ leaves.total_leaves }}</th>
+                <th style="text-align: right;">100%</th>
+                <th style="text-align: right;">{{ leaves.total_days }}</th>
+                <th style="text-align: right;">{{ leaves.avg_duration|round(1) }}</th>
+            </tr>
+        </tfoot>
+    </table>
+    {% endif %}
+    
+    <!-- Afastamentos por Setor -->
+    {% if leaves.by_sector %}
+    <h3 style="margin-top: 30px;">Afastamentos por Setor</h3>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Setor</th>
+                <th style="text-align: right;">Afastamentos</th>
+                <th style="text-align: right;">Funcionários do Setor</th>
+                <th style="text-align: right;">Taxa de Afastamento</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in leaves.by_sector %}
+            <tr>
+                <td>{{ item.sector }}</td>
+                <td style="text-align: right;">{{ item.count }}</td>
+                <td style="text-align: right;">{{ item.total_employees }}</td>
+                <td style="text-align: right;">{{ item.rate|percentage }}%</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>

@@ -14,10 +14,12 @@ import {
   Bars3Icon,
   XMarkIcon,
   HeartIcon,
+  DocumentTextIcon,
   DocumentArrowUpIcon,
   PaperAirplaneIcon,
   PresentationChartLineIcon,
   QueueListIcon,
+  UserCircleIcon,
 } from '@heroicons/react/24/outline';
 
 const navigation = [
@@ -35,17 +37,24 @@ const navigation = [
     icon: PaperAirplaneIcon,
     description: 'Envio via WhatsApp'
   },
+  {
+    name: 'Informes de Rendimentos',
+    href: '/tax-statements',
+    icon: DocumentTextIcon,
+    description: 'Processamento e envio anual de IR'
+  },
   { 
     name: 'Dados de Folha', 
     href: '/payroll-data', 
     icon: ChartBarIcon,
-    description: 'Processamento de planilhas'
+    description: 'Processamento de planilhas e benefícios'
   },
   { name: 'Comunicados', href: '/communications', icon: ChatBubbleLeftRightIcon },
   { name: 'Endomarketing', href: '/endomarketing', icon: HeartIcon },
-  { name: 'Indicadores RH', href: '/rh-indicators', icon: PresentationChartLineIcon },
+  { name: 'Indicadores RH', href: '/indicators', icon: PresentationChartLineIcon },
   { name: 'Filas de Envio', href: '/queue-management', icon: QueueListIcon },
   { name: 'Relatórios', href: '/reports', icon: ChartBarIcon },
+  { name: 'Meu Perfil', href: '/profile', icon: UserCircleIcon },
   { name: 'Configurações', href: '/settings', icon: CogIcon },
 ];
 
@@ -97,7 +106,7 @@ const Layout = ({ children }) => {
   return (
     <div className={`h-screen flex overflow-hidden ${config.classes.body}`}>
       {/* Mobile sidebar */}
-      <div className={`fixed inset-0 flex z-40 md:hidden ${sidebarOpen ? '' : 'hidden'}`}>
+      <div className={`fixed inset-0 flex z-40 md:hidden no-print ${sidebarOpen ? '' : 'hidden'}`}>
         <div className="fixed inset-0 bg-gray-600 bg-opacity-75" onClick={() => setSidebarOpen(false)} />
         <div className={`relative flex-1 flex flex-col max-w-xs w-full ${config.classes.sidebar}`}>
           <div className="absolute top-0 right-0 -mr-12 pt-2">
@@ -113,7 +122,7 @@ const Layout = ({ children }) => {
       </div>
 
       {/* Desktop sidebar */}
-      <div className="hidden md:flex md:flex-shrink-0">
+      <div className="hidden md:flex md:flex-shrink-0 no-print">
         <div className="flex flex-col w-64">
           <SidebarContent />
         </div>
@@ -122,7 +131,7 @@ const Layout = ({ children }) => {
       {/* Main content */}
       <div className="flex flex-col w-0 flex-1 overflow-hidden">
         {/* Top bar */}
-        <div className={`relative z-10 flex-shrink-0 flex h-16 ${config.classes.card} shadow`}>
+        <div className={`relative z-10 flex-shrink-0 flex h-16 ${config.classes.card} shadow no-print`}>
           <button
             className={`px-4 ${config.classes.border} ${config.classes.textSecondary} focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-500 md:hidden`}
             onClick={() => setSidebarOpen(true)}
@@ -153,9 +162,9 @@ const Layout = ({ children }) => {
         </div>
 
         {/* Page content */}
-        <main className={`flex-1 relative overflow-y-auto focus:outline-none ${config.classes.body}`}>
-          <div className="py-6">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8">
+        <main className={`flex-1 relative overflow-y-auto focus:outline-none ${config.classes.body} print:overflow-visible print:h-auto`}>
+          <div className="py-6 print:py-2">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8 print:max-w-none print:px-2">
               {children}
             </div>
           </div>

@@ -2,10 +2,10 @@ import { useAuth } from '../contexts/AuthContext';
 
 // Mapeamento de páginas permitidas por role
 const ROLE_PAGES = {
-  admin: ['dashboard', 'employees', 'payroll', 'communications', 'reports', 'users', 'settings'],
-  manager: ['dashboard', 'employees', 'payroll', 'communications', 'reports', 'settings'],
-  operator: ['dashboard', 'payroll', 'communications', 'reports'],
-  viewer: ['reports']
+  admin: ['dashboard', 'employees', 'payroll', 'tax-statements', 'communications', 'reports', 'users', 'settings', 'profile'],
+  manager: ['dashboard', 'employees', 'payroll', 'tax-statements', 'communications', 'reports', 'settings', 'profile'],
+  operator: ['dashboard', 'payroll', 'tax-statements', 'communications', 'reports', 'profile'],
+  viewer: ['reports', 'profile']
 };
 
 // Mapeamento de rotas para páginas
@@ -17,15 +17,18 @@ const ROUTE_TO_PAGE = {
   '/payroll-processor': 'payroll',
   '/payroll-sender': 'payroll',
   '/payroll-data': 'payroll',
+  '/tax-statements': 'tax-statements',
   // '/data-import': removido - importação agora apenas em /employees
   '/communications': 'communications',
   '/endomarketing': 'reports',  // Endomarketing faz parte de reports/analytics
-  '/rh-indicators': 'reports',  // Indicadores RH faz parte de reports/analytics
+  '/rh-indicators': 'reports',  // Indicadores RH faz parte de reports/analytics (legado)
+  '/indicators': 'reports',     // Novos Indicadores RH refatorados
   '/queue-management': 'reports',  // Gerenciamento de filas faz parte de reports/monitoring
   '/reports': 'reports',
   '/users': 'users',
   '/settings': 'settings',
-  '/system-logs': 'settings'  // Logs fazem parte de settings (admin only)
+  '/system-logs': 'settings',  // Logs fazem parte de settings (admin only)
+  '/profile': 'profile'  // Perfil do usuário
 };
 
 export const usePermissions = () => {
@@ -102,6 +105,7 @@ export const usePermissions = () => {
       'dashboard': '/',
       'employees': '/employees',
       'payroll': '/payroll',
+      'tax-statements': '/tax-statements',
       'communications': '/communications',
       'reports': '/reports',
       'users': '/users',

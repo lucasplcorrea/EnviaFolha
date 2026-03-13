@@ -1,0 +1,76 @@
+{% extends "reports/base.html" %}
+
+{% block content %}
+<!-- COVER PAGE -->
+<div class="cover-page">
+    <div class="cover-logo">Nexo RH</div>
+    <div class="cover-subtitle">Sistema de Gestão de Recursos Humanos</div>
+    
+    <div class="cover-title">{{ title }}</div>
+    <div class="cover-period">{{ period_text }}</div>
+    
+    <div class="cover-info-box">
+        <div class="info-card">
+            <div class="info-card-title">
+                <span class="icon">📋</span> Filtros Aplicados
+            </div>
+            <div class="info-card-content">
+                <p><strong>Período:</strong> {{ month_name }} de {{ year }}</p>
+                <p><strong>Empresa:</strong> {{ company_name }}</p>
+                <p><strong>Setor:</strong> {{ division_name }}</p>
+            </div>
+        </div>
+        
+        <div class="info-card">
+            <div class="info-card-title">
+                <span class="icon">📄</span> Informações de Emissão
+            </div>
+            <div class="info-card-content">
+                <p><strong>Data:</strong> {{ generation_date }}</p>
+                <p><strong>Hora:</strong> {{ generation_time }}</p>
+                <p><strong>Emitido por:</strong> {{ user_name }}</p>
+                {% if user_email %}
+                <p><strong>E-mail:</strong> {{ user_email }}</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- CONTENT SECTIONS -->
+{% for section in sections %}
+    {% if section == 'overview' and overview %}
+        {% include "reports/sections/overview.html" %}
+    {% endif %}
+    
+    {% if section == 'headcount' and headcount %}
+        {% include "reports/sections/headcount.html" %}
+    {% endif %}
+    
+    {% if section == 'turnover' and turnover %}
+        {% include "reports/sections/turnover.html" %}
+    {% endif %}
+    
+    {% if section == 'demographics' and demographics %}
+        {% include "reports/sections/demographics.html" %}
+    {% endif %}
+    
+    {% if section == 'tenure' and tenure %}
+        {% include "reports/sections/tenure.html" %}
+    {% endif %}
+    
+    {% if section == 'leaves' and leaves %}
+        {% include "reports/sections/leaves.html" %}
+    {% endif %}
+    
+    {% if section == 'payroll' and payroll %}
+        {% include "reports/sections/payroll.html" %}
+    {% endif %}
+{% endfor %}
+
+<!-- FOOTER -->
+<div class="footer">
+    <strong>Nexo RH</strong> - Sistema de Gestão de Recursos Humanos<br>
+    Este relatório foi gerado automaticamente. Os dados apresentados são baseados nas informações cadastradas no sistema.
+</div>
+{% endblock %}
