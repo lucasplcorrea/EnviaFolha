@@ -112,3 +112,6 @@ docker-compose.override.yml
 data/
 *.sh
 *.ps1
+
+/MDs/*
+
