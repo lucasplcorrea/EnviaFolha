@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { UserGroupIcon, UserPlusIcon, UserMinusIcon, ChartBarIcon, CalendarDaysIcon, CalendarIcon } from '@heroicons/react/24/outline';
+import { UserGroupIcon, UserPlusIcon, UserMinusIcon, ChartBarIcon, CalendarDaysIcon, CalendarIcon, ClockIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import ExportPDFButton from '../../components/ExportPDFButton';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
@@ -145,11 +145,23 @@ function Turnover() {
       // Taxa de turnover acumulada: média das taxas mensais
       const avgTurnoverRate = data.reduce((sum, m) => sum + (m.turnover_rate || 0), 0) / data.length;
       
+      // Média de tempo de permanência mensal (ponderada pelas demissões)
+      let sumTenureMonths = 0;
+      let totalValidTerminationsForTenure = 0;
+      data.forEach(m => {
+        if (m.terminations > 0 && m.avg_tenure_months) {
+          sumTenureMonths += (m.avg_tenure_months * m.terminations);
+          totalValidTerminationsForTenure += m.terminations;
+        }
+      });
+      const avgTenure = totalValidTerminationsForTenure > 0 ? (sumTenureMonths / totalValidTerminationsForTenure) : 0;
+      
       return {
         turnover_rate: avgTurnoverRate,
         admissions: totalAdmissions,
         terminations: totalTerminations,
         avg_headcount: avgHeadcount,
+        avg_tenure_months: avgTenure,
         months: data.length
       };
     };
@@ -175,6 +187,7 @@ function Turnover() {
         admissions: monthData.admissions,
         terminations: monthData.terminations,
         avg_headcount: monthData.avg_headcount,
+        avg_tenure_months: monthData.avg_tenure_months,
         months: 1
       } : null,
       sixMonths: calculatePeriodMetrics(sixMonthsData),
@@ -307,7 +320,7 @@ function Turnover() {
               <CalendarIcon className="h-5 w-5 mr-2 text-gray-600" />
               Mês Selecionado ({turnoverData.evolution?.[turnoverData.evolution.length - 1]?.month_name || '-'})
             </h2>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <div className="bg-white shadow rounded-lg p-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -355,6 +368,22 @@ function Turnover() {
                   <UserGroupIcon className="h-8 w-8 text-gray-600" />
                 </div>
               </div>
+
+              <div className="bg-white shadow rounded-lg p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-medium text-gray-500">Tempo Médio Perm.</p>
+                    <p className="text-xl font-bold text-indigo-600 mt-1">
+                      {periodMetrics.month?.avg_tenure_months > 0 ? 
+                        (periodMetrics.month.avg_tenure_months >= 12 
+                          ? `${(periodMetrics.month.avg_tenure_months / 12).toFixed(1)} anos` 
+                          : `${periodMetrics.month.avg_tenure_months.toFixed(1)} meses`)
+                        : (periodMetrics.month?.terminations > 0 ? 'Dado Indisp.' : '-')}
+                    </p>
+                  </div>
+                  <ClockIcon className="h-8 w-8 text-indigo-600" />
+                </div>
+              </div>
             </div>
           </div>
           
@@ -386,6 +415,10 @@ function Turnover() {
                       <span className="text-xs text-gray-600">HC Médio</span>
                       <span className="text-sm font-medium text-gray-700">{Math.round(periodMetrics.sixMonths.avg_headcount)}</span>
                     </div>
+                    <div className="flex justify-between">
+                      <span className="text-xs text-gray-600">Tempo Casa</span>
+                      <span className="text-sm font-medium text-gray-700">{periodMetrics.sixMonths.avg_tenure_months ? (periodMetrics.sixMonths.avg_tenure_months >= 12 ? `${(periodMetrics.sixMonths.avg_tenure_months/12).toFixed(1)} a` : `${periodMetrics.sixMonths.avg_tenure_months.toFixed(1)} m`) : '-'}</span>
+                    </div>
                   </div>
                 ) : (
                   <p className="text-xs text-gray-400">Dados insuficientes</p>
@@ -412,6 +445,10 @@ function Turnover() {
                     <div className="flex justify-between pt-1 border-t border-green-200">
                       <span className="text-xs text-gray-600">HC Médio</span>
                       <span className="text-sm font-medium text-gray-700">{Math.round(periodMetrics.year.avg_headcount)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-xs text-gray-600">Tempo Casa</span>
+                      <span className="text-sm font-medium text-gray-700">{periodMetrics.year.avg_tenure_months ? (periodMetrics.year.avg_tenure_months >= 12 ? `${(periodMetrics.year.avg_tenure_months/12).toFixed(1)} a` : `${periodMetrics.year.avg_tenure_months.toFixed(1)} m`) : '-'}</span>
                     </div>
                   </div>
                 ) : (
@@ -440,6 +477,10 @@ function Turnover() {
                       <span className="text-xs text-gray-600">HC Médio</span>
                       <span className="text-sm font-medium text-gray-700">{Math.round(periodMetrics.eighteenMonths.avg_headcount)}</span>
                     </div>
+                    <div className="flex justify-between">
+                      <span className="text-xs text-gray-600">Tempo Casa</span>
+                      <span className="text-sm font-medium text-gray-700">{periodMetrics.eighteenMonths.avg_tenure_months ? (periodMetrics.eighteenMonths.avg_tenure_months >= 12 ? `${(periodMetrics.eighteenMonths.avg_tenure_months/12).toFixed(1)} a` : `${periodMetrics.eighteenMonths.avg_tenure_months.toFixed(1)} m`) : '-'}</span>
+                    </div>
                   </div>
                 ) : (
                   <p className="text-xs text-gray-400">Dados insuficientes</p>
@@ -466,6 +507,10 @@ function Turnover() {
                     <div className="flex justify-between pt-1 border-t border-orange-200">
                       <span className="text-xs text-gray-600">HC Médio</span>
                       <span className="text-sm font-medium text-gray-700">{Math.round(periodMetrics.twentyFourMonths.avg_headcount)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-xs text-gray-600">Tempo Casa</span>
+                      <span className="text-sm font-medium text-gray-700">{periodMetrics.twentyFourMonths.avg_tenure_months ? (periodMetrics.twentyFourMonths.avg_tenure_months >= 12 ? `${(periodMetrics.twentyFourMonths.avg_tenure_months/12).toFixed(1)} a` : `${periodMetrics.twentyFourMonths.avg_tenure_months.toFixed(1)} m`) : '-'}</span>
                     </div>
                   </div>
                 ) : (
@@ -508,6 +553,7 @@ function Turnover() {
                       <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Admissões</th>
                       <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Desligamentos</th>
                       <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Headcount Médio</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Tempo de Casa</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
@@ -525,6 +571,9 @@ function Turnover() {
                         </td>
                         <td className="px-4 py-3 text-sm text-right text-gray-700">
                           {Math.round(item.avg_headcount)}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-right text-indigo-600 font-medium">
+                          {item.avg_tenure_months > 0 ? (item.avg_tenure_months >= 12 ? `${(item.avg_tenure_months/12).toFixed(1)} anos` : `${item.avg_tenure_months.toFixed(1)} meses`) : (item.terminations > 0 ? 'Indisp.' : '-')}
                         </td>
                       </tr>
                     ))}

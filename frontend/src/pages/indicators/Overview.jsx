@@ -244,7 +244,7 @@ const Overview = () => {
           data?.employee_variation
         )}
         {renderMetricCard(
-          'Custo Total (Salário Líquido)',
+          'Salário Líquido',
           formatCurrency(data?.total_payroll_cost || 0),
           CurrencyDollarIcon,
           'green',
@@ -355,7 +355,7 @@ const Overview = () => {
           <div className="p-4 rounded-lg bg-blue-50 border border-blue-200">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-blue-600 font-medium">Saldo Líquido</p>
+                <p className="text-sm text-blue-600 font-medium">Variação de Efetivo</p>
                 <p className={`text-3xl font-bold mt-2 ${
                   (data?.admissions || 0) - (data?.terminations || 0) >= 0 ? 'text-blue-700' : 'text-red-700'
                 }`}>

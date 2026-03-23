@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { UserGroupIcon, ChartBarIcon, CurrencyDollarIcon, ArrowTrendingUpIcon, BuildingOfficeIcon } from '@heroicons/react/24/outline';
+import { UserGroupIcon, ChartBarIcon, CurrencyDollarIcon, ArrowTrendingUpIcon, ArrowTrendingDownIcon, BuildingOfficeIcon } from '@heroicons/react/24/outline';
+import { Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart, Area } from 'recharts';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
 import ExportPDFButton from '../../components/ExportPDFButton';
+
+const COLORS = ['#4f46e5', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1'];
 
 export default function Headcount() {
   const [loading, setLoading] = useState(false);
@@ -97,7 +100,8 @@ export default function Headcount() {
       blue: 'bg-blue-500',
       green: 'bg-green-500',
       yellow: 'bg-yellow-500',
-      indigo: 'bg-indigo-500'
+      indigo: 'bg-indigo-500',
+      red: 'bg-red-500'
     };
 
     return (
@@ -197,65 +201,104 @@ export default function Headcount() {
 
       {data && (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
             {renderMetricCard('Headcount Atual', data.current?.headcount || 0, UserGroupIcon, 'blue', data.current?.variation_vs_previous)}
-            {renderMetricCard('Custo Total (Salário Líquido)', formatCurrency(data.current?.total_cost || 0), CurrencyDollarIcon, 'green')}
-            {renderMetricCard('Custo Médio por Colaborador', formatCurrency(data.current?.avg_cost_per_employee || 0), ChartBarIcon, 'indigo')}
-            {renderMetricCard('Setor com Mais Colaboradores', data.top_divisions?.[0]?.division || 'N/A', ArrowTrendingUpIcon, 'yellow')}
+            {renderMetricCard('Líquido Médio por Colaborador', formatCurrency(data.current?.avg_cost_per_employee || 0), ChartBarIcon, 'indigo')}
+            {renderMetricCard('Maior Setor', data.top_divisions?.[0]?.division || 'N/A', BuildingOfficeIcon, 'yellow')}
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {renderMetricCard('Total de Proventos', formatCurrency(data.current?.total_earnings || 0), ArrowTrendingUpIcon, 'blue')}
+            {renderMetricCard('Total de Descontos', formatCurrency(data.current?.total_deductions || 0), ArrowTrendingDownIcon, 'red')}
+            {renderMetricCard('Total Líquido', formatCurrency(data.current?.total_cost || 0), CurrencyDollarIcon, 'green')}
           </div>
 
           {data.evolution && data.evolution.length > 0 && (
             <div className="bg-white rounded-lg shadow-md p-6">
               <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
                 <ChartBarIcon className="h-6 w-6 mr-2 text-indigo-600" />
-                Evolução do Headcount (Últimos {monthsRange} meses)
+                Evolução (Últimos {monthsRange} meses)
               </h3>
-              <div className="space-y-2">
-                {[...data.evolution].reverse().map((item, idx) => (
-                  <div key={idx} className="flex items-center justify-between py-2 border-b">
-                    <span className="font-medium text-gray-700">{item.month_name}</span>
-                    <div className="flex items-center space-x-4">
-                      <span className="text-indigo-600 font-bold">{item.headcount} colaboradores</span>
-                      <span className="text-gray-600">{formatCurrency(item.total_cost)}</span>
-                      <span className="text-sm text-gray-500">{formatCurrency(item.avg_cost_per_employee)}/pessoa</span>
-                    </div>
-                  </div>
-                ))}
+              <div className="h-80 mt-4">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={data.evolution || []} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                    <XAxis dataKey="month_name" axisLine={false} tickLine={false} />
+                    <YAxis yAxisId="left" axisLine={false} tickLine={false} tickFormatter={(value) => new Intl.NumberFormat('pt-BR', { notation: 'compact', compactDisplay: 'short', style: 'currency', currency: 'BRL' }).format(value)} />
+                    <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} />
+                    <Tooltip 
+                      formatter={(value, name) => {
+                        if (name === 'Colaboradores') return [value, name];
+                        return [formatCurrency(value), name];
+                      }}
+                      labelStyle={{ color: '#374151', fontWeight: 'bold' }}
+                    />
+                    <Legend />
+                    <Line yAxisId="right" type="monotone" dataKey="headcount" name="Colaboradores" stroke="#f59e0b" strokeWidth={3} dot={{ r: 4 }} />
+                    <Area yAxisId="left" type="monotone" dataKey="total_earnings" name="Total Proventos" fill="#10b981" stroke="#10b981" fillOpacity={0.1} />
+                    <Line yAxisId="left" type="monotone" dataKey="total_deductions" name="Total Descontos" stroke="#ef4444" strokeWidth={2} />
+                    <Area yAxisId="left" type="monotone" dataKey="total_cost" name="Total Líquido" fill="#4f46e5" stroke="#4f46e5" fillOpacity={0.1} />
+                  </ComposedChart>
+                </ResponsiveContainer>
               </div>
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {data.by_company && data.by_company.length > 0 && (
               <div className="bg-white rounded-lg shadow-md p-6">
                 <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
                   <BuildingOfficeIcon className="h-6 w-6 mr-2 text-indigo-600" />
                   Distribuição por Empresa
                 </h3>
-                <div className="space-y-3">
-                  {data.by_company.map((comp, idx) => (
-                    <div key={idx} className="flex justify-between items-center">
-                      <span className="font-medium text-gray-700">{comp.company === '0060' ? 'Empreendimentos' : 'Infraestrutura'}</span>
-                      <div className="text-right">
-                        <div className="text-indigo-600 font-bold">{comp.headcount} colaboradores</div>
-                        <div className="text-sm text-gray-600">{formatCurrency(comp.total_cost)}</div>
-                      </div>
-                    </div>
-                  ))}
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={data.by_company.map(c => ({
+                          name: c.company === '0060' ? 'Empreendimentos' : 'Infraestrutura',
+                          value: c.headcount
+                        }))}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={80}
+                        paddingAngle={5}
+                        dataKey="value"
+                      >
+                        {data.by_company.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value) => [`${value} colaboradores`, 'Headcount']} />
+                      <Legend verticalAlign="bottom" height={36} />
+                    </PieChart>
+                  </ResponsiveContainer>
                 </div>
               </div>
             )}
 
             {data.top_divisions && data.top_divisions.length > 0 && (
-              <div className="bg-white rounded-lg shadow-md p-6">
-                <h3 className="text-lg font-semibold text-gray-800 mb-4">Top 10 Setores</h3>
-                <div className="space-y-2">
-                  {data.top_divisions.map((div, idx) => (
-                    <div key={idx} className="flex justify-between items-center py-2 border-b">
-                      <span className="text-gray-700">{div.division}</span>
-                      <span className="font-bold text-indigo-600">{div.count}</span>
-                    </div>
-                  ))}
+              <div className="bg-white rounded-lg shadow-md p-6 lg:col-span-2">
+                <h3 className="text-lg font-semibold text-gray-800 mb-4">Top Setores</h3>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      layout="vertical"
+                      data={data.top_divisions.slice(0, 5).reverse()}
+                      margin={{ top: 5, right: 30, left: 60, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
+                      <XAxis type="number" />
+                      <YAxis dataKey="division" type="category" width={160} tick={{fontSize: 12}} />
+                      <Tooltip formatter={(value) => [value, 'Colaboradores']} />
+                      <Bar dataKey="count" fill="#6366f1" radius={[0, 4, 4, 0]}>
+                        {data.top_divisions.slice(0, 5).reverse().map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
               </div>
             )}
@@ -264,13 +307,20 @@ export default function Headcount() {
           {data.top_positions && data.top_positions.length > 0 && (
             <div className="bg-white rounded-lg shadow-md p-6">
               <h3 className="text-lg font-semibold text-gray-800 mb-4">Top 10 Cargos</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {data.top_positions.map((pos, idx) => (
-                  <div key={idx} className="flex justify-between items-center py-2 border-b">
-                    <span className="text-gray-700">{pos.position}</span>
-                    <span className="font-bold text-indigo-600">{pos.count}</span>
-                  </div>
-                ))}
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      layout="vertical"
+                      data={data.top_positions.slice(0, 10).reverse()}
+                      margin={{ top: 5, right: 30, left: 60, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
+                      <XAxis type="number" />
+                      <YAxis dataKey="position" type="category" width={180} tick={{fontSize: 12}} />
+                      <Tooltip formatter={(value) => [value, 'Colaboradores']} />
+                      <Bar dataKey="count" fill="#10b981" radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
               </div>
             </div>
           )}

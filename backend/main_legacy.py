@@ -5686,6 +5686,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                         'month_name': f"{month_names_pt[p_month-1]}/{str(p_year)[2:]}",
                         'headcount': metrics['headcount'],
                         'total_cost': metrics['total_cost'],
+                        'total_earnings': metrics.get('total_earnings', 0.0),
+                        'total_deductions': metrics.get('total_deductions', 0.0),
                         'avg_cost_per_employee': metrics['avg_cost_per_employee']
                     })
                 
@@ -5712,6 +5714,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                         'headcount': current_metrics['headcount'],
                         'total_cost': current_metrics['total_cost'],
                         'avg_cost_per_employee': current_metrics['avg_cost_per_employee'],
+                        'total_earnings': current_metrics['total_earnings'],
+                        'total_deductions': current_metrics['total_deductions'],
                         'variation_vs_previous': current_metrics['variation_vs_previous']
                     },
                     'evolution': evolution_data,
@@ -5784,6 +5788,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         
         headcount = len(unique_employee_ids)
         total_cost = sum([Decimal(str(r.net_salary or 0)) for r in payroll_records])
+        total_earnings = sum([Decimal(str(r.gross_salary or 0)) for r in payroll_records])
+        total_deductions = total_earnings - total_cost
         avg_cost = float(total_cost / headcount) if headcount > 0 else 0.0
         
         # Calcular variação vs mês anterior
@@ -5839,6 +5845,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             'headcount': headcount,
             'total_cost': float(total_cost),
             'avg_cost_per_employee': avg_cost,
+            'total_earnings': float(total_earnings),
+            'total_deductions': float(total_deductions),
             'variation_vs_previous': float(variation) if variation is not None else None,
             'by_company': by_company,
             'top_divisions': top_divisions
@@ -5984,7 +5992,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                         'turnover_rate': metrics['turnover_rate'],
                         'admissions': metrics['admissions'],
                         'terminations': metrics['terminations'],
-                        'avg_headcount': metrics['avg_headcount']
+                        'avg_headcount': metrics['avg_headcount'],
+                        'avg_tenure_months': metrics.get('avg_tenure_months', 0.0)
                     })
                 
                 # DISTRIBUIÇÃO POR EMPRESA E SETORES - DESABILITADO POR PERFORMANCE
@@ -6005,7 +6014,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                         'turnover_rate': current_metrics['turnover_rate'],
                         'admissions': current_metrics['admissions'],
                         'terminations': current_metrics['terminations'],
-                        'avg_headcount': current_metrics['avg_headcount']
+                        'avg_headcount': current_metrics['avg_headcount'],
+                        'avg_tenure_months': current_metrics.get('avg_tenure_months', 0.0)
                     },
                     'evolution': evolution_data,
                     'by_company': by_company,
@@ -6094,7 +6104,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             Employee.admission_date >= period_start,
             Employee.admission_date < period_end
         )
-        terminations_query = db.query(func.count(Employee.id)).filter(
+        terminations_query = db.query(Employee.admission_date, Employee.termination_date).filter(
             Employee.termination_date >= period_start,
             Employee.termination_date < period_end
         )
@@ -6108,7 +6118,19 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             terminations_query = terminations_query.filter(Employee.id.in_(employee_ids_current))
         
         admissions = admissions_query.scalar() or 0
-        terminations = terminations_query.scalar() or 0
+        terminated_empes = terminations_query.all()
+        terminations = len(terminated_empes)
+        
+        total_tenure_days = 0
+        valid_tenure_count = 0
+        for adm_date, term_date in terminated_empes:
+            if adm_date and term_date:
+                total_tenure_days += (term_date - adm_date).days
+                valid_tenure_count += 1
+                
+        avg_tenure_months = 0.0
+        if valid_tenure_count > 0:
+            avg_tenure_months = (total_tenure_days / valid_tenure_count) / 30.416
         
         # Taxa de turnover
         turnover_rate = 0.0
@@ -6120,6 +6142,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             'admissions': admissions,
             'terminations': terminations,
             'avg_headcount': round(avg_headcount, 1),
+            'avg_tenure_months': avg_tenure_months,
             'by_company': [],
             'top_divisions_turnover': []
         }
