@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { ComposedChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import toast from 'react-hot-toast';
 import ExportPDFButton from '../../components/ExportPDFButton';
 
@@ -17,12 +17,26 @@ const Leaves = () => {
     month: '',
     company: 'all',
     division: 'all',
-    leave_type: 'all',
+    leave_type: [], // Array para multiplos filtros
     months_range: 6
   });
   
   const [filtersReady, setFiltersReady] = useState(false);
+  const [selectedLeaveRange, setSelectedLeaveRange] = useState(null);
+  const [isLeaveTypeDropdownOpen, setIsLeaveTypeDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
   const initialLoadDone = useRef(false);
+
+  // Fechar dropdown de checkboxes ao clicar fora
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsLeaveTypeDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   // Cores para gráficos - expandido para suportar mais tipos de afastamento
   const COLORS = ['#8B5CF6', '#EC4899', '#F59E0B', '#10B981', '#3B82F6', '#EF4444', '#6366F1', '#14B8A6', '#F97316', '#84CC16', '#A855F7', '#06B6D4'];
@@ -110,8 +124,11 @@ const Leaves = () => {
       if (selectedFilters.division !== 'all') {
         params.append('division', selectedFilters.division);
       }
-      if (selectedFilters.leave_type !== 'all') {
-        params.append('leave_type', selectedFilters.leave_type);
+      
+      if (selectedFilters.leave_type && selectedFilters.leave_type.length > 0) {
+        selectedFilters.leave_type.forEach(t => params.append('leave_type', t));
+      } else {
+        params.append('leave_type', 'all');
       }
       
       const response = await fetch(`http://localhost:8002/api/v1/indicators/leaves?${params}`, {
@@ -155,35 +172,53 @@ const Leaves = () => {
   };
 
   // Processar dados antes do early return (hooks não podem ser condicionais)
-  const current = data?.current || {};
-  const evolution = data?.evolution || [];
-  const { by_type = [], by_department = [] } = current;
+  const current = useMemo(() => data?.current || {}, [data]);
+  const evolution = useMemo(() => data?.evolution || [], [data]);
 
   // Agregar tipos de afastamento de todo o período de evolução
-  const aggregatedByType = React.useMemo(() => {
+  const aggregatedByType = useMemo(() => {
     if (!evolution || evolution.length === 0) return [];
     
     const typeMap = {};
     evolution.forEach(period => {
+      const periodName = formatMonth(period.year, period.month);
       (period.by_type || []).forEach(item => {
-        if (typeMap[item.type]) {
-          typeMap[item.type] += item.count;
-        } else {
-          typeMap[item.type] = item.count;
+        if (!typeMap[item.type]) {
+          typeMap[item.type] = { count: 0, employees: [] };
+        }
+        typeMap[item.type].count += item.count;
+        if (item.employees) {
+          typeMap[item.type].employees.push(...item.employees.map(e => ({...e, period: periodName})));
         }
       });
     });
     
-    const total = Object.values(typeMap).reduce((sum, count) => sum + count, 0);
-    return Object.entries(typeMap).map(([type, count]) => ({
+    const total = Object.values(typeMap).reduce((sum, data) => sum + data.count, 0);
+    return Object.entries(typeMap).map(([type, data]) => ({
       type,
-      count,
-      percentage: total > 0 ? parseFloat((count / total * 100).toFixed(1)) : 0
+      count: data.count,
+      percentage: total > 0 ? parseFloat((data.count / total * 100).toFixed(1)) : 0,
+      employees: data.employees.sort((a,b) => a.name.localeCompare(b.name))
     })).sort((a, b) => b.count - a.count);
   }, [evolution]);
 
+  const sortedDepartmentData = useMemo(() => {
+    if (!current?.by_department) return [];
+    return [...current.by_department].sort((a, b) => b.count - a.count);
+  }, [current]);
+
+  const sortedRoleData = useMemo(() => {
+    if (!current?.by_role) return [];
+    return current.by_role; // já vem ordenado e top 10 do back
+  }, [current]);
+
+  const sortedCompanyData = useMemo(() => {
+    if (!current?.by_company) return [];
+    return [...current.by_company].sort((a, b) => b.count - a.count);
+  }, [current]);
+
   // Preparar dados para gráfico de evolução
-  const chartData = React.useMemo(() => {
+  const chartData = useMemo(() => {
     if (!evolution || evolution.length === 0) return [];
     return evolution.map(item => ({
       period: formatMonth(item.year, item.month),
@@ -193,7 +228,7 @@ const Leaves = () => {
   }, [evolution]);
 
   // Preparar dados para gráfico de evolução por tipo
-  const chartDataByType = React.useMemo(() => {
+  const chartDataByType = useMemo(() => {
     if (!evolution || evolution.length === 0) return [];
     
     // Coletar todos os tipos únicos
@@ -295,18 +330,60 @@ const Leaves = () => {
             </select>
           </div>
 
-          <div>
+          <div ref={dropdownRef} className="relative">
             <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Afastamento</label>
-            <select
-              value={selectedFilters.leave_type}
-              onChange={(e) => handleFilterChange('leave_type', e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            <div 
+              className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white cursor-pointer flex justify-between items-center"
+              onClick={() => setIsLeaveTypeDropdownOpen(!isLeaveTypeDropdownOpen)}
             >
-              <option value="all">Todos</option>
-              {filters.leaveTypes.map(t => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
+              <span className="truncate text-sm">
+                {selectedFilters.leave_type.length === 0 
+                  ? 'Todos' 
+                  : selectedFilters.leave_type.length === 1 
+                    ? selectedFilters.leave_type[0] 
+                    : `${selectedFilters.leave_type.length} selecionados`}
+              </span>
+              <span className="text-gray-400 text-xs">▼</span>
+            </div>
+            
+            {isLeaveTypeDropdownOpen && (
+              <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                <div 
+                  className="px-3 py-2 hover:bg-gray-50 flex items-center cursor-pointer border-b text-sm"
+                  onClick={() => handleFilterChange('leave_type', [])}
+                >
+                  <input 
+                    type="checkbox" 
+                    checked={selectedFilters.leave_type.length === 0}
+                    onChange={() => {}} 
+                    className="mr-2 h-4 w-4 text-purple-600 focus:ring-purple-500 rounded border-gray-300"
+                  />
+                  <span className={selectedFilters.leave_type.length === 0 ? "font-medium" : ""}>Selecionar Todos</span>
+                </div>
+                {filters.leaveTypes.map(t => (
+                  <div 
+                    key={t} 
+                    className="px-3 py-2 hover:bg-gray-50 flex items-center cursor-pointer text-sm"
+                    onClick={() => {
+                      const isSelected = selectedFilters.leave_type.includes(t);
+                      if (isSelected) {
+                        handleFilterChange('leave_type', selectedFilters.leave_type.filter(item => item !== t));
+                      } else {
+                        handleFilterChange('leave_type', [...selectedFilters.leave_type, t]);
+                      }
+                    }}
+                  >
+                    <input 
+                      type="checkbox" 
+                      checked={selectedFilters.leave_type.includes(t)}
+                      onChange={() => {}}
+                      className="mr-2 h-4 w-4 text-purple-600 focus:ring-purple-500 rounded border-gray-300"
+                    />
+                    <span className="truncate">{t}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div>
@@ -368,36 +445,24 @@ const Leaves = () => {
         </div>
       </div>
 
-      {/* Gráficos de Evolução */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {/* Gráfico de Evolução Consolidado */}
+      {chartData && chartData.length > 0 && (
         <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">📈 Evolução de Afastamentos</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="period" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Line type="monotone" dataKey="afastados" stroke="#8B5CF6" strokeWidth={2} name="Total Afastados" />
-            </LineChart>
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">📈 Evolução Mensal (Afastados vs. Taxa)</h3>
+          <ResponsiveContainer width="100%" height={380}>
+            <ComposedChart data={chartData} margin={{ top: 20, right: 30, left: 0, bottom: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+              <XAxis dataKey="period" axisLine={false} tickLine={false} tick={{fill: '#6b7280', fontSize: 11}} />
+              <YAxis yAxisId="left" axisLine={false} tickLine={false} tick={{fill: '#6b7280', fontSize: 11}} />
+              <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} tick={{fill: '#6b7280', fontSize: 11}} tickFormatter={(val) => `${val}%`} />
+              <Tooltip cursor={{fill: 'transparent'}} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }} />
+              <Legend verticalAlign="top" height={36} />
+              <Area yAxisId="left" type="monotone" dataKey="afastados" fill="#8B5CF6" stroke="#8B5CF6" fillOpacity={0.15} strokeWidth={2} name="Total Afastados" />
+              <Line yAxisId="right" type="monotone" dataKey="taxa" stroke="#EC4899" strokeWidth={3} name="Taxa de Absenteísmo (%)" dot={{r: 4, fill: '#EC4899'}} />
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
-
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">📊 Evolução da Taxa de Absenteísmo</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="period" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Line type="monotone" dataKey="taxa" stroke="#EC4899" strokeWidth={2} name="Taxa (%)" />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+      )}
 
       {/* Evolução por Tipo de Afastamento */}
       {chartDataByType && chartDataByType.length > 0 && aggregatedByType.length > 0 && (
@@ -425,78 +490,244 @@ const Leaves = () => {
         </div>
       )}
 
-      {/* Afastamentos por Tipo */}
-      {aggregatedByType && aggregatedByType.length > 0 && (
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">📋 Afastamentos por Tipo (Período Completo)</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <ResponsiveContainer width="100%" height={350}>
-                <PieChart>
-                  <Pie
-                    data={aggregatedByType}
-                    dataKey="count"
-                    nameKey="type"
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={110}
-                    label={(entry) => `${entry.percentage}%`}
-                    labelLine={true}
+      {/* Grid para Tipo e Empresa */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-6">
+        {/* Afastamentos por Tipo (2 colunas no XL) */}
+        {aggregatedByType && aggregatedByType.length > 0 && (
+          <div className="bg-white rounded-lg shadow p-6 xl:col-span-2">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">📋 Carga de Afastamentos por Tipo (Período Selecionado)</h3>
+            <p className="text-sm text-gray-500 mb-6">Clique nas categorias para detalhar a lista de colaboradores afastados.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={aggregatedByType}
+                      dataKey="count"
+                      nameKey="type"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={90}
+                      label={(entry) => `${entry.percentage}%`}
+                      labelLine={true}
+                    >
+                      {aggregatedByType.map((entry, index) => (
+                        <Cell 
+                          key={`cell-${index}`} 
+                          fill={COLORS[index % COLORS.length]} 
+                          className="cursor-pointer hover:opacity-80 transition-opacity"
+                          onClick={() => setSelectedLeaveRange({range: entry.type, count: entry.count, employees: entry.employees})}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value, name, props) => [`${value} afastamento(s) (${props.payload.percentage}%)`, props.payload.type]} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="space-y-3 overflow-y-auto max-h-[300px] pr-2">
+                {aggregatedByType.map((item, idx) => (
+                  <div 
+                    key={idx} 
+                    className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-md cursor-pointer transition-colors"
+                    onClick={() => setSelectedLeaveRange({range: item.type, count: item.count, employees: item.employees})}
                   >
-                    {aggregatedByType.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(value, name, props) => [`${value} (${props.payload.percentage}%)`, props.payload.type]} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="space-y-3">
-              {aggregatedByType.map((item, idx) => (
-                <div key={idx} className="flex items-center justify-between">
-                  <div className="flex items-center">
-                    <div
-                      className="w-4 h-4 rounded mr-2"
-                      style={{ backgroundColor: COLORS[idx % COLORS.length] }}
-                    ></div>
-                    <span className="text-sm font-medium text-gray-700">{item.type}</span>
+                    <div className="flex items-center">
+                      <div
+                        className="w-4 h-4 rounded mr-2"
+                        style={{ backgroundColor: COLORS[idx % COLORS.length] }}
+                      ></div>
+                      <span className="text-sm font-medium text-gray-700">{item.type}</span>
+                    </div>
+                    <div className="text-right flex items-center gap-2">
+                      <span className="text-sm font-bold text-gray-900">{item.count}</span>
+                      <span className="text-xs text-gray-500 w-12 text-right">({item.percentage}%)</span>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <span className="text-sm font-bold text-gray-900">{item.count}</span>
-                    <span className="text-xs text-gray-500 ml-1">({item.percentage}%)</span>
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Afastamentos por Departamento */}
-      {by_department && by_department.length > 0 && (
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">🏢 Afastamentos por Departamento</h3>
-          <div className="space-y-3">
-            {by_department.map((dept, idx) => {
-              const maxCount = Math.max(...by_department.map(d => d.count));
-              const percentage = maxCount > 0 ? (dept.count / maxCount) * 100 : 0;
-              
-              return (
-                <div key={idx}>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span className="font-medium text-gray-700">{dept.department}</span>
-                    <span className="text-gray-600">{dept.count} ({dept.percentage}%)</span>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-4">
-                    <div 
-                      className="bg-purple-500 h-4 rounded-full transition-all duration-500"
-                      style={{ width: `${percentage}%` }}
-                    ></div>
-                  </div>
-                </div>
-              );
-            })}
+        {/* Afastamentos por Empresa (1 coluna no XL) */}
+        {sortedCompanyData && sortedCompanyData.length > 0 && (
+          <div className="bg-white rounded-lg shadow p-6 xl:col-span-1">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">🏢 Afastamentos por Empresa</h3>
+            <p className="text-sm text-gray-500 mb-6">Distribuição entre matriz e filiais</p>
+            <ResponsiveContainer width="100%" height={260}>
+              <PieChart>
+                <Pie
+                  data={sortedCompanyData}
+                  dataKey="count"
+                  nameKey="company"
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={90}
+                  innerRadius={60}
+                  label={(entry) => `${entry.percentage}%`}
+                  labelLine={true}
+                >
+                  {sortedCompanyData.map((entry, index) => {
+                    const companyColors = ['#F59E0B', '#3B82F6', '#10B981', '#8B5CF6'];
+                    return (
+                      <Cell 
+                        key={`cell-comp-${index}`} 
+                        fill={companyColors[index % companyColors.length]} 
+                        className="cursor-pointer hover:opacity-80 transition-opacity"
+                        onClick={() => setSelectedLeaveRange({range: entry.company, count: entry.count, employees: entry.employees})}
+                      />
+                    );
+                  })}
+                </Pie>
+                <Tooltip formatter={(value, name, props) => [`${value} afastamento(s)`, props.payload.company]} />
+                <Legend verticalAlign="bottom" height={36} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
+      {/* Setores e Cargos Lado a Lado */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Afastamentos por Departamento */}
+        {sortedDepartmentData && sortedDepartmentData.length > 0 && (
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="mb-6">
+              <h3 className="text-lg font-semibold text-gray-900">
+                🏢 Afastamentos por Departamento
+              </h3>
+              <p className="text-sm text-gray-500">Setores com maior carga de incidência</p>
+            </div>
+            
+            <ResponsiveContainer width="100%" height={450}>
+              <BarChart
+                data={sortedDepartmentData}
+                margin={{ top: 20, right: 30, left: 0, bottom: 80 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                <XAxis 
+                  dataKey="department" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fill: '#6b7280', fontSize: 10 }}
+                  angle={-45}
+                  textAnchor="end"
+                  height={80}
+                  interval={0}
+                />
+                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#6b7280', fontSize: 11 }} />
+                <Tooltip 
+                  cursor={{ fill: '#f9fafb' }} 
+                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
+                  formatter={(value) => [`${value} incidência(s)`, 'Volume']}
+                />
+                <Bar 
+                  dataKey="count" 
+                  radius={[4, 4, 0, 0]} 
+                  maxBarSize={40}
+                  onClick={(data) => setSelectedLeaveRange({range: data.department, count: data.count, employees: data.employees})}
+                  className="cursor-pointer"
+                >
+                  {sortedDepartmentData.map((entry, index) => {
+                    const colors = ['#8B5CF6', '#EC4899', '#F59E0B', '#10B981', '#3B82F6', '#06B6D4'];
+                    return <Cell key={`cell-dept-${index}`} fill={colors[index % colors.length]} />;
+                  })}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        {/* Afastamentos por Cargo */}
+        {sortedRoleData && sortedRoleData.length > 0 && (
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="mb-6">
+              <h3 className="text-lg font-semibold text-gray-900">
+                👔 Top 10 Cargos com Afastamento
+              </h3>
+              <p className="text-sm text-gray-500">Cargos hierárquicos com as maiores cargas</p>
+            </div>
+            
+            <ResponsiveContainer width="100%" height={450}>
+              <BarChart
+                data={sortedRoleData}
+                margin={{ top: 20, right: 30, left: 0, bottom: 80 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                <XAxis 
+                  dataKey="role" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fill: '#6b7280', fontSize: 10 }}
+                  angle={-45}
+                  textAnchor="end"
+                  height={80}
+                  interval={0}
+                />
+                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#6b7280', fontSize: 11 }} />
+                <Tooltip 
+                  cursor={{ fill: '#f9fafb' }} 
+                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
+                  formatter={(value) => [`${value} incidência(s)`, 'Volume']}
+                />
+                <Bar 
+                  dataKey="count" 
+                  radius={[4, 4, 0, 0]} 
+                  maxBarSize={40}
+                  onClick={(data) => setSelectedLeaveRange({range: data.role, count: data.count, employees: data.employees})}
+                  className="cursor-pointer"
+                >
+                  {sortedRoleData.map((entry, index) => {
+                    const colors = ['#F59E0B', '#3B82F6', '#8B5CF6', '#10B981', '#EC4899', '#06B6D4'];
+                    return <Cell key={`cell-role-${index}`} fill={colors[index % colors.length]} />;
+                  })}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
+      {/* Modal de Detalhamento Nominal */}
+      {selectedLeaveRange && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[80vh] flex flex-col">
+            <div className="p-4 border-b flex justify-between items-center bg-purple-50 rounded-t-lg">
+              <h3 className="text-lg font-bold text-purple-900">
+                Foco: {selectedLeaveRange.range} ({selectedLeaveRange.count} incidências)
+              </h3>
+              <button 
+                onClick={() => setSelectedLeaveRange(null)}
+                className="text-purple-500 hover:text-purple-700 font-bold text-xl"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1">
+              {selectedLeaveRange.employees && selectedLeaveRange.employees.length > 0 ? (
+                <ul className="divide-y divide-gray-100 border rounded-md">
+                  {selectedLeaveRange.employees.map((emp, i) => (
+                    <li key={i} className="py-3 px-3 flex flex-col hover:bg-gray-50 transition-colors">
+                      <span className="font-medium text-gray-900 text-sm">{emp.name}</span>
+                      <span className="text-xs text-gray-500 mt-1">
+                        {emp.department} • {emp.type} • {emp.days ? `${emp.days} dias` : 'Período aberto'}
+                        {emp.period && ` • ${emp.period}`}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-gray-500 italic text-sm text-center py-4">Nenhum colaborador rastreável.</p>
+              )}
+            </div>
+            <div className="p-4 border-t bg-gray-50 flex justify-end rounded-b-lg">
+              <button 
+                onClick={() => setSelectedLeaveRange(null)}
+                className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 transition-colors text-sm font-medium"
+              >
+                Fechar
+              </button>
+            </div>
           </div>
         </div>
       )}

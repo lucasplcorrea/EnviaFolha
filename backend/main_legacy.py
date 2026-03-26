@@ -6212,42 +6212,61 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         
         by_sex = by_sex_query.group_by(Employee.sex).all()
         
-        # Faixas etárias
-        age_ranges_query = db.query(
-            case(
-                (func.extract('year', func.age(Employee.birth_date)) < 25, '18-24'),
-                (func.extract('year', func.age(Employee.birth_date)) < 35, '25-34'),
-                (func.extract('year', func.age(Employee.birth_date)) < 45, '35-44'),
-                (func.extract('year', func.age(Employee.birth_date)) < 55, '45-54'),
-                else_='55+'
-            ).label('age_range'),
-            func.count(Employee.id).label('count')
-        ).filter(
+        # Faixas etárias com nomes na memória
+        from datetime import date
+        today = date.today()
+        
+        employees_age_query = db.query(Employee.name, Employee.birth_date, Employee.department).filter(
             Employee.id.in_(employee_ids),
             Employee.birth_date.isnot(None)
         )
-        
         if division != 'all':
-            age_ranges_query = age_ranges_query.filter(Employee.department == division)
+            employees_age_query = employees_age_query.filter(Employee.department == division)
+            
+        emps = employees_age_query.all()
         
-        age_ranges = age_ranges_query.group_by('age_range').all()
+        age_groups = {
+            '16-20': {'count': 0, 'employees': []},
+            '21-30': {'count': 0, 'employees': []},
+            '31-40': {'count': 0, 'employees': []},
+            '41-50': {'count': 0, 'employees': []},
+            '51-60': {'count': 0, 'employees': []},
+            '60+': {'count': 0, 'employees': []}
+        }
         
-        # Idade média
-        avg_age_query = db.query(
-            func.avg(func.extract('year', func.age(Employee.birth_date)))
-        ).filter(
-            Employee.id.in_(employee_ids),
-            Employee.birth_date.isnot(None)
-        )
+        total_age = 0
+        for name, bdate, department in emps:
+            age = today.year - bdate.year - ((today.month, today.day) < (bdate.month, bdate.day))
+            total_age += age
+            
+            if age <= 20: bucket = '16-20'
+            elif age <= 30: bucket = '21-30'
+            elif age <= 40: bucket = '31-40'
+            elif age <= 50: bucket = '41-50'
+            elif age <= 60: bucket = '51-60'
+            else: bucket = '60+'
+            
+            age_groups[bucket]['count'] += 1
+            age_groups[bucket]['employees'].append({
+                'name': name,
+                'age': age,
+                'department': department or 'Não informado'
+            })
+            
+        age_ranges = []
+        for k in ['16-20', '21-30', '31-40', '41-50', '51-60', '60+']:
+            if age_groups[k]['count'] > 0:
+                age_ranges.append({
+                    'range': k,
+                    'count': age_groups[k]['count'],
+                    'employees': sorted(age_groups[k]['employees'], key=lambda x: x['name'])
+                })
         
-        if division != 'all':
-            avg_age_query = avg_age_query.filter(Employee.department == division)
+        # O age_ranges acima já é formatado como array de dicts ordenado corretamente
+        sorted_age_ranges = age_ranges
         
-        avg_age = avg_age_query.scalar()
-        
-        # Ordenar faixas etárias
-        age_range_order = {'18-24': 1, '25-34': 2, '35-44': 3, '45-54': 4, '55+': 5}
-        sorted_age_ranges = sorted(age_ranges, key=lambda x: age_range_order.get(x[0], 99))
+        # Calcular a average age
+        avg_age = (total_age / len(emps)) if emps else 0
         
         # Extrair contagens por sexo
         male_count = 0
@@ -6266,7 +6285,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             'female_count': female_count,
             'total_employees': total_employees,
             'by_sex': [{'sex': s or 'Não informado', 'count': c} for s, c in by_sex],
-            'age_ranges': [{'range': r, 'count': c} for r, c in sorted_age_ranges]
+            'age_ranges': sorted_age_ranges
         }
     
     def handle_indicators_demographics(self):
@@ -6539,59 +6558,122 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         
         # Distribuição por tempo de casa
         # Calcular anos de tempo de casa corretamente usando subtração de datas
-        tenure_ranges_query = db.query(
-            case(
-                ((reference_date - Employee.admission_date) < 365, '0-1 ano'),
-                ((reference_date - Employee.admission_date) < 1095, '1-3 anos'),  # 365 * 3
-                ((reference_date - Employee.admission_date) < 1825, '3-5 anos'),  # 365 * 5
-                ((reference_date - Employee.admission_date) < 3650, '5-10 anos'), # 365 * 10
-                else_='10+ anos'
-            ).label('tenure_range'),
-            func.count(Employee.id).label('count')
-        ).filter(
+        employees_tenure_query = db.query(Employee.name, Employee.admission_date, Employee.department, Employee.position, Employee.sex).filter(
             Employee.id.in_(filtered_employee_ids),
             Employee.admission_date.isnot(None)
         )
+        emps = employees_tenure_query.all()
         
-        tenure_ranges = tenure_ranges_query.group_by('tenure_range').all()
+        tenure_groups = {
+            'Até 6 meses': {'count': 0, 'employees': []},
+            '6-12 meses': {'count': 0, 'employees': []},
+            '1-3 anos': {'count': 0, 'employees': []},
+            '3-5 anos': {'count': 0, 'employees': []},
+            '5-10 anos': {'count': 0, 'employees': []},
+            '10+ anos': {'count': 0, 'employees': []}
+        }
         
-        # Ordenar faixas de tenure
-        tenure_order = {'0-1 ano': 1, '1-3 anos': 2, '3-5 anos': 3, '5-10 anos': 4, '10+ anos': 5}
-        sorted_tenure_ranges = sorted(tenure_ranges, key=lambda x: tenure_order.get(x[0], 99))
+        dept_totals = {}
+        role_totals = {}
+        gender_totals = {'M': {'total_months': 0, 'count': 0}, 'F': {'total_months': 0, 'count': 0}}
         
-        # Tempo médio por departamento
-        avg_tenure_by_dept_query = db.query(
-            Employee.department,
-            func.avg(reference_date - Employee.admission_date).label('avg_days')
-        ).filter(
-            Employee.id.in_(filtered_employee_ids),
-            Employee.admission_date.isnot(None),
-            Employee.department.isnot(None)
-        )
-        
-        avg_tenure_by_dept = avg_tenure_by_dept_query.group_by(Employee.department).order_by(Employee.department).all()
-        
-        # Converter avg_days para meses para cada departamento
-        by_department_results = []
-        for dept_name, avg_days in avg_tenure_by_dept:
-            if avg_days:
-                if hasattr(avg_days, 'days'):
-                    total_days = avg_days.days
-                else:
-                    total_days = float(avg_days)
-                avg_months = int(round(total_days / 30.44))
+        for name, adm_date, dept, position, sex in emps:
+            days = (reference_date - adm_date).days
+            months = days / 30.44
+            
+            if months <= 6: bucket = 'Até 6 meses'
+            elif months <= 12: bucket = '6-12 meses'
+            elif days < 1095: bucket = '1-3 anos'
+            elif days < 1825: bucket = '3-5 anos'
+            elif days < 3650: bucket = '5-10 anos'
+            else: bucket = '10+ anos'
+            
+            # format tenure string for display
+            tenure_years_val = int(days / 365.25)
+            tenure_months_val = int(round(days / 30.44)) % 12
+            if tenure_years_val == 0 and tenure_months_val == 0:
+                tenure_str = '0 meses'
+            elif tenure_years_val == 0:
+                tenure_str = f"{tenure_months_val} {'mês' if tenure_months_val == 1 else 'meses'}"
+            elif tenure_months_val == 0:
+                tenure_str = f"{tenure_years_val} {'ano' if tenure_years_val == 1 else 'anos'}"
             else:
-                avg_months = 0
-            by_department_results.append({'department': dept_name, 'avg_months': avg_months})
+                tenure_str = f"{tenure_years_val}a {tenure_months_val}m"
+            
+            tenure_groups[bucket]['count'] += 1
+            tenure_groups[bucket]['employees'].append({
+                'name': name,
+                'tenure': tenure_str,
+                'department': dept or 'Não informado'
+            })
+            
+            # Acumular por departamento
+            d = dept or 'Não informado'
+            if d not in dept_totals:
+                dept_totals[d] = {'total_months': 0, 'count': 0}
+            dept_totals[d]['total_months'] += months
+            dept_totals[d]['count'] += 1
+            
+            # Acumular por cargo
+            r = position or 'Não informado'
+            if r not in role_totals:
+                role_totals[r] = {'total_months': 0, 'count': 0}
+            role_totals[r]['total_months'] += months
+            role_totals[r]['count'] += 1
+            
+            # Acumular por sexo
+            s = sex or 'Não informado'
+            if s in ['M', 'F']:
+                gender_totals[s]['total_months'] += months
+                gender_totals[s]['count'] += 1
+            
+        tenure_ranges = []
+        for k in ['Até 6 meses', '6-12 meses', '1-3 anos', '3-5 anos', '5-10 anos', '10+ anos']:
+            if tenure_groups[k]['count'] > 0:
+                tenure_ranges.append({
+                    'range': k,
+                    'count': tenure_groups[k]['count'],
+                    'employees': sorted(tenure_groups[k]['employees'], key=lambda x: x['name'])
+                })
         
-        total_employees = sum(c for _, c in tenure_ranges)
+        sorted_tenure_ranges = tenure_ranges
+        
+        # Consolidar Tempo médio por departamento
+        by_department_results = []
+        for d, totals in dept_totals.items():
+            if totals['count'] > 0:
+                avg_months = int(round(totals['total_months'] / totals['count']))
+                by_department_results.append({'department': d, 'avg_months': avg_months})
+        by_department_results.sort(key=lambda x: x['department'])
+        
+        # Consolidar Tempo médio por cargo (Top 10)
+        by_role_results = []
+        for r, totals in role_totals.items():
+            if totals['count'] > 0:
+                avg_months = int(round(totals['total_months'] / totals['count']))
+                by_role_results.append({'role': r, 'avg_months': avg_months})
+        # Ordenar os cargos com maior retenção e pegar top 10
+        by_role_results.sort(key=lambda x: x['avg_months'], reverse=True)
+        by_role_results = by_role_results[:10]
+        
+        # Consolidar Tempo médio por sexo
+        by_gender_results = {}
+        for s, totals in gender_totals.items():
+            if totals['count'] > 0:
+                by_gender_results[s] = int(round(totals['total_months'] / totals['count']))
+            else:
+                by_gender_results[s] = 0
+        
+        total_employees = len(emps)
         
         return {
             'average_tenure_years': int(round(avg_tenure_years)),
             'average_tenure_months': avg_tenure_months,
             'total_employees': total_employees,
-            'tenure_ranges': [{'range': r, 'count': int(c)} for r, c in sorted_tenure_ranges],
-            'by_department': by_department_results
+            'tenure_ranges': sorted_tenure_ranges,
+            'by_department': by_department_results,
+            'by_role': by_role_results,
+            'by_gender': by_gender_results
         }
     
     def handle_indicators_leaves(self):
@@ -6608,7 +6690,11 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             # Filtros
             company = query_params.get('company', [None])[0]
             division = query_params.get('division', [None])[0]
-            leave_type = query_params.get('leave_type', [None])[0]
+            
+            filter_leave_types = query_params.get('leave_type', [])
+            if len(filter_leave_types) == 1 and filter_leave_types[0] == 'all':
+                filter_leave_types = []
+            
             year = query_params.get('year', [None])[0]
             month = query_params.get('month', [None])[0]
             months_range = int(query_params.get('months_range', ['6'])[0])
@@ -6629,7 +6715,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 evolution = []
                 for i in range(months_range - 1, -1, -1):
                     period_date = reference_date - relativedelta(months=i)
-                    period_metrics = self._get_leaves_for_period(db, period_date, company, division, leave_type)
+                    period_metrics = self._get_leaves_for_period(db, period_date, company, division, filter_leave_types)
                     evolution.append(period_metrics)
                 
                 # Métricas do período atual
@@ -6674,50 +6760,19 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         
         total_employees = employees_query.count()
         
-        # Query base de afastamentos no período
-        # (afastamento começa antes ou durante o mês E termina depois ou durante o mês)
-        leaves_query = db.query(LeaveRecord).join(Employee).filter(
-            and_(
-                Employee.is_active == True,
-                LeaveRecord.start_date <= last_day,
-                LeaveRecord.end_date >= reference_date
-            )
-        )
-        
-        # Aplicar filtros
-        if company:
-            leaves_query = leaves_query.filter(Employee.company_code == company)
-        if division:
-            leaves_query = leaves_query.filter(Employee.department == division)
-        if leave_type:
-            leaves_query = leaves_query.filter(LeaveRecord.leave_type == leave_type)
-        
-        # Contar afastamentos únicos por colaborador no período
-        total_on_leave = db.query(func.count(func.distinct(LeaveRecord.employee_id))).join(Employee).filter(
-            and_(
-                Employee.is_active == True,
-                LeaveRecord.start_date <= last_day,
-                LeaveRecord.end_date >= reference_date
-            )
-        )
-        
-        if company:
-            total_on_leave = total_on_leave.filter(Employee.company_code == company)
-        if division:
-            total_on_leave = total_on_leave.filter(Employee.department == division)
-        if leave_type:
-            total_on_leave = total_on_leave.filter(LeaveRecord.leave_type == leave_type)
-        
-        total_on_leave = total_on_leave.scalar() or 0
-        
-        # Taxa de absenteísmo
-        absenteeism_rate = (total_on_leave / total_employees * 100) if total_employees > 0 else 0
-        
-        # Afastamentos por tipo
-        by_type_query = db.query(
+        # Query unificada para dados nominais de afastamento
+        base_query = db.query(
+            Employee.id.label('emp_id'),
+            Employee.name,
+            Employee.department,
+            Employee.position,
+            Employee.company_code,
+            Employee.unique_id,
             LeaveRecord.leave_type,
-            func.count(LeaveRecord.id).label('count')
-        ).join(Employee).filter(
+            LeaveRecord.days,
+            LeaveRecord.start_date,
+            LeaveRecord.end_date
+        ).join(LeaveRecord, LeaveRecord.employee_id == Employee.id).filter(
             and_(
                 Employee.is_active == True,
                 LeaveRecord.start_date <= last_day,
@@ -6725,92 +6780,131 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             )
         )
         
-        if company:
-            by_type_query = by_type_query.filter(Employee.company_code == company)
-        if division:
-            by_type_query = by_type_query.filter(Employee.department == division)
-        
-        by_type = by_type_query.group_by(LeaveRecord.leave_type).all()
-        
-        total_leaves = sum(count for _, count in by_type)
-        by_type_results = []
-        for type_name, count in by_type:
-            by_type_results.append({
-                'type': type_name if type_name else 'Não especificado',
-                'count': count,
-                'percentage': round((count / total_leaves * 100), 1) if total_leaves > 0 else 0
-            })
-        
-        # Duração média dos afastamentos (em dias) - usando campo days se disponível
-        avg_duration_query = db.query(
-            func.avg(LeaveRecord.days)
-        ).join(Employee).filter(
-            and_(
-                Employee.is_active == True,
-                LeaveRecord.start_date <= last_day,
-                LeaveRecord.end_date >= reference_date,
-                LeaveRecord.days.isnot(None)
-            )
-        )
-        
-        if company:
-            avg_duration_query = avg_duration_query.filter(Employee.company_code == company)
-        if division:
-            avg_duration_query = avg_duration_query.filter(Employee.department == division)
-        if leave_type:
-            avg_duration_query = avg_duration_query.filter(LeaveRecord.leave_type == leave_type)
-        
-        avg_duration = avg_duration_query.scalar()
-        
-        # Se days não estiver preenchido, calcular pela diferença de datas
-        if avg_duration is None:
-            avg_duration_query = db.query(
-                func.avg(LeaveRecord.end_date - LeaveRecord.start_date)
-            ).join(Employee).filter(
-                and_(
-                    Employee.is_active == True,
-                    LeaveRecord.start_date <= last_day,
-                    LeaveRecord.end_date >= reference_date
+        # Aplicar filtros (Usamos match em substring para suportar null codes que começam no unique_id)
+        if company and company != 'all':
+            base_query = base_query.filter(
+                or_(
+                    Employee.company_code == company,
+                    Employee.unique_id.like(f"{company}%")
                 )
             )
-            
-            if company:
-                avg_duration_query = avg_duration_query.filter(Employee.company_code == company)
-            if division:
-                avg_duration_query = avg_duration_query.filter(Employee.department == division)
-            if leave_type:
-                avg_duration_query = avg_duration_query.filter(LeaveRecord.leave_type == leave_type)
-            
-            avg_duration = avg_duration_query.scalar()
-        
-        # Afastamentos por departamento
-        by_department_query = db.query(
-            Employee.department,
-            func.count(LeaveRecord.id).label('count')
-        ).join(Employee).filter(
-            and_(
-                Employee.is_active == True,
-                LeaveRecord.start_date <= last_day,
-                LeaveRecord.end_date >= reference_date
-            )
-        )
-        
-        if company:
-            by_department_query = by_department_query.filter(Employee.company_code == company)
         if division:
-            by_department_query = by_department_query.filter(Employee.department == division)
-        if leave_type:
-            by_department_query = by_department_query.filter(LeaveRecord.leave_type == leave_type)
+            base_query = base_query.filter(Employee.department == division)
+        if leave_type and len(leave_type) > 0:
+            base_query = base_query.filter(LeaveRecord.leave_type.in_(leave_type))
+            
+        leaves_data = base_query.all()
         
-        by_department = by_department_query.group_by(Employee.department).all()
+        unique_employees = set()
+        by_type_dict = {}
+        by_department_dict = {}
+        by_role_dict = {}
+        by_company_dict = {}
+        total_duration = 0
+        valid_duration_records = 0
         
-        by_department_results = []
-        for dept, count in by_department:
-            by_department_results.append({
-                'department': dept if dept else 'Não especificado',
-                'count': count,
-                'percentage': round((count / total_leaves * 100), 1) if total_leaves > 0 else 0
+        for emp_id, name, dept, pos, comp_code, uniq_id, l_type, days_col, start_d, end_d in leaves_data:
+            unique_employees.add(emp_id)
+            
+            l_type = l_type or 'Não especificado'
+            dept = dept or 'Não especificado'
+            pos = pos or 'Não especificado'
+            
+            # TODO DEBUG
+            print(f"DEBUG LEAVES: name={name}, comp={comp_code}")
+            
+            comp_val = str(comp_code).strip() if comp_code else ""
+            if not comp_val and uniq_id and len(uniq_id) >= 4:
+                comp_val = uniq_id[:4]
+                
+            if comp_val in ['0059', '59']:
+                company_name = 'Infraestrutura'
+            elif comp_val in ['0060', '60']:
+                company_name = 'Empreendimentos'
+            else:
+                company_name = f"Matriz {comp_val}" if comp_val else 'Outra'
+            
+            calc_days = days_col if days_col is not None else (end_d - start_d).days if (end_d and start_d) else 0
+            
+            emp_obj = {
+                'name': name,
+                'department': dept,
+                'type': l_type,
+                'days': calc_days
+            }
+            
+            # Type aggregate
+            if l_type not in by_type_dict:
+                by_type_dict[l_type] = {'count': 0, 'employees': []}
+            by_type_dict[l_type]['count'] += 1
+            by_type_dict[l_type]['employees'].append(emp_obj)
+            
+            # Department aggregate
+            if dept not in by_department_dict:
+                by_department_dict[dept] = {'count': 0, 'employees': []}
+            by_department_dict[dept]['count'] += 1
+            by_department_dict[dept]['employees'].append(emp_obj)
+            
+            # Role aggregate
+            if pos not in by_role_dict:
+                by_role_dict[pos] = {'count': 0, 'employees': []}
+            by_role_dict[pos]['count'] += 1
+            by_role_dict[pos]['employees'].append(emp_obj)
+            
+            # Company aggregate
+            if company_name not in by_company_dict:
+                by_company_dict[company_name] = {'count': 0, 'employees': []}
+            by_company_dict[company_name]['count'] += 1
+            by_company_dict[company_name]['employees'].append(emp_obj)
+            
+            # Duration avg
+            total_duration += float(calc_days)
+            valid_duration_records += 1
+                
+        total_on_leave = len(unique_employees)
+        absenteeism_rate = (total_on_leave / total_employees * 100) if total_employees > 0 else 0
+        avg_duration = (total_duration / valid_duration_records) if valid_duration_records > 0 else 0
+        total_leaves = len(leaves_data)
+        
+        by_type_results = []
+        for t, data in by_type_dict.items():
+            by_type_results.append({
+                'type': t,
+                'count': data['count'],
+                'percentage': round((data['count'] / total_leaves * 100), 1) if total_leaves > 0 else 0,
+                'employees': sorted(data['employees'], key=lambda x: x['name'])
             })
+            
+        by_department_results = []
+        for d, data in by_department_dict.items():
+            by_department_results.append({
+                'department': d,
+                'count': data['count'],
+                'percentage': round((data['count'] / total_leaves * 100), 1) if total_leaves > 0 else 0,
+                'employees': sorted(data['employees'], key=lambda x: x['name'])
+            })
+        by_department_results.sort(key=lambda x: x['count'], reverse=True)
+        
+        by_role_results = []
+        for r, data in by_role_dict.items():
+            by_role_results.append({
+                'role': r,
+                'count': data['count'],
+                'percentage': round((data['count'] / total_leaves * 100), 1) if total_leaves > 0 else 0,
+                'employees': sorted(data['employees'], key=lambda x: x['name'])
+            })
+        by_role_results.sort(key=lambda x: x['count'], reverse=True)
+        by_role_results = by_role_results[:10]
+        
+        by_company_results = []
+        for c, data in by_company_dict.items():
+            by_company_results.append({
+                'company': c,
+                'count': data['count'],
+                'percentage': round((data['count'] / total_leaves * 100), 1) if total_leaves > 0 else 0,
+                'employees': sorted(data['employees'], key=lambda x: x['name'])
+            })
+        by_company_results.sort(key=lambda x: x['count'], reverse=True)
         
         return {
             'year': reference_date.year,
@@ -6819,9 +6913,11 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             'total_on_leave': total_on_leave,
             'total_leave_records': total_leaves,
             'absenteeism_rate': round(absenteeism_rate, 2),
-            'average_duration_days': round(float(avg_duration), 1) if avg_duration else 0,
+            'average_duration_days': round(avg_duration, 1),
             'by_type': by_type_results,
-            'by_department': by_department_results
+            'by_department': by_department_results,
+            'by_role': by_role_results,
+            'by_company': by_company_results
         }
     
     def handle_report_generate(self):

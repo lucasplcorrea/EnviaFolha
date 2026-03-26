@@ -3,15 +3,19 @@ import { useTheme } from '../../contexts/ThemeContext';
 import {
   ClockIcon,
   ExclamationTriangleIcon,
-  UsersIcon
+  UsersIcon,
+  UserIcon
 } from '@heroicons/react/24/outline';
 import api from '../../services/api';
 import ExportPDFButton from '../../components/ExportPDFButton';
 import toast from 'react-hot-toast';
 import { MetricCard, LoadingSpinner, EmptyState } from './components';
 import {
-  LineChart,
-  Line,
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -21,7 +25,6 @@ import {
 } from 'recharts';
 
 const Tenure = () => {
-  const { config } = useTheme();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [filters, setFilters] = useState({
@@ -38,6 +41,7 @@ const Tenure = () => {
   });
   
   const [filtersReady, setFiltersReady] = useState(false);
+  const [selectedTenureRange, setSelectedTenureRange] = useState(null);
   const initialLoadDone = useRef(false);
 
   // Carregar filtros apenas uma vez na montagem
@@ -147,6 +151,16 @@ const Tenure = () => {
     return data.evolution;
   }, [data]);
 
+  const sortedDepartmentData = useMemo(() => {
+    if (!data?.current?.by_department) return [];
+    return [...data.current.by_department].sort((a, b) => b.avg_months - a.avg_months);
+  }, [data]);
+
+  const sortedRoleData = useMemo(() => {
+    if (!data?.current?.by_role) return [];
+    return data.current.by_role; // já vem ordenado e quebrado top 10 do backend
+  }, [data]);
+
   const formatTenure = (years, months) => {
     if (years === 0 && months === 0) return '0 meses';
     if (years === 0) return `${months} ${months === 1 ? 'mês' : 'meses'}`;
@@ -163,7 +177,7 @@ const Tenure = () => {
   }
 
   const { current, evolution } = data;
-  const { tenure_ranges, average_tenure_years, average_tenure_months, total_employees, by_department } = current;
+  const { tenure_ranges, average_tenure_years, average_tenure_months, total_employees, by_gender } = current;
 
   return (
     <div className="space-y-6">
@@ -246,24 +260,30 @@ const Tenure = () => {
       </div>
 
       {/* Métricas Principais */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <MetricCard
-          title="Tempo Médio de Casa"
+          title="Tempo Médio Geral"
           value={formatTenure(average_tenure_years || 0, average_tenure_months || 0)}
           icon={ClockIcon}
           color="indigo"
         />
         <MetricCard
-          title="Total de Colaboradores"
-          value={total_employees || 0}
-          icon={UsersIcon}
+          title="Média Mulheres"
+          value={formatTenure(by_gender?.F ? Math.floor(by_gender.F / 12) : 0, by_gender?.F ? by_gender.F % 12 : 0)}
+          icon={UserIcon}
+          color="pink"
+        />
+        <MetricCard
+          title="Média Homens"
+          value={formatTenure(by_gender?.M ? Math.floor(by_gender.M / 12) : 0, by_gender?.M ? by_gender.M % 12 : 0)}
+          icon={UserIcon}
           color="blue"
         />
         <MetricCard
-          title="Faixas de Tempo"
-          value={tenure_ranges?.length || 0}
-          icon={ClockIcon}
-          color="purple"
+          title="Total de Colaboradores"
+          value={total_employees || 0}
+          icon={UsersIcon}
+          color="teal"
         />
       </div>
 
@@ -274,21 +294,23 @@ const Tenure = () => {
             📊 Evolução do Tempo Médio de Casa
           </h3>
           <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="month_name" />
-              <YAxis label={{ value: 'Meses', angle: -90, position: 'insideLeft' }} />
-              <Tooltip />
+            <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+              <XAxis dataKey="month_name" axisLine={false} tickLine={false} />
+              <YAxis label={{ value: 'Meses', angle: -90, position: 'insideLeft' }} axisLine={false} tickLine={false} />
+              <Tooltip cursor={{fill: 'transparent'}} />
               <Legend />
-              <Line
+              <Area
                 type="monotone"
                 dataKey="average_tenure_months"
                 stroke="#6366f1"
-                strokeWidth={2}
+                fill="#6366f1"
+                fillOpacity={0.15}
+                strokeWidth={3}
                 name="Tempo Médio (meses)"
                 dot={{ fill: '#6366f1', r: 4 }}
               />
-            </LineChart>
+            </AreaChart>
           </ResponsiveContainer>
         </div>
       )}
@@ -299,7 +321,7 @@ const Tenure = () => {
           <h3 className="text-lg font-semibold text-gray-900 mb-4">
             ⏰ Distribuição por Tempo de Casa (Período Atual)
           </h3>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             {tenure_ranges.map((range, idx) => {
               const totalRange = tenure_ranges.reduce((sum, r) => sum + r.count, 0);
               const percentage = totalRange > 0 ? ((range.count / totalRange) * 100).toFixed(1) : 0;
@@ -315,7 +337,11 @@ const Tenure = () => {
               const color = colors[idx % colors.length];
               
               return (
-                <div key={idx} className={`p-4 rounded-lg border ${color.bg} ${color.border}`}>
+                <div 
+                  key={idx} 
+                  className={`p-4 rounded-lg border ${color.bg} ${color.border} cursor-pointer hover:shadow-md transition-shadow`}
+                  onClick={() => setSelectedTenureRange(range)}
+                >
                   <p className={`text-sm font-medium ${color.text}`}>{range.range}</p>
                   <p className="text-3xl font-bold text-gray-900 dark:text-gray-100 mt-2">{range.count}</p>
                   <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 mt-2">
@@ -332,32 +358,132 @@ const Tenure = () => {
         </div>
       )}
 
-      {/* Tempo Médio por Departamento */}
-      {by_department && by_department.length > 0 && (
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            🏢 Tempo Médio por Departamento
-          </h3>
-          <div className="space-y-3">
-            {by_department.map((dept, idx) => {
-              const maxMonths = Math.max(...by_department.map(d => d.avg_months));
-              const percentage = maxMonths > 0 ? (dept.avg_months / maxMonths) * 100 : 0;
-              
-              return (
-                <div key={idx}>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span className="font-medium text-gray-700">{dept.department}</span>
-                    <span className="text-gray-600">{dept.avg_months} {dept.avg_months === 1 ? 'mês' : 'meses'}</span>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-4">
-                    <div 
-                      className="bg-indigo-500 h-4 rounded-full transition-all duration-500"
-                      style={{ width: `${percentage}%` }}
-                    ></div>
-                  </div>
-                </div>
-              );
-            })}
+      {/* Setores e Cargos Lado a Lado */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Tempo Médio por Departamento */}
+        {sortedDepartmentData && sortedDepartmentData.length > 0 && (
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="mb-6">
+              <h3 className="text-lg font-semibold text-gray-900">
+                🏢 Tempo Médio por Departamento
+              </h3>
+              <p className="text-sm text-gray-500">Departamentos com maior índice de retenção</p>
+            </div>
+            
+            <ResponsiveContainer width="100%" height={450}>
+              <BarChart
+                data={sortedDepartmentData}
+                margin={{ top: 20, right: 30, left: 0, bottom: 80 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                <XAxis 
+                  dataKey="department" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fill: '#6b7280', fontSize: 10 }}
+                  angle={-45}
+                  textAnchor="end"
+                  height={80}
+                  interval={0}
+                />
+                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#6b7280', fontSize: 11 }} />
+                <Tooltip 
+                  cursor={{ fill: '#f9fafb' }} 
+                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
+                  formatter={(value) => [`${value} meses`, 'Tempo Médio']}
+                />
+                <Bar dataKey="avg_months" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                  {sortedDepartmentData.map((entry, index) => {
+                    const colors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4'];
+                    return <Cell key={`cell-dept-${index}`} fill={colors[index % colors.length]} />;
+                  })}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        {/* Tempo Médio por Cargo */}
+        {sortedRoleData && sortedRoleData.length > 0 && (
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="mb-6">
+              <h3 className="text-lg font-semibold text-gray-900">
+                👔 Top 10 Cargos Retentores
+              </h3>
+              <p className="text-sm text-gray-500">Cargos com o maior tempo médio na empresa (Meses)</p>
+            </div>
+            
+            <ResponsiveContainer width="100%" height={450}>
+              <BarChart
+                data={sortedRoleData}
+                margin={{ top: 20, right: 30, left: 0, bottom: 80 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                <XAxis 
+                  dataKey="role" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fill: '#6b7280', fontSize: 10 }}
+                  angle={-45}
+                  textAnchor="end"
+                  height={80}
+                  interval={0}
+                />
+                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#6b7280', fontSize: 11 }} />
+                <Tooltip 
+                  cursor={{ fill: '#f9fafb' }} 
+                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
+                  formatter={(value) => [`${value} meses`, 'Tempo Médio']}
+                />
+                <Bar dataKey="avg_months" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                  {sortedRoleData.map((entry, index) => {
+                    const colors = ['#10b981', '#f59e0b', '#3b82f6', '#ec4899', '#8b5cf6', '#06b6d4'];
+                    return <Cell key={`cell-role-${index}`} fill={colors[index % colors.length]} />;
+                  })}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
+      {/* Modal de Detalhamento por Faixa de Tempo de Casa */}
+      {selectedTenureRange && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[80vh] flex flex-col">
+            <div className="p-4 border-b flex justify-between items-center bg-indigo-50 rounded-t-lg">
+              <h3 className="text-lg font-bold text-indigo-900">
+                Tempo: {selectedTenureRange.range} ({selectedTenureRange.count} pessoas)
+              </h3>
+              <button 
+                onClick={() => setSelectedTenureRange(null)}
+                className="text-indigo-500 hover:text-indigo-700 font-bold text-xl"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1">
+              {selectedTenureRange.employees && selectedTenureRange.employees.length > 0 ? (
+                <ul className="divide-y divide-gray-100">
+                  {selectedTenureRange.employees.map((emp, i) => (
+                    <li key={i} className="py-3 px-2 flex flex-col hover:bg-gray-50 transition-colors rounded-md">
+                      <span className="font-medium text-gray-900 text-sm">{emp.name}</span>
+                      <span className="text-xs text-gray-500 mt-1">{emp.department} • {emp.tenure}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-gray-500 italic text-sm text-center py-4">Nenhum colaborador nesta faixa de tempo.</p>
+              )}
+            </div>
+            <div className="p-4 border-t bg-gray-50 flex justify-end rounded-b-lg">
+              <button 
+                onClick={() => setSelectedTenureRange(null)}
+                className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 transition-colors text-sm font-medium"
+              >
+                Fechar
+              </button>
+            </div>
           </div>
         </div>
       )}
