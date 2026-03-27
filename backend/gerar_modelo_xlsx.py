@@ -44,6 +44,7 @@ COLUMNS = [
     ("telefone",      "5546988237067",       False, 18, "Com código do país (55) e DDD"),
     ("email",         "joao@empresa.com.br", False, 28, ""),
     ("situacao",      "Ativo",               False, 16, "Ativo, Férias, Afastado, Desligado"),
+    ("data_demissao", "",                    False, 16, "Preencher apenas se Demitido. Formato: AAAA-MM-DD"),
 ]
 
 # Linha 1: legenda de cores

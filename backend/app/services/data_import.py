@@ -170,6 +170,7 @@ class DataImportService:
                 marital_status = _clean_str(row.get('estado_civil') or row.get('marital_status'))
                 contract_type = _clean_str(row.get('tipo_contrato') or row.get('contract_type'))
                 status_reason = _clean_str(row.get('situacao') or row.get('status_reason'))
+                termination_date = self._parse_date(row.get('data_demissao') or row.get('termination_date'))
                 birth_date = self._parse_date(row.get('data_nascimento') or row.get('birth_date'))
                 admission_date = self._parse_date(row.get('data_admissao') or row.get('admission_date'))
 
@@ -193,9 +194,11 @@ class DataImportService:
                     'marital_status': marital_status,
                     'contract_type': contract_type,
                     'status_reason': status_reason,
+                    'termination_date': termination_date,
                     'birth_date': birth_date,
                     'admission_date': admission_date,
-                    'is_active': True,
+                    # Se houver data de demissão, marca automaticamente como inativo
+                    'is_active': termination_date is None,
                 }
 
                 if employee:
