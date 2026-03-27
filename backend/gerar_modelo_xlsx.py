@@ -37,7 +37,6 @@ COLUMNS = [
     ("data_admissao", "2025-06-01",          True,  16, "Formato: AAAA-MM-DD ou DD/MM/AAAA"),
     ("cargo",         "Servente de Obras",   False, 28, ""),
     ("departamento",  "Obras",               False, 22, ""),
-    ("setor",         "Construção Civil",    False, 22, ""),
     ("sexo",          "M",                   False, 8,  "M ou F"),
     ("data_nascimento","1982-10-07",         False, 16, "Formato: AAAA-MM-DD ou DD/MM/AAAA"),
     ("estado_civil",  "Solteiro",            False, 16, ""),

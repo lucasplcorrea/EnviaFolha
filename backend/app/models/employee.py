@@ -28,7 +28,6 @@ class Employee(Base, TimestampMixin):
     # --- Estrutura Organizacional ---
     department = Column(String(100), nullable=True)
     position = Column(String(100), nullable=True)
-    sector = Column(String(100), nullable=True)
     company_code = Column(String(20), nullable=True)          # Prefixo numérico (ex: 0059)
     registration_number = Column(String(20), nullable=True)   # Número cru da matrícula
 

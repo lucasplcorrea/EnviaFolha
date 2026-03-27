@@ -166,7 +166,6 @@ class DataImportService:
                 email = _clean_str(row.get('email'))
                 department = _clean_str(row.get('departamento') or row.get('department'))
                 position = _clean_str(row.get('cargo') or row.get('position'))
-                sector = _clean_str(row.get('setor') or row.get('sector'))
                 sex = _clean_str(row.get('sexo') or row.get('sex'))
                 marital_status = _clean_str(row.get('estado_civil') or row.get('marital_status'))
                 contract_type = _clean_str(row.get('tipo_contrato') or row.get('contract_type'))
@@ -188,7 +187,6 @@ class DataImportService:
                     'email': email,
                     'department': department,
                     'position': position,
-                    'sector': sector,
                     'company_code': prefix_4,
                     'registration_number': mat_5,
                     'sex': sex,
