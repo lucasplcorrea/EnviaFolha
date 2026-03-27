@@ -507,14 +507,14 @@ const Employees = () => {
                   <ul className="text-xs text-gray-600 list-disc list-inside grid grid-cols-2 gap-2">
                     <li>cargo</li>
                     <li>departamento</li>
-                    <li>setor</li>
                     <li>sexo (M/F)</li>
-                    <li>data_nascimento</li>
+                    <li>data_nascimento <em>(DD-MM-AAAA)</em></li>
                     <li>estado_civil</li>
                     <li>tipo_contrato</li>
                     <li>telefone</li>
                     <li>email</li>
                     <li>situacao</li>
+                    <li>data_demissao <em>(DD-MM-AAAA)</em></li>
                   </ul>
                 </div>
 

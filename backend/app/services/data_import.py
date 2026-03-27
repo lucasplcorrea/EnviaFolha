@@ -256,15 +256,17 @@ class DataImportService:
             return None
         if isinstance(value, datetime):
             return value.date()
-        for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%Y/%m/%d'):
+        s = str(value).strip()
+        # Formatos aceitos em ordem de prioridade (padrão BR primeiro)
+        for fmt in ('%d-%m-%Y', '%d/%m/%Y', '%Y-%m-%d', '%Y/%m/%d', '%d-%m-%y', '%d/%m/%y'):
             try:
-                return datetime.strptime(str(value), fmt).date()
+                return datetime.strptime(s, fmt).date()
             except Exception:
                 continue
         if PANDAS_AVAILABLE:
             try:
                 import pandas as pd
-                return pd.to_datetime(value).date()
+                return pd.to_datetime(s, dayfirst=True).date()
             except Exception:
                 return None
         return None

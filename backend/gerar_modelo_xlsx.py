@@ -34,17 +34,17 @@ COLUMNS = [
     ("cpf",           "04775016997",         True,  16, "Somente números (11 dígitos)"),
     ("matricula",     "571",                 True,  12, "Número da matrícula do colaborador"),
     ("company_code",  "0059",               True,  14, "0059=Infraestrutura / 0060=Empreendimentos"),
-    ("data_admissao", "2025-06-01",          True,  16, "Formato: AAAA-MM-DD ou DD/MM/AAAA"),
+    ("data_admissao", "01-06-2025",          True,  16, "Formato: DD-MM-AAAA"),
     ("cargo",         "Servente de Obras",   False, 28, ""),
     ("departamento",  "Obras",               False, 22, ""),
     ("sexo",          "M",                   False, 8,  "M ou F"),
-    ("data_nascimento","1982-10-07",         False, 16, "Formato: AAAA-MM-DD ou DD/MM/AAAA"),
+    ("data_nascimento","07-10-1982",         False, 16, "Formato: DD-MM-AAAA"),
     ("estado_civil",  "Solteiro",            False, 16, ""),
     ("tipo_contrato", "CLT",                 False, 14, "CLT, PJ, Estagiário, etc."),
     ("telefone",      "5546988237067",       False, 18, "Com código do país (55) e DDD"),
     ("email",         "joao@empresa.com.br", False, 28, ""),
     ("situacao",      "Ativo",               False, 16, "Ativo, Férias, Afastado, Desligado"),
-    ("data_demissao", "",                    False, 16, "Preencher apenas se Demitido. Formato: AAAA-MM-DD"),
+    ("data_demissao", "",                    False, 16, "Preencher apenas se Demitido. Formato: DD-MM-AAAA"),
 ]
 
 # Linha 1: legenda de cores
