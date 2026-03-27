@@ -2,6 +2,8 @@
 from .base import Base, TimestampMixin
 from .user import User
 from .employee import Employee
+from .company import Company
+from .work_location import WorkLocation
 from .role_simple import Role
 from .payroll import PayrollRecord
 from .benefit import BenefitRecord
@@ -33,6 +35,8 @@ __all__ = [
     "TimestampMixin",
     "User",
     "Employee",
+    "Company",
+    "WorkLocation",
     "Role",
     "PayrollRecord",
     "BenefitRecord",

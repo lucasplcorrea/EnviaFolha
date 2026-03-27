@@ -11,7 +11,9 @@ from alembic import context
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 # Import all models to ensure they are registered
-from app.models import Base, User, Employee, AuditLog, PayrollSend, CommunicationSend, CommunicationRecipient, SystemSetting
+from app.models import Base, User, Employee, PayrollSend, CommunicationSend, CommunicationRecipient
+from app.models.company import Company
+from app.models.work_location import WorkLocation
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
