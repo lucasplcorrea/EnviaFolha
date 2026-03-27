@@ -492,37 +492,49 @@ const Employees = () => {
                     📋 Campos obrigatórios no arquivo Excel:
                   </p>
                   <ul className="text-xs text-blue-700 list-disc list-inside grid grid-cols-2 gap-2">
-                    <li><strong>unique_id</strong> - Código único/matrícula</li>
-                    <li><strong>full_name</strong> - Nome completo</li>
-                    <li><strong>cpf</strong> - CPF (11 dígitos)</li>
-                    <li><strong>phone_number</strong> - Telefone</li>
+                    <li><strong>nome</strong> - Nome completo</li>
+                    <li><strong>cpf</strong> - CPF (11 dígitos, sem pontos)</li>
+                    <li><strong>matricula</strong> - Número da matrícula</li>
+                    <li><strong>company_code</strong> - Código da empresa (ex: 0059)</li>
+                    <li><strong>data_admissao</strong> - Data de admissão</li>
                   </ul>
                 </div>
-                
+
                 <div className="bg-gray-50 border border-gray-200 rounded-md p-4 mb-4">
                   <p className="text-sm text-gray-700 font-medium mb-2">
                     📝 Campos opcionais:
                   </p>
                   <ul className="text-xs text-gray-600 list-disc list-inside grid grid-cols-2 gap-2">
+                    <li>cargo</li>
+                    <li>departamento</li>
+                    <li>setor</li>
+                    <li>sexo (M/F)</li>
+                    <li>data_nascimento</li>
+                    <li>estado_civil</li>
+                    <li>tipo_contrato</li>
+                    <li>telefone</li>
                     <li>email</li>
-                    <li>department</li>
-                    <li>position</li>
-                    <li>birth_date (AAAA-MM-DD)</li>
-                    <li>sex (M/F/Outro)</li>
-                    <li>marital_status</li>
-                    <li>admission_date (AAAA-MM-DD)</li>
-                    <li>contract_type (CLT/PJ/etc)</li>
-                    <li>status_reason</li>
+                    <li>situacao</li>
                   </ul>
                 </div>
-                
-                <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4">
-                  <p className="text-xs text-yellow-800">
-                    <strong>💡 Dica:</strong> Se o <code className="bg-yellow-100 px-1 rounded">unique_id</code> já existir, 
-                    o colaborador será <strong>atualizado</strong>. Caso contrário, será <strong>criado</strong>.
+
+                <div className="bg-green-50 border border-green-200 rounded-md p-3 mb-4">
+                  <p className="text-xs text-green-800">
+                    <strong>✨ Identificação Automática:</strong> O campo <code className="bg-green-100 px-1 rounded">absolute_id</code> é{' '}
+                    <strong>gerado automaticamente</strong> pelo sistema com base no{' '}
+                    <code className="bg-green-100 px-1 rounded">company_code</code> +{' '}
+                    <code className="bg-green-100 px-1 rounded">matricula</code> +{' '}
+                    <code className="bg-green-100 px-1 rounded">cpf</code>. Não inclua essa coluna.
                   </p>
                 </div>
-                
+
+                <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4">
+                  <p className="text-xs text-yellow-800">
+                    <strong>💡 Dica:</strong> Se o colaborador já existir (mesmo CPF + matrícula + empresa),
+                    o cadastro será <strong>atualizado</strong>. Caso contrário, será <strong>criado</strong>.
+                  </p>
+                </div>
+
                 <div className="mb-4">
                   <a
                     href="/modelo_importacao_colaboradores.xlsx"
@@ -532,7 +544,7 @@ const Employees = () => {
                     <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
-                    Baixar Modelo Excel
+                    Baixar Modelo Excel (atualizado)
                   </a>
                 </div>
               </div>
