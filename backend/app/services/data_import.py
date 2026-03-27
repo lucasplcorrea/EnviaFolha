@@ -1,5 +1,6 @@
 import csv
 import io
+import re
 from typing import List, Dict, Optional
 from datetime import datetime
 
@@ -14,13 +15,46 @@ from app.models.system_log import LogLevel, LogCategory
 from app.services.logging_service import LoggingService
 
 
+def _clean_str(value) -> Optional[str]:
+    """Limpa valor para string, retornando None se vazio/inválido."""
+    if not value:
+        return None
+    s = str(value).strip()
+    if s.endswith('.0'):
+        s = s[:-2]
+    if s.lower() in ('', 'nan', 'none'):
+        return None
+    return s
+
+
+def _only_digits(value: str) -> str:
+    """Retorna apenas os dígitos de uma string."""
+    return re.sub(r'\D', '', value or '')
+
+
+def _build_absolute_id(company_prefix: str, matricula: str, cpf: str) -> Optional[str]:
+    """
+    Constrói o absolute_id único e definitivo do colaborador.
+    Fórmula: CompanyPrefix (padded 4) + Matricula (padded 5) + CPF (11 dígitos)
+    Exemplo: 0059 + 00571 + 04775016997 = "005900571" + "04775016997" → "00590057104775016997"
+    """
+    prefix = _only_digits(company_prefix or '').zfill(4)
+    mat = _only_digits(matricula or '').zfill(5)
+    cpf_digits = _only_digits(cpf or '')
+
+    if not prefix or not mat or len(cpf_digits) != 11:
+        return None
+
+    return f"{prefix}{mat}{cpf_digits}"
+
+
 class DataImportService:
     """Serviço para importar CSV/XLSX com rastreabilidade completa."""
 
     def __init__(
-        self, 
-        db_session, 
-        user_id: Optional[int] = None, 
+        self,
+        db_session,
+        user_id: Optional[int] = None,
         username: Optional[str] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
@@ -42,66 +76,42 @@ class DataImportService:
         return [row for row in reader]
 
     def parse_xlsx(self, file_bytes: bytes, sheet_name: Optional[str] = 0) -> List[Dict]:
-        """
-        Parse arquivo Excel (.xlsx ou .xls) para lista de dicionários.
-        Usa openpyxl para .xlsx e xlrd para .xls
-        
-        IMPORTANTE: Força campos críticos como string para preservar zeros à esquerda
-        """
+        """Parse arquivo Excel (.xlsx ou .xls) para lista de dicionários."""
         if not PANDAS_AVAILABLE:
-            raise RuntimeError('pandas is required to parse xlsx files')
-        
-        # Definir dtype para forçar campos como string e preservar zeros à esquerda
-        dtype_mapping = {
-            'unique_id': str,
-            'codigo_unificado': str,
-            'registration_number': str,
-            'cpf': str,
-            'phone': str,
-            'phone_number': str,
-            'telefone': str
-        }
-        
+            raise RuntimeError('pandas é necessário para ler arquivos xlsx')
+
+        str_cols = ['company_code', 'matricula', 'cpf', 'phone', 'phone_number',
+                    'telefone', 'unique_id', 'codigo_unificado', 'registration_number']
+
+        dtype_mapping = {col: str for col in str_cols}
+
         try:
-            # Tentar com openpyxl primeiro (para .xlsx)
             df = pd.read_excel(
-                io.BytesIO(file_bytes), 
-                sheet_name=sheet_name, 
-                engine='openpyxl',
-                dtype=dtype_mapping,  # Força tipos específicos
-                keep_default_na=False  # Não converte strings vazias em NaN
+                io.BytesIO(file_bytes), sheet_name=sheet_name,
+                engine='openpyxl', dtype=dtype_mapping, keep_default_na=False
             )
-            # Converter todas as colunas para string para garantir
             for col in df.columns:
-                if col.lower() in ['unique_id', 'codigo_unificado', 'registration_number', 'cpf', 'phone', 'phone_number', 'telefone']:
+                if col.lower() in str_cols:
                     df[col] = df[col].astype(str)
-            
             return df.fillna('').to_dict(orient='records')
         except Exception as e:
             print(f"⚠️ Erro com openpyxl: {e}")
             try:
-                # Fallback para xlrd (para .xls antigo)
                 df = pd.read_excel(
-                    io.BytesIO(file_bytes), 
-                    sheet_name=sheet_name, 
-                    engine='xlrd',
-                    dtype=dtype_mapping,
-                    keep_default_na=False
+                    io.BytesIO(file_bytes), sheet_name=sheet_name,
+                    engine='xlrd', dtype=dtype_mapping, keep_default_na=False
                 )
-                # Converter colunas para string
                 for col in df.columns:
-                    if col.lower() in ['unique_id', 'codigo_unificado', 'registration_number', 'cpf', 'phone', 'phone_number', 'telefone']:
+                    if col.lower() in str_cols:
                         df[col] = df[col].astype(str)
-                
                 return df.fillna('').to_dict(orient='records')
             except Exception as e2:
-                print(f"❌ Erro com xlrd: {e2}")
                 raise RuntimeError(f'Não foi possível ler o arquivo Excel. Erro: {str(e)}')
 
     def import_employees(self, rows: List[Dict]) -> Dict:
         """
-        Importa linhas mapeando campos comuns para Employee. 
-        Retorna summary com detalhes de criados, atualizados e erros.
+        Importa colaboradores com geração automática do absolute_id.
+        Campos obrigatórios no xlsx: nome, cpf, matricula, company_code
         """
         created = 0
         updated = 0
@@ -109,191 +119,135 @@ class DataImportService:
         created_list = []
         updated_list = []
 
-        # Log início da importação
         self.logger.log_import(
             f'Iniciando importação de {len(rows)} colaboradores',
             details={'total_rows': len(rows)},
-            user_id=self.user_id,
-            username=self.username,
-            ip_address=self.ip_address,
-            user_agent=self.user_agent,
-            request_method=self.request_method,
-            request_path=self.request_path
+            user_id=self.user_id, username=self.username,
+            ip_address=self.ip_address, user_agent=self.user_agent,
+            request_method=self.request_method, request_path=self.request_path
         )
 
         for i, row in enumerate(rows, start=1):
             try:
-                # Validar campos obrigatórios
-                unique_id = row.get('unique_id') or row.get('codigo_unificado') or row.get('registration_number')
-                
-                # Limpar e converter unique_id para string, preservando zeros à esquerda
-                if unique_id:
-                    unique_id = str(unique_id).strip()
-                    # Remover ".0" que pandas pode adicionar
-                    if unique_id.endswith('.0'):
-                        unique_id = unique_id[:-2]
-                    # Se estiver vazio ou for "nan", considerar como None
-                    if unique_id.lower() in ('', 'nan', 'none'):
-                        unique_id = None
-                
-                if not unique_id:
-                    error_msg = 'Campo obrigatório "unique_id" ausente'
-                    errors.append({'row': i, 'error': error_msg, 'data': row})
-                    continue
-
-                full_name = row.get('full_name') or row.get('name') or row.get('nome')
+                # ── 1. Campos obrigatórios ──────────────────────────────────
+                full_name = _clean_str(row.get('nome') or row.get('name') or row.get('full_name'))
                 if not full_name:
-                    error_msg = 'Campo obrigatório "full_name" ausente'
-                    errors.append({'row': i, 'error': error_msg, 'data': row})
+                    errors.append({'row': i, 'error': 'Campo obrigatório "nome" ausente', 'data': row})
                     continue
 
-                cpf = row.get('cpf')
-                # Limpar e converter CPF para string
-                if cpf:
-                    cpf = str(cpf).strip()
-                    if cpf.endswith('.0'):
-                        cpf = cpf[:-2]
-                    if cpf.lower() in ('', 'nan', 'none'):
-                        cpf = None
-                
-                if not cpf:
-                    error_msg = 'Campo obrigatório "cpf" ausente'
-                    errors.append({'row': i, 'error': error_msg, 'data': row})
+                cpf_raw = _clean_str(row.get('cpf'))
+                if not cpf_raw or len(_only_digits(cpf_raw)) != 11:
+                    errors.append({'row': i, 'error': 'Campo obrigatório "cpf" ausente ou inválido (11 dígitos)', 'data': row})
                     continue
 
-                phone = row.get('phone_number') or row.get('phone') or row.get('telefone')
-                # Limpar e converter phone para string
-                if phone:
-                    phone = str(phone).strip()
-                    if phone.endswith('.0'):
-                        phone = phone[:-2]
-                    if phone.lower() in ('', 'nan', 'none'):
-                        phone = None
-                
-                if not phone:
-                    error_msg = 'Campo obrigatório "phone_number" ausente'
-                    errors.append({'row': i, 'error': error_msg, 'data': row})
+                matricula = _clean_str(row.get('matricula') or row.get('registration_number') or row.get('unique_id'))
+                if not matricula:
+                    errors.append({'row': i, 'error': 'Campo obrigatório "matricula" ausente', 'data': row})
                     continue
 
-                # Verificar se colaborador já existe (por unique_id OU por CPF para evitar duplicações)
+                company_code = _clean_str(row.get('company_code') or row.get('codigo_empresa') or row.get('empresa'))
+                if not company_code:
+                    errors.append({'row': i, 'error': 'Campo obrigatório "company_code" ausente (ex: 0059 ou 0060)', 'data': row})
+                    continue
+
+                # ── 2. Gerar absolute_id automaticamente ────────────────────
+                absolute_id = _build_absolute_id(company_code, matricula, cpf_raw)
+                if not absolute_id:
+                    errors.append({'row': i, 'error': f'Não foi possível gerar absolute_id (CPF deve ter 11 dígitos)', 'data': row})
+                    continue
+
+                # unique_id legado: company_code (4 dígitos) + matricula (5 dígitos)
+                prefix_4 = _only_digits(company_code).zfill(4)
+                mat_5 = _only_digits(matricula).zfill(5)
+                unique_id = f"{prefix_4}{mat_5}"
+
+                # ── 3. Campos opcionais ─────────────────────────────────────
+                phone = _clean_str(row.get('telefone') or row.get('phone') or row.get('phone_number'))
+                email = _clean_str(row.get('email'))
+                department = _clean_str(row.get('departamento') or row.get('department'))
+                position = _clean_str(row.get('cargo') or row.get('position'))
+                sector = _clean_str(row.get('setor') or row.get('sector'))
+                sex = _clean_str(row.get('sexo') or row.get('sex'))
+                marital_status = _clean_str(row.get('estado_civil') or row.get('marital_status'))
+                contract_type = _clean_str(row.get('tipo_contrato') or row.get('contract_type'))
+                status_reason = _clean_str(row.get('situacao') or row.get('status_reason'))
+                birth_date = self._parse_date(row.get('data_nascimento') or row.get('birth_date'))
+                admission_date = self._parse_date(row.get('data_admissao') or row.get('admission_date'))
+
+                # ── 4. Buscar pelo absolute_id (chave definitiva) ───────────
                 employee = self.db.query(Employee).filter(
-                    (Employee.unique_id == str(unique_id)) | (Employee.cpf == str(cpf))
+                    Employee.absolute_id == absolute_id
                 ).first()
 
-                # Preparar dados para inserção/atualização
                 data = {
-                    'unique_id': str(unique_id),
-                    'name': full_name,  # Campo no banco é 'name', não 'full_name'
-                    'cpf': str(cpf),
-                    'phone': str(phone),  # Campo no banco é 'phone', não 'phone_number'
-                    'email': row.get('email') or None,
-                    'department': row.get('department') or row.get('setor') or None,
-                    'position': row.get('position') or row.get('cargo') or None,
-                    'birth_date': self._parse_date(row.get('birth_date') or row.get('data_nascimento')),
-                    'sex': row.get('sex') or row.get('sexo') or None,
-                    'marital_status': row.get('marital_status') or row.get('estado_civil') or None,
-                    'admission_date': self._parse_date(row.get('admission_date') or row.get('data_admissao')),
-                    'contract_type': row.get('contract_type') or row.get('tipo_contrato') or None,
-                    'is_active': True,  # Sempre ativo na importação, ajustar manualmente se necessário
-                    'status_reason': row.get('status_reason') or row.get('motivo_status') or None
+                    'absolute_id': absolute_id,
+                    'unique_id': unique_id,
+                    'name': full_name,
+                    'cpf': cpf_raw,
+                    'phone': phone,
+                    'email': email,
+                    'department': department,
+                    'position': position,
+                    'sector': sector,
+                    'company_code': prefix_4,
+                    'registration_number': mat_5,
+                    'sex': sex,
+                    'marital_status': marital_status,
+                    'contract_type': contract_type,
+                    'status_reason': status_reason,
+                    'birth_date': birth_date,
+                    'admission_date': admission_date,
+                    'is_active': True,
                 }
 
                 if employee:
-                    # ATUALIZAR colaborador existente
-                    old_data = {k: getattr(employee, k) for k in data.keys()}
-                    
+                    # Atualizar existente
                     for k, v in data.items():
-                        if v is not None:  # Só atualizar se valor fornecido
+                        if v is not None:
                             setattr(employee, k, v)
-                    
                     self.db.commit()
                     updated += 1
-                    updated_list.append({
-                        'unique_id': unique_id,
-                        'name': full_name,
-                        'row': i
-                    })
-                    
-                    # Log da atualização
+                    updated_list.append({'absolute_id': absolute_id, 'name': full_name, 'row': i})
                     self.logger.log_employee_action(
                         f'Colaborador atualizado via importação: {full_name}',
-                        employee_id=str(employee.id),
-                        user_id=self.user_id,
-                        username=self.username,
-                        details={
-                            'unique_id': unique_id,
-                            'old_data': old_data,
-                            'new_data': data,
-                            'import_row': i
-                        }
+                        employee_id=str(employee.id), user_id=self.user_id, username=self.username,
+                        details={'absolute_id': absolute_id, 'new_data': data, 'import_row': i}
                     )
                 else:
-                    # CRIAR novo colaborador
-                    # Usar user_id se fornecido, senão usar None (permitido agora)
+                    # Criar novo
                     new = Employee(**data, created_by=self.user_id)
                     self.db.add(new)
                     self.db.commit()
                     self.db.refresh(new)
-                    
                     created += 1
-                    created_list.append({
-                        'unique_id': unique_id,
-                        'name': full_name,
-                        'row': i
-                    })
-                    
-                    # Log da criação
+                    created_list.append({'absolute_id': absolute_id, 'name': full_name, 'row': i})
                     self.logger.log_employee_action(
                         f'Colaborador criado via importação: {full_name}',
-                        employee_id=str(new.id),
-                        user_id=self.user_id,
-                        username=self.username,
-                        details={
-                            'unique_id': unique_id,
-                            'data': data,
-                            'import_row': i
-                        }
+                        employee_id=str(new.id), user_id=self.user_id, username=self.username,
+                        details={'absolute_id': absolute_id, 'data': data, 'import_row': i}
                     )
 
             except Exception as e:
                 self.db.rollback()
-                error_msg = str(e)
-                errors.append({'row': i, 'error': error_msg, 'data': row})
-                
-                # Log do erro
+                errors.append({'row': i, 'error': str(e), 'data': row})
                 self.logger.error(
-                    LogCategory.IMPORT,
-                    f'Erro ao importar linha {i}: {error_msg}',
-                    details={'row': i, 'error': error_msg, 'data': row},
-                    user_id=self.user_id,
-                    username=self.username
+                    LogCategory.IMPORT, f'Erro ao importar linha {i}: {e}',
+                    details={'row': i, 'error': str(e)},
+                    user_id=self.user_id, username=self.username
                 )
 
-        # Log final da importação
         self.logger.log_import(
             f'Importação concluída: {created} criados, {updated} atualizados, {len(errors)} erros',
-            details={
-                'created': created,
-                'updated': updated,
-                'errors_count': len(errors),
-                'created_list': created_list,
-                'updated_list': updated_list,
-                'errors': errors[:10]  # Primeiros 10 erros apenas
-            },
-            user_id=self.user_id,
-            username=self.username,
-            ip_address=self.ip_address,
-            user_agent=self.user_agent,
-            request_method=self.request_method,
-            request_path=self.request_path
+            details={'created': created, 'updated': updated, 'errors_count': len(errors),
+                     'created_list': created_list, 'updated_list': updated_list, 'errors': errors[:10]},
+            user_id=self.user_id, username=self.username,
+            ip_address=self.ip_address, user_agent=self.user_agent,
+            request_method=self.request_method, request_path=self.request_path
         )
 
         return {
-            'created': created,
-            'updated': updated,
-            'errors': errors,
-            'created_list': created_list,
-            'updated_list': updated_list
+            'created': created, 'updated': updated, 'errors': errors,
+            'created_list': created_list, 'updated_list': updated_list
         }
 
     def _parse_date(self, value):
@@ -306,7 +260,6 @@ class DataImportService:
                 return datetime.strptime(str(value), fmt).date()
             except Exception:
                 continue
-        # fallback: try pandas parse if available
         if PANDAS_AVAILABLE:
             try:
                 import pandas as pd
