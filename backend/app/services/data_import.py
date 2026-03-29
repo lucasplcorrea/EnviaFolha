@@ -76,7 +76,14 @@ class DataImportService:
         return [row for row in reader]
 
     def parse_xlsx(self, file_bytes: bytes, sheet_name: Optional[str] = 0) -> List[Dict]:
-        """Parse arquivo Excel (.xlsx ou .xls) para lista de dicionários."""
+        """Parse arquivo Excel (.xlsx ou .xls) para lista de dicionários.
+        
+        O template gerado tem:
+          - Linha 1: legenda de cores (🔵 Obrigatório / ⚪ Opcional) → ignorada
+          - Linha 2: nomes das colunas (nome, cpf, matricula...) → header
+          - Linhas 3+: dados do usuário
+        Por isso usamos header=1 (0-indexado).
+        """
         if not PANDAS_AVAILABLE:
             raise RuntimeError('pandas é necessário para ler arquivos xlsx')
 
@@ -85,26 +92,31 @@ class DataImportService:
 
         dtype_mapping = {col: str for col in str_cols}
 
+        def clean_df(df):
+            for col in df.columns:
+                if str(col).lower() in str_cols:
+                    df[col] = df[col].astype(str)
+            df = df.fillna('')
+            # Ignorar linhas completamente vazias
+            df = df[df.apply(lambda r: any(str(v).strip() for v in r.values), axis=1)]
+            return df.to_dict(orient='records')
+
         try:
             df = pd.read_excel(
                 io.BytesIO(file_bytes), sheet_name=sheet_name,
-                engine='openpyxl', dtype=dtype_mapping, keep_default_na=False
+                engine='openpyxl', dtype=dtype_mapping, keep_default_na=False,
+                header=1  # Linha 1 (0-idx) = linha 2 do xlsx = nomes das colunas
             )
-            for col in df.columns:
-                if col.lower() in str_cols:
-                    df[col] = df[col].astype(str)
-            return df.fillna('').to_dict(orient='records')
+            return clean_df(df)
         except Exception as e:
             print(f"⚠️ Erro com openpyxl: {e}")
             try:
                 df = pd.read_excel(
                     io.BytesIO(file_bytes), sheet_name=sheet_name,
-                    engine='xlrd', dtype=dtype_mapping, keep_default_na=False
+                    engine='xlrd', dtype=dtype_mapping, keep_default_na=False,
+                    header=1
                 )
-                for col in df.columns:
-                    if col.lower() in str_cols:
-                        df[col] = df[col].astype(str)
-                return df.fillna('').to_dict(orient='records')
+                return clean_df(df)
             except Exception as e2:
                 raise RuntimeError(f'Não foi possível ler o arquivo Excel. Erro: {str(e)}')
 
