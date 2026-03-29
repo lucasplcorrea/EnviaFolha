@@ -17,7 +17,8 @@ import {
   BuildingOfficeIcon,
   IdentificationIcon,
   CakeIcon,
-  UserIcon
+  UserIcon,
+  MapPinIcon
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import api from '../services/api';
@@ -32,6 +33,8 @@ const EmployeeDetail = () => {
   const [activeTab, setActiveTab] = useState('info');
   const [editingStatus, setEditingStatus] = useState(false);
   const [editingInfo, setEditingInfo] = useState(false);
+  const [companies, setCompanies] = useState([]);
+  const [workLocations, setWorkLocations] = useState([]);
   
   // Estados para Afastamentos
   const [leaves, setLeaves] = useState([]);
@@ -68,7 +71,9 @@ const EmployeeDetail = () => {
     sex: '',
     marital_status: '',
     admission_date: '',
-    contract_type: ''
+    contract_type: '',
+    company_id: '',
+    work_location_id: '',
   });
 
   const loadEmployee = React.useCallback(async () => {
@@ -96,7 +101,9 @@ const EmployeeDetail = () => {
         sex: response.data.sex || '',
         marital_status: response.data.marital_status || '',
         admission_date: response.data.admission_date || '',
-        contract_type: response.data.contract_type || ''
+        contract_type: response.data.contract_type || '',
+        company_id: response.data.company_id || '',
+        work_location_id: response.data.work_location_id || '',
       });
     } catch (error) {
       console.error('❌ Erro ao carregar colaborador:', error);
@@ -112,8 +119,10 @@ const EmployeeDetail = () => {
   }, [id, navigate]);
 
   useEffect(() => {
-    console.log('🔄 useEffect chamado, carregando employee com ID:', id);
     loadEmployee();
+    // Carregar empresas e locais para os dropdowns
+    api.get('/companies').then(r => setCompanies(r.data || [])).catch(() => {});
+    api.get('/work-locations?active=false').then(r => setWorkLocations(r.data || [])).catch(() => {});
   }, [id, loadEmployee]);
 
   useEffect(() => {
@@ -429,12 +438,27 @@ const EmployeeDetail = () => {
                 <BriefcaseIcon className="h-6 w-6 text-purple-600 mr-2" />
                 <h3 className="text-lg font-semibold text-gray-900">Informações Profissionais</h3>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-white rounded-lg p-4 shadow-sm">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="bg-white rounded-lg p-4 shadow-sm lg:col-span-2">
                   <dt className="text-xs font-medium text-gray-500 uppercase mb-1 flex items-center">
                     <BuildingOfficeIcon className="h-4 w-4 mr-1" />
-                    Departamento
+                    Empresa
                   </dt>
+                  <dd className="text-base font-semibold text-gray-900">
+                    {companies.find(c => c.id === employee.company_id)?.name || 'Não informada'}
+                  </dd>
+                </div>
+                <div className="bg-white rounded-lg p-4 shadow-sm">
+                  <dt className="text-xs font-medium text-gray-500 uppercase mb-1 flex items-center">
+                    <MapPinIcon className="h-4 w-4 mr-1" />
+                    Local de Trabalho
+                  </dt>
+                  <dd className="text-base font-semibold text-gray-900">
+                    {workLocations.find(l => l.id === employee.work_location_id)?.name || 'Não informado'}
+                  </dd>
+                </div>
+                <div className="bg-white rounded-lg p-4 shadow-sm">
+                  <dt className="text-xs font-medium text-gray-500 uppercase mb-1">Departamento</dt>
                   <dd className="text-base font-semibold text-gray-900">{employee.department || 'Não informado'}</dd>
                 </div>
                 <div className="bg-white rounded-lg p-4 shadow-sm">
@@ -562,6 +586,61 @@ const EmployeeDetail = () => {
                   onChange={(e) => setInfoForm({...infoForm, email: e.target.value})}
                   className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Empresa Responsável</label>
+                <select
+                  value={infoForm.company_id || ''}
+                  onChange={(e) => {
+                    const companyId = e.target.value;
+                    const company = companies.find(c => String(c.id) === companyId);
+                    
+                    // Se houver empresa selecionada, atualiza também a matrícula/ID Único, 
+                    // preservando os 5 últimos dígitos numéricos se possível
+                    let newUniqueId = infoForm.unique_id;
+                    if (company && company.payroll_prefix) {
+                       const prefix = company.payroll_prefix.replace(/\D/g, '').padStart(4, '0');
+                       const matricula = newUniqueId.slice(-5).padStart(5, '0');
+                       newUniqueId = `${prefix}${matricula}`;
+                    }
+
+                    setInfoForm({
+                      ...infoForm, 
+                      company_id: companyId ? parseInt(companyId) : '',
+                      unique_id: newUniqueId
+                    });
+                  }}
+                  className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+                >
+                  <option value="">Selecione...</option>
+                  {companies.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} (Prefixo {c.payroll_prefix})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Local de Trabalho / Obra</label>
+                <select
+                  value={infoForm.work_location_id || ''}
+                  onChange={(e) => setInfoForm({
+                    ...infoForm, 
+                    work_location_id: e.target.value ? parseInt(e.target.value) : ''
+                  })}
+                  className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+                >
+                  <option value="">Selecione...</option>
+                  {workLocations
+                    .filter(loc => !infoForm.company_id || loc.company_id === infoForm.company_id)
+                    .map(loc => (
+                    <option key={loc.id} value={loc.id}>
+                      {loc.name}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>

@@ -10,6 +10,8 @@ const Employees = () => {
   const { config } = useTheme();
   const [searchParams] = useSearchParams();
   const [employees, setEmployees] = useState([]);
+  const [companies, setCompanies] = useState([]);
+  const [workLocations, setWorkLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -46,11 +48,16 @@ const Employees = () => {
     marital_status: '',
     admission_date: '',
     contract_type: '',
-    status_reason: ''
+    status_reason: '',
+    company_id: '',
+    work_location_id: ''
   });
 
   useEffect(() => {
     loadEmployees();
+    api.get('/companies').then(res => setCompanies(res.data || [])).catch(() => {});
+    api.get('/work-locations?active=false').then(res => setWorkLocations(res.data || [])).catch(() => {});
+    
     // Check if coming from import page with refresh parameter
     const refresh = searchParams.get('refresh');
     if (refresh) {
@@ -104,7 +111,9 @@ const Employees = () => {
         marital_status: '',
         admission_date: '',
         contract_type: '',
-        status_reason: ''
+        status_reason: '',
+        company_id: '',
+        work_location_id: ''
       });
       setShowForm(false);
       setShowEditModal(false);
@@ -130,7 +139,9 @@ const Employees = () => {
       marital_status: employee.marital_status || '',
       admission_date: employee.admission_date || '',
       contract_type: employee.contract_type || '',
-      status_reason: employee.status_reason || ''
+      status_reason: employee.status_reason || '',
+      company_id: employee.company_id || '',
+      work_location_id: employee.work_location_id || ''
     });
     setShowEditModal(true);
   };
@@ -151,7 +162,9 @@ const Employees = () => {
       marital_status: '',
       admission_date: '',
       contract_type: '',
-      status_reason: ''
+      status_reason: '',
+      company_id: '',
+      work_location_id: ''
     });
   };
 
@@ -760,6 +773,59 @@ const Employees = () => {
               />
             </div>
             
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Empresa Responsável</label>
+              <select
+                value={formData.company_id || ''}
+                onChange={(e) => {
+                  const companyId = e.target.value;
+                  const company = companies.find(c => String(c.id) === companyId);
+                  
+                  let newUniqueId = formData.unique_id;
+                  if (company && company.payroll_prefix) {
+                      const prefix = company.payroll_prefix.replace(/\D/g, '').padStart(4, '0');
+                      const matricula = newUniqueId.slice(-5).padStart(5, '0');
+                      newUniqueId = `${prefix}${matricula}`;
+                  }
+
+                  setFormData({
+                    ...formData, 
+                    company_id: companyId ? parseInt(companyId) : '',
+                    unique_id: newUniqueId
+                  });
+                }}
+                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+              >
+                <option value="">Selecione...</option>
+                {companies.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} (Prefixo {c.payroll_prefix})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Local de Trabalho / Obra</label>
+              <select
+                value={formData.work_location_id || ''}
+                onChange={(e) => setFormData({
+                  ...formData, 
+                  work_location_id: e.target.value ? parseInt(e.target.value) : ''
+                })}
+                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+              >
+                <option value="">Selecione...</option>
+                {workLocations
+                  .filter(loc => !formData.company_id || loc.company_id === formData.company_id)
+                  .map(loc => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700">Departamento</label>
               <input

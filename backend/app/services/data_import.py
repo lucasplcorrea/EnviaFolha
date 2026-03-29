@@ -139,6 +139,13 @@ class DataImportService:
             request_method=self.request_method, request_path=self.request_path
         )
 
+        # ── Pré-carregar mapeamento prefix → company_id ─────────────────
+        from app.models.company import Company as CompanyModel
+        company_map: dict[str, int] = {
+            c.payroll_prefix: c.id
+            for c in self.db.query(CompanyModel).all()
+        }
+
         for i, row in enumerate(rows, start=1):
             try:
                 # ── 1. Campos obrigatórios ──────────────────────────────────
@@ -201,6 +208,7 @@ class DataImportService:
                     'department': department,
                     'position': position,
                     'company_code': prefix_4,
+                    'company_id': company_map.get(prefix_4),   # FK para companies
                     'registration_number': mat_5,
                     'sex': sex,
                     'marital_status': marital_status,
