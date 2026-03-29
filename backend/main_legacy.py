@@ -1509,8 +1509,23 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             from app.routes import SystemRouter
             SystemRouter(self).handle_system_logs()
         # ==================================================
-        
-        # ===== ROTAS DE INDICADORES RH =====
+
+        # ===== ROTAS DE EMPRESAS E LOCAIS =====
+        elif path == '/api/v1/companies':
+            from app.routes import CompaniesRouter
+            CompaniesRouter(self).handle_list()
+        elif path.startswith('/api/v1/companies/'):
+            company_id = int(path.split('/')[-1])
+            from app.routes import CompaniesRouter
+            CompaniesRouter(self).handle_get(company_id)
+        elif path == '/api/v1/work-locations':
+            from app.routes import WorkLocationsRouter
+            WorkLocationsRouter(self).handle_list()
+        elif path.startswith('/api/v1/work-locations/'):
+            location_id = int(path.split('/')[-1])
+            from app.routes import WorkLocationsRouter
+            WorkLocationsRouter(self).handle_get(location_id)
+        # =====================================
         elif path == '/api/v1/indicators/overview':
             self.handle_indicators_overview()
         elif path == '/api/v1/indicators/headcount':
@@ -1637,6 +1652,12 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_indicators_invalidate_cache()
         elif path == '/api/v1/users':
             self.handle_create_user()
+        elif path == '/api/v1/companies':
+            from app.routes import CompaniesRouter
+            CompaniesRouter(self).handle_create()
+        elif path == '/api/v1/work-locations':
+            from app.routes import WorkLocationsRouter
+            WorkLocationsRouter(self).handle_create()
         elif path == '/api/v1/users/permissions':
             self.handle_update_user_permissions()
         elif path == '/api/v1/payroll/periods':
@@ -1693,7 +1714,26 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         """Handle PUT requests"""
         path = urllib.parse.urlparse(self.path).path
         print(f"🔄 PUT recebido: {path}")
-        
+
+        # ===== EMPRESAS E LOCAIS =====
+        if path.startswith('/api/v1/companies/'):
+            try:
+                company_id = int(path.split('/')[-1])
+                from app.routes import CompaniesRouter
+                CompaniesRouter(self).handle_update(company_id)
+                return
+            except (ValueError, IndexError):
+                self.send_json_response({"error": "ID inválido"}, 400); return
+        elif path.startswith('/api/v1/work-locations/'):
+            try:
+                location_id = int(path.split('/')[-1])
+                from app.routes import WorkLocationsRouter
+                WorkLocationsRouter(self).handle_update(location_id)
+                return
+            except (ValueError, IndexError):
+                self.send_json_response({"error": "ID inválido"}, 400); return
+        # =============================
+
         if path.startswith('/api/v1/employees/'):
             # Verificar primeiro se é rota de leaves
             parts = path.split('/')
@@ -1743,6 +1783,20 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         elif path.startswith('/api/v1/timecard/periods/'):
             period_id = path.split('/')[-1]
             self.handle_delete_timecard_period(period_id)
+        elif path.startswith('/api/v1/companies/'):
+            try:
+                company_id = int(path.split('/')[-1])
+                from app.routes import CompaniesRouter
+                CompaniesRouter(self).handle_delete(company_id)
+            except (ValueError, IndexError):
+                self.send_json_response({"error": "ID inválido"}, 400)
+        elif path.startswith('/api/v1/work-locations/'):
+            try:
+                location_id = int(path.split('/')[-1])
+                from app.routes import WorkLocationsRouter
+                WorkLocationsRouter(self).handle_delete(location_id)
+            except (ValueError, IndexError):
+                self.send_json_response({"error": "ID inválido"}, 400)
         else:
             self.send_json_response({"error": "Endpoint não encontrado"}, 404)
     
