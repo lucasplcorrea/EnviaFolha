@@ -2,7 +2,7 @@ import { useAuth } from '../contexts/AuthContext';
 
 // Mapeamento de páginas permitidas por role
 const ROLE_PAGES = {
-  admin: ['dashboard', 'employees', 'payroll', 'tax-statements', 'communications', 'reports', 'users', 'settings', 'profile'],
+  admin: ['dashboard', 'employees', 'companies', 'work-locations', 'payroll', 'tax-statements', 'communications', 'reports', 'users', 'settings', 'profile'],
   manager: ['dashboard', 'employees', 'payroll', 'tax-statements', 'communications', 'reports', 'settings', 'profile'],
   operator: ['dashboard', 'payroll', 'tax-statements', 'communications', 'reports', 'profile'],
   viewer: ['reports', 'profile']
@@ -13,6 +13,8 @@ const ROUTE_TO_PAGE = {
   '/': 'dashboard',
   '/dashboard': 'dashboard',
   '/employees': 'employees',
+  '/companies': 'companies',
+  '/work-locations': 'work-locations',
   '/payroll': 'payroll',
   '/payroll-processor': 'payroll',
   '/payroll-sender': 'payroll',

@@ -22,6 +22,8 @@ import Endomarketing from './pages/Endomarketing.jsx';
 import RHIndicators from './pages/RHIndicators.jsx';
 import QueueManagement from './pages/QueueManagement.jsx';
 import Profile from './pages/Profile.jsx';
+import Companies from './pages/Companies.jsx';
+import WorkLocations from './pages/WorkLocations.jsx';
 import TaxStatements from './pages/TaxStatements.jsx';
 
 // Indicadores Refatorados
@@ -80,6 +82,8 @@ function AppContent() {
                     <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
                     <Route path="employees/:id" element={<ProtectedRoute><EmployeeDetail /></ProtectedRoute>} />
                     <Route path="employees" element={<ProtectedRoute><Employees /></ProtectedRoute>} />
+                    <Route path="companies" element={<ProtectedRoute><Companies /></ProtectedRoute>} />
+                    <Route path="work-locations" element={<ProtectedRoute><WorkLocations /></ProtectedRoute>} />
                     {/* Rota removida: importação agora é feita em /employees */}
                     <Route path="payroll-processor" element={<ProtectedRoute><PayrollProcessor /></ProtectedRoute>} />
                     <Route path="payroll-sender" element={<ProtectedRoute><PayrollSender /></ProtectedRoute>} />
