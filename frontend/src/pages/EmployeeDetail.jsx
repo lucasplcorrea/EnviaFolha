@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { 
   UserCircleIcon, 
   ClockIcon, 
-  DocumentTextIcon,
+
   CalendarIcon,
   BriefcaseIcon,
   CurrencyDollarIcon,
@@ -18,7 +18,12 @@ import {
   IdentificationIcon,
   CakeIcon,
   UserIcon,
-  MapPinIcon
+  MapPinIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  MagnifyingGlassIcon,
+  ClipboardDocumentListIcon,
+  ArrowTrendingUpIcon
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import api from '../services/api';
@@ -27,6 +32,7 @@ import { useTheme } from '../contexts/ThemeContext';
 const EmployeeDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { config } = useTheme();
   const [employee, setEmployee] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -36,10 +42,29 @@ const EmployeeDetail = () => {
   const [companies, setCompanies] = useState([]);
   const [workLocations, setWorkLocations] = useState([]);
   
+  // Lógica de Navegação
+  const [allEmployees, setAllEmployees] = useState([]);
+  const listIds = location.state?.fromList || [];
+  const currentIndex = listIds.indexOf(parseInt(id));
+  const hasPrev = currentIndex > 0;
+  const hasNext = currentIndex >= 0 && currentIndex < listIds.length - 1;
+
+  const goToPrev = () => {
+    if (hasPrev) navigate(`/employees/${listIds[currentIndex - 1]}`, { state: location.state });
+  };
+  
+  const goToNext = () => {
+    if (hasNext) navigate(`/employees/${listIds[currentIndex + 1]}`, { state: location.state });
+  };
+  
   // Estados para Afastamentos
   const [leaves, setLeaves] = useState([]);
   const [loadingLeaves, setLoadingLeaves] = useState(false);
   const [showLeaveForm, setShowLeaveForm] = useState(false);
+  
+  // Estados para Movimentações
+  const [movements, setMovements] = useState([]);
+  const [loadingMovements, setLoadingMovements] = useState(false);
   const [editingLeave, setEditingLeave] = useState(null);
   const [leaveForm, setLeaveForm] = useState({
     leave_type: '',
@@ -123,13 +148,31 @@ const EmployeeDetail = () => {
     // Carregar empresas e locais para os dropdowns
     api.get('/companies').then(r => setCompanies(r.data || [])).catch(() => {});
     api.get('/work-locations?active=false').then(r => setWorkLocations(r.data || [])).catch(() => {});
+    api.get('/employees?status=all').then(res => setAllEmployees(res.data.employees || [])).catch(() => {});
   }, [id, loadEmployee]);
 
   useEffect(() => {
     if (activeTab === 'leaves') {
       loadLeaves();
+    } else if (activeTab === 'movements') {
+      loadMovements();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
+
+  const loadMovements = async () => {
+    setLoadingMovements(true);
+    try {
+      const response = await api.get(`/employees/${id}/movements`);
+      setMovements(response.data.movements || []);
+    } catch (error) {
+      console.error('Erro ao carregar movimentações:', error);
+      toast.error('Erro ao carregar movimentações');
+      setMovements([]);
+    } finally {
+      setLoadingMovements(false);
+    }
+  };
 
   const loadLeaves = async () => {
     setLoadingLeaves(true);
@@ -266,16 +309,64 @@ const EmployeeDetail = () => {
   }
 
   return (
-    <div className="max-w-7xl mx-auto">
+    <div className="max-w-7xl mx-auto pb-10">
       {/* Header Estilo Banner Moderno */}
       <div className="mb-6">
-        <button
-          onClick={() => navigate('/employees')}
-          className="mb-4 inline-flex items-center text-sm text-gray-600 hover:text-gray-900 transition-colors"
-        >
-          <ArrowLeftIcon className="h-4 w-4 mr-2" />
-          Voltar para Lista
-        </button>
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-3 sm:space-y-0 mb-4">
+          <button
+            onClick={() => navigate('/employees')}
+            className="inline-flex items-center text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors bg-white px-3 py-1.5 rounded-lg border border-gray-200 shadow-sm hover:shadow hover:border-blue-300"
+          >
+            <ArrowLeftIcon className="h-4 w-4 mr-2 text-blue-500" />
+            Voltar para a Lista
+          </button>
+          
+          {listIds.length > 0 && (
+            <div className="flex items-center space-x-1.5 bg-white p-1 rounded-lg border border-gray-200 shadow-sm">
+              <button 
+                onClick={goToPrev}
+                disabled={!hasPrev}
+                className={`p-1.5 rounded-md flex items-center transition-colors ${hasPrev ? 'text-gray-700 hover:bg-gray-100 hover:text-blue-600' : 'text-gray-300 cursor-not-allowed'}`}
+                title="Colaborador Anterior"
+              >
+                <ChevronLeftIcon className="w-5 h-5" />
+              </button>
+              
+              <div className="relative group">
+                <select
+                  value={id}
+                  onChange={(e) => navigate(`/employees/${e.target.value}`, { state: location.state })}
+                  className="appearance-none bg-gray-50 border border-gray-200 text-gray-700 sm:text-sm rounded-md focus:ring-blue-500 focus:border-blue-500 block w-56 md:w-64 p-1.5 pr-8 hover:bg-white transition-colors truncate font-medium cursor-pointer"
+                  title="Pesquisar/Pular para Colaborador"
+                >
+                  {allEmployees.length > 0 ? (
+                    allEmployees.filter(e => listIds.includes(e.id)).map(e => (
+                      <option key={e.id} value={e.id}>{e.full_name}</option>
+                    ))
+                  ) : (
+                    <option value={id}>{employee.full_name}</option>
+                  )}
+                  {/* Fallback no caso de ID ativo não estar carregado ainda no list */}
+                  {allEmployees.length > 0 && !allEmployees.find(e => String(e.id) === String(id)) && (
+                    <option value={id}>{employee.full_name}</option>
+                  )}
+                </select>
+                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-400 group-hover:text-blue-500">
+                  <MagnifyingGlassIcon className="h-4 w-4" />
+                </div>
+              </div>
+
+              <button 
+                onClick={goToNext}
+                disabled={!hasNext}
+                className={`p-1.5 rounded-md flex items-center transition-colors ${hasNext ? 'text-gray-700 hover:bg-gray-100 hover:text-blue-600' : 'text-gray-300 cursor-not-allowed'}`}
+                title="Próximo Colaborador"
+              >
+                <ChevronRightIcon className="w-5 h-5" />
+              </button>
+            </div>
+          )}
+        </div>
         
         <div className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden relative">
           {/* abstract background banner */}
@@ -347,16 +438,17 @@ const EmployeeDetail = () => {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="border-b border-gray-200 mb-6">
-        <nav className="-mb-px flex space-x-8">
+      <div className="border-b border-gray-200 mb-6 overflow-x-auto hide-scrollbar">
+        <nav className="-mb-px flex space-x-8 pb-1 min-w-max">
           {[
             { id: 'info', label: 'Informações', icon: UserCircleIcon },
             { id: 'status', label: 'Status', icon: ClockIcon },
-            { id: 'movements', label: 'Movimentações', icon: BriefcaseIcon },
+            { id: 'movements', label: 'Histórico de Lotações', icon: BriefcaseIcon },
             { id: 'leaves', label: 'Afastamentos', icon: CalendarIcon },
-            { id: 'payroll', label: 'Folha de Pagamento', icon: CurrencyDollarIcon },
-            { id: 'benefits', label: 'Benefícios', icon: HeartIcon }
+            { id: 'evolution', label: 'Evolução Profissional', icon: ArrowTrendingUpIcon },
+            { id: 'payroll', label: 'Folha de Pagto', icon: CurrencyDollarIcon },
+            { id: 'benefits', label: 'Benefícios', icon: HeartIcon },
+            { id: 'timesheet', label: 'Cartão Ponto', icon: ClipboardDocumentListIcon }
           ].map((tab) => (
             <button
               key={tab.id}
@@ -1035,49 +1127,198 @@ const EmployeeDetail = () => {
           </div>
         )}
 
-        {/* Outras tabs - placeholders melhorados */}
+        {/* Aba de Movimentações */}
         {activeTab === 'movements' && (
-          <div className="text-center py-16">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-yellow-100 rounded-full mb-4">
-              <BriefcaseIcon className="h-8 w-8 text-yellow-600" />
+          <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden mb-6">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">Histórico de Lotações e Movimentações</h3>
             </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Movimentações em Desenvolvimento</h3>
-            <p className="text-sm text-gray-500 max-w-md mx-auto mb-4">
-              Esta seção permitirá registrar promoções, transferências e alterações de cargo.
+            
+            {loadingMovements ? (
+              <div className="p-8 text-center flex flex-col items-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mb-4"></div>
+                <p className="text-gray-500">Carregando histórico...</p>
+              </div>
+            ) : movements.length === 0 ? (
+              <div className="p-8 text-center bg-gray-50 rounded-lg border-2 border-dashed border-gray-200 m-6">
+                <BriefcaseIcon className="mx-auto h-12 w-12 text-gray-400 mb-3" />
+                <h3 className="text-sm font-medium text-gray-900 mb-1">Nenhuma movimentação</h3>
+                <p className="text-sm text-gray-500">O histórico de lotações deste colaborador está vazio.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Data</th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tipo/Motivo</th>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Alteração</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {movements.map((mov) => {
+                      const formatDate = (dateString) => {
+                        if (!dateString) return '-';
+                        const parts = dateString.split('-');
+                        return `${parts[2]}/${parts[1]}/${parts[0]}`;
+                      };
+                      
+                      const oldLoc = workLocations.find(w => w.id.toString() === String(mov.previous_work_location_id))?.name || 'Não informada';
+                      const newLoc = workLocations.find(w => w.id.toString() === String(mov.new_work_location_id))?.name || 'Não informada';
+                      
+                      return (
+                        <tr key={mov.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {formatDate(mov.date)}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            <span className="font-semibold text-gray-900">{mov.movement_type}</span>
+                            <br/>
+                            <span className="text-xs text-gray-400">{mov.reason || 'Atualização'}</span>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-500">
+                            {(mov.previous_department !== mov.new_department) && (
+                              <div className="mb-1 border-b border-gray-100 pb-1">
+                                <span className="font-medium text-gray-700">Depto: </span>
+                                <span className="text-gray-400 line-through">{mov.previous_department || '-'}</span>
+                                <span className="text-blue-500 mx-1">➜</span>
+                                <span className="text-gray-900"> {mov.new_department || '-'}</span>
+                              </div>
+                            )}
+                            {(mov.previous_position !== mov.new_position) && (
+                              <div className="mb-1 border-b border-gray-100 pb-1">
+                                <span className="font-medium text-gray-700">Cargo: </span>
+                                <span className="text-gray-400 line-through">{mov.previous_position || '-'}</span>
+                                <span className="text-blue-500 mx-1">➜</span>
+                                <span className="text-gray-900"> {mov.new_position || '-'}</span>
+                              </div>
+                            )}
+                            {(mov.previous_work_location_id !== mov.new_work_location_id) && (
+                              <div className="mb-1">
+                                <span className="font-medium text-gray-700">Local: </span>
+                                <span className="text-gray-400 line-through">{oldLoc}</span>
+                                <span className="text-blue-500 mx-1">➜</span>
+                                <span className="text-gray-900"> {newLoc}</span>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'evolution' && (
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden text-center py-16">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-100 rounded-full mb-4">
+              <ArrowTrendingUpIcon className="h-8 w-8 text-indigo-600" />
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Evolução Profissional e Salarial</h3>
+            <p className="text-sm text-gray-500 max-w-lg mx-auto mb-6">
+              Esta área centralizará o acompanhamento de promoções, dissídios, méritos e evolução do pacote de remuneração total do colaborador.
             </p>
-            <span className="inline-flex items-center px-3 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs font-medium">
-              🚧 Aguarde futuras atualizações
+            <span className="inline-flex shadow-sm items-center px-4 py-2 bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-lg text-sm font-semibold">
+              🚀 Funcionalidade na Implantação V2
             </span>
           </div>
         )}
 
         {activeTab === 'payroll' && (
-          <div className="text-center py-16">
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden text-center py-16">
             <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
               <CurrencyDollarIcon className="h-8 w-8 text-green-600" />
             </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Folha de Pagamento em Desenvolvimento</h3>
-            <p className="text-sm text-gray-500 max-w-md mx-auto mb-4">
-              Histórico de holerites, salários e benefícios estarão disponíveis em breve.
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Folha de Pagamento Interna</h3>
+            <p className="text-sm text-gray-500 max-w-lg mx-auto mb-6">
+              Os holerites importados via ferramenta <strong>/payroll-data</strong> ficarão agregados e vinculados automaticamente aqui.
             </p>
-            <span className="inline-flex items-center px-3 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">
-              🚧 Aguarde futuras atualizações
+            <span className="inline-flex shadow-sm items-center px-4 py-2 bg-green-50 border border-green-100 text-green-700 rounded-lg text-sm font-semibold">
+              ⏳ Aguardando integração de arquivo nativo (.XLSX)
             </span>
           </div>
         )}
 
         {activeTab === 'benefits' && (
-          <div className="text-center py-16">
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden text-center py-16">
             <div className="inline-flex items-center justify-center w-16 h-16 bg-purple-100 rounded-full mb-4">
               <HeartIcon className="h-8 w-8 text-purple-600" />
             </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Benefícios em Desenvolvimento</h3>
-            <p className="text-sm text-gray-500 max-w-md mx-auto mb-4">
-              Gestão de vale-transporte, vale-refeição e planos de saúde estarão disponíveis aqui.
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Gestão de Benefícios</h3>
+            <p className="text-sm text-gray-500 max-w-lg mx-auto mb-6">
+              Controle de Vale-Transporte, Vale-Alimentação, Planos de Saúde e Odontológico serão controlados diretamente por aqui.
             </p>
-            <span className="inline-flex items-center px-3 py-1 bg-purple-100 text-purple-800 rounded-full text-xs font-medium">
-              🚧 Aguarde futuras atualizações
+            <span className="inline-flex shadow-sm items-center px-4 py-2 bg-purple-50 border border-purple-100 text-purple-700 rounded-lg text-sm font-semibold">
+              ⏳ Aguardando implantação
             </span>
+          </div>
+        )}
+
+        {activeTab === 'timesheet' && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+             {/* Header Mock Timesheet */}
+             <div className="px-6 py-5 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center sm:justify-between bg-gray-50">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900 flex items-center">
+                    <ClipboardDocumentListIcon className="h-5 w-5 text-blue-600 mr-2" />
+                    Espelho de Ponto: Abril/2026
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1">Integração nativa com sistema de Ponto Eletrônico Mobile/Geo</p>
+                </div>
+                <div className="mt-4 sm:mt-0 opacity-50 cursor-not-allowed">
+                  <select className="bg-white border text-sm border-gray-300 rounded-md py-1.5 px-3">
+                    <option>Mês 04/2026</option>
+                  </select>
+                </div>
+             </div>
+
+             {/* Tabela Mockada de Cartão Ponto */}
+             <div className="overflow-x-auto opacity-70">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-white">
+                    <tr>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Data</th>
+                      <th scope="col" className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Entrada 1</th>
+                      <th scope="col" className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Saída 1</th>
+                      <th scope="col" className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Entrada 2</th>
+                      <th scope="col" className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Saída 2</th>
+                      <th scope="col" className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Excedente</th>
+                      <th scope="col" className="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Localização</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-100">
+                    {[1,2,3].map((day) => (
+                      <tr key={day} className="hover:bg-blue-50 transition-colors">
+                        <td className="px-6 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                          0{day}/04/2026
+                        </td>
+                        <td className="px-3 py-3 whitespace-nowrap text-sm text-center text-gray-600 font-mono bg-green-50">08:00</td>
+                        <td className="px-3 py-3 whitespace-nowrap text-sm text-center text-gray-600 font-mono">12:05</td>
+                        <td className="px-3 py-3 whitespace-nowrap text-sm text-center text-gray-600 font-mono bg-blue-50">13:00</td>
+                        <td className="px-3 py-3 whitespace-nowrap text-sm text-center text-gray-600 font-mono">18:10</td>
+                        <td className="px-3 py-3 whitespace-nowrap text-sm text-center font-medium text-orange-600">
+                          +00:15
+                        </td>
+                        <td className="px-6 py-3 whitespace-nowrap text-sm text-right align-middle">
+                          <button className="inline-flex items-center text-blue-600 hover:text-blue-800" title="Ver no Mapa">
+                            <MapPinIcon className="h-5 w-5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    <tr className="bg-blue-50">
+                      <td colSpan="7" className="px-6 py-8 text-center border-t border-dashed border-blue-200">
+                         <span className="inline-flex shadow-sm items-center px-4 py-2 bg-blue-100 border border-blue-200 text-blue-700 rounded-lg text-sm font-semibold">
+                            🚧 Demonstração visual do layout. Futura Tabela real integrará as leituras XLSX.
+                         </span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+             </div>
           </div>
         )}
       </div>

@@ -204,7 +204,7 @@ const Layout = ({ children }) => {
         {/* Page content */}
         <main className={`flex-1 relative overflow-y-auto focus:outline-none ${config.classes.body} print:overflow-visible print:h-auto`}>
           <div className="py-6 print:py-2">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8 print:max-w-none print:px-2">
+            <div className="w-full max-w-[96%] xl:max-w-screen-2xl mx-auto px-4 sm:px-6 md:px-8 print:max-w-none print:px-2">
               {children}
             </div>
           </div>

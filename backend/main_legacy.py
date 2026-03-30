@@ -297,16 +297,16 @@ class BulkSendJob:
             'current_file': self.current_file
         }
 
-def load_employees_data():
+def load_employees_data(include_inactive=False):
     """Carrega dados dos funcionários do PostgreSQL ou JSON como fallback com cache"""
     global employees_cache
     
-    # Verificar se cache é válido
+    # Verificar se cache é válido (apenas se não pedir inativos)
     import time
     current_time = time.time()
     cache_age = current_time - employees_cache['last_update']
     
-    if employees_cache['data'] is not None and cache_age < employees_cache['ttl']:
+    if not include_inactive and employees_cache['data'] is not None and cache_age < employees_cache['ttl']:
         # Retornar do cache
         print(f"💾 Usando cache de employees (idade: {cache_age:.1f}s)")
         return employees_cache['data']
@@ -324,7 +324,10 @@ def load_employees_data():
             db = SessionLocal()
             
             print("📊 Executando query para buscar employees...")
-            employees = db.query(Employee).filter(Employee.is_active == True).all()
+            if include_inactive:
+                employees = db.query(Employee).all()
+            else:
+                employees = db.query(Employee).filter(Employee.is_active == True).all()
             print(f"✅ Query concluída: {len(employees)} employees encontrados")
             
             # Converter para formato compatível incluindo novos campos
@@ -362,10 +365,12 @@ def load_employees_data():
                 unique_ids_sample = [emp['unique_id'] for emp in employees_data[:5]]
                 print(f"📋 Primeiros unique_ids: {unique_ids_sample}")
             
-            # Atualizar cache
             result = {"employees": employees_data, "users": []}
-            employees_cache['data'] = result
-            employees_cache['last_update'] = current_time
+            
+            if not include_inactive:
+                # Atualizar cache apenas se for request de ativos (padrão)
+                employees_cache['data'] = result
+                employees_cache['last_update'] = current_time
             
             return result
             
@@ -420,7 +425,7 @@ def get_employee_by_id(employee_id):
             try:
                 emp_id = int(employee_id)
                 print(f"🔢 Tentando buscar por ID numérico: {emp_id}")
-                employee = db.query(Employee).filter(Employee.id == emp_id, Employee.is_active == True).first()
+                employee = db.query(Employee).filter(Employee.id == emp_id).first()
             except ValueError:
                 print(f"⚠️  Não é ID numérico, tentando por unique_id")
                 employee = None
@@ -428,7 +433,7 @@ def get_employee_by_id(employee_id):
             # Se não encontrou por ID, buscar por unique_id
             if not employee:
                 print(f"🔍 Buscando por unique_id: {employee_id}")
-                employee = db.query(Employee).filter(Employee.unique_id == employee_id, Employee.is_active == True).first()
+                employee = db.query(Employee).filter(Employee.unique_id == employee_id).first()
             
             if not employee:
                 print(f"❌ Funcionário {employee_id} não encontrado")
@@ -1487,6 +1492,12 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     self.handle_get_employee_leave_detail(employee_id, leave_id)
                 return  # IMPORTANTE: Return aqui para não cair na rota padrão
             
+            if len(parts) >= 6 and parts[5] == 'movements':
+                employee_id = parts[4]
+                print(f"✅ Rota de lotaçoes detectada para employee_id: {employee_id}")
+                self.handle_get_employee_movements(employee_id)
+                return
+            
             # Rota padrão de detalhes do employee
             employee_id = path.split('/')[-1]
             print(f"🔍 Rota de detalhes capturada para employee_id: {employee_id}")
@@ -1975,7 +1986,11 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     def send_employees_list(self):
         """Lista todos os funcionários"""
         try:
-            current_data = load_employees_data()
+            query = urllib.parse.urlparse(self.path).query
+            args = urllib.parse.parse_qs(query)
+            include_inactive = args.get('status', [''])[0] == 'all'
+            
+            current_data = load_employees_data(include_inactive=include_inactive)
             employees = current_data.get('employees', [])
             
             response = {
@@ -2333,6 +2348,11 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                         self.send_json_response({"error": f"ID único {data.get('unique_id')} já existe"}, 400)
                         return
                 
+                # Salvar estado anterior para log de movimentação
+                prev_pos = employee.position
+                prev_dept = employee.department
+                prev_loc = employee.work_location_id
+
                 # Atualizar campos básicos
                 if 'unique_id' in data:
                     employee.unique_id = data['unique_id']
@@ -2424,6 +2444,23 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     else:
                         employee.leave_end_date = None
                 
+                if employee.position != prev_pos or employee.department != prev_dept or employee.work_location_id != prev_loc:
+                    from app.models.movement import MovementRecord
+                    from datetime import date
+                    mov = MovementRecord(
+                        employee_id=employee.id,
+                        movement_type="Atualização de Pessoal",
+                        previous_position=prev_pos,
+                        new_position=employee.position,
+                        previous_department=prev_dept,
+                        new_department=employee.department,
+                        previous_work_location_id=prev_loc,
+                        new_work_location_id=employee.work_location_id,
+                        date=date.today(),
+                        reason="Edição Manual"
+                    )
+                    db.add(mov)
+
                 db.commit()
                 
                 # Preparar resposta com todos os campos
@@ -2505,6 +2542,44 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
 
     # ===== HANDLERS DE AFASTAMENTOS (LEAVES) =====
     
+    def handle_get_employee_movements(self, employee_id):
+        """Buscar histórico de lotações e movimentos de um funcionário"""
+        try:
+            if not SessionLocal:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                return
+                
+            from app.models.movement import MovementRecord
+            db = SessionLocal()
+            
+            # Buscar movimentos ordenados decrescente
+            movements = db.query(MovementRecord).filter(
+                MovementRecord.employee_id == employee_id
+            ).order_by(MovementRecord.date.desc(), MovementRecord.id.desc()).all()
+            
+            results = []
+            for m in movements:
+                results.append({
+                    "id": m.id,
+                    "date": m.date.isoformat() if m.date else None,
+                    "movement_type": m.movement_type,
+                    "previous_position": m.previous_position,
+                    "new_position": m.new_position,
+                    "previous_department": m.previous_department,
+                    "new_department": m.new_department,
+                    "previous_work_location_id": m.previous_work_location_id,
+                    "new_work_location_id": m.new_work_location_id,
+                    "reason": m.reason
+                })
+                
+            db.close()
+            self.send_json_response({"movements": results}, 200)
+            
+        except Exception as e:
+            print(f"❌ Erro ao buscar movimentos: {e}")
+            if 'db' in locals(): db.close()
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
     def handle_get_employee_leaves(self, employee_id):
         """Listar todos os afastamentos de um funcionário"""
         try:
@@ -3048,39 +3123,66 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 return
             
             # Validar campos permitidos para atualização em lote
-            allowed_fields = ['department', 'position']
-            update_fields = []
-            params = {}
-            
+            allowed_fields = ['department', 'position', 'work_location_id']
+            update_fields = {}
             for field, value in updates.items():
-                if field in allowed_fields and value.strip():
-                    update_fields.append(f"{field} = :{field}")
-                    params[field] = value.strip()
+                if field in allowed_fields and str(value).strip():
+                    update_fields[field] = value
+                    
+            if 'work_location_id' in updates and updates['work_location_id'] == '':
+                 update_fields['work_location_id'] = None
             
             if not update_fields:
                 self.send_json_response({"error": "Nenhum campo válido para atualizar"}, 400)
                 return
             
             if SessionLocal:
-                from sqlalchemy import text
                 db = SessionLocal()
-                
                 try:
-                    # Atualizar funcionários em lote
-                    placeholders = ','.join([':id' + str(i) for i in range(len(employee_ids))])
-                    id_params = {f'id{i}': emp_id for i, emp_id in enumerate(employee_ids)}
-                    params.update(id_params)
-                    params['updated_at'] = 'NOW()'
+                    from app.models.employee import Employee
+                    from app.models.movement import MovementRecord
+                    from datetime import date
                     
-                    set_clause = ', '.join(update_fields) + ', updated_at = NOW()'
+                    employees = db.query(Employee).filter(
+                        Employee.id.in_(employee_ids), 
+                        Employee.is_active == True
+                    ).all()
                     
-                    result = db.execute(text(f"""
-                        UPDATE employees 
-                        SET {set_clause}
-                        WHERE id IN ({placeholders}) AND is_active = true
-                    """), params)
+                    updated_count = 0
                     
-                    updated_count = result.rowcount
+                    for emp in employees:
+                        prev_pos = emp.position
+                        prev_dept = emp.department
+                        prev_loc = emp.work_location_id
+                        changed = False
+                        
+                        if 'department' in update_fields:
+                            emp.department = update_fields['department']
+                            changed = True
+                        if 'position' in update_fields:
+                            emp.position = update_fields['position']
+                            changed = True
+                        if 'work_location_id' in update_fields:
+                            emp.work_location_id = update_fields['work_location_id']
+                            changed = True
+                            
+                        if changed:
+                            updated_count += 1
+                            if emp.position != prev_pos or emp.department != prev_dept or emp.work_location_id != prev_loc:
+                                mov = MovementRecord(
+                                    employee_id=emp.id,
+                                    movement_type="Transferência (Lote)",
+                                    previous_position=prev_pos,
+                                    new_position=emp.position,
+                                    previous_department=prev_dept,
+                                    new_department=emp.department,
+                                    previous_work_location_id=prev_loc,
+                                    new_work_location_id=emp.work_location_id,
+                                    date=date.today(),
+                                    reason="Edição em Massa"
+                                )
+                                db.add(mov)
+
                     db.commit()
                     db.close()
                     
@@ -3089,12 +3191,12 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     employees_data = load_employees_data()
                     
                     self.send_json_response({
-                        "message": f"{updated_count} funcionários atualizados com sucesso",
+                        "message": f"{updated_count} funcionários atualizados com sucesso e histórico gerado",
                         "updated_count": updated_count,
                         "updates": updates
                     }, 200)
                     print(f"✅ {updated_count} funcionários atualizados em lote!")
-                    
+
                 except Exception as e:
                     db.rollback()
                     db.close()
