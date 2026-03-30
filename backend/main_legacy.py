@@ -541,6 +541,10 @@ def save_employee_to_db(employee_data, created_by_user_id=3):
                     existing.contract_type = employee_data['contract_type']
                 if employee_data.get('status_reason'):
                     existing.status_reason = employee_data['status_reason']
+                if 'company_id' in employee_data:
+                    existing.company_id = employee_data['company_id']
+                if 'work_location_id' in employee_data:
+                    existing.work_location_id = employee_data['work_location_id']
             else:
                 # Criar novo - preparar campos de data
                 from datetime import datetime
@@ -573,6 +577,8 @@ def save_employee_to_db(employee_data, created_by_user_id=3):
                     admission_date=admission_date_obj,
                     contract_type=employee_data.get('contract_type'),
                     status_reason=employee_data.get('status_reason'),
+                    company_id=employee_data.get('company_id'),
+                    work_location_id=employee_data.get('work_location_id'),
                     is_active=employee_data.get('is_active', True),
                     created_by=created_by_user_id
                 )
@@ -2267,6 +2273,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 "admission_date": data.get('admission_date', ''),
                 "contract_type": data.get('contract_type', ''),
                 "status_reason": data.get('status_reason', ''),
+                "company_id": data.get('company_id'),
+                "work_location_id": data.get('work_location_id'),
                 "is_active": True
             }
             
@@ -2375,6 +2383,12 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
                 if 'status_reason' in data:
                     employee.status_reason = data['status_reason'] or None
+                    
+                if 'company_id' in data:
+                    employee.company_id = data['company_id'] if data['company_id'] != '' else None
+                    
+                if 'work_location_id' in data:
+                    employee.work_location_id = data['work_location_id'] if data['work_location_id'] != '' else None
                 
                 # Atualizar campos de status
                 if 'employment_status' in data:
