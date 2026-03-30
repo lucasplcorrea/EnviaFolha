@@ -349,7 +349,9 @@ def load_employees_data():
                     "leave_start_date": emp.leave_start_date.isoformat() if emp.leave_start_date else "",
                     "leave_end_date": emp.leave_end_date.isoformat() if emp.leave_end_date else "",
                     "status_reason": emp.status_reason or "",
-                    "is_active": emp.is_active
+                    "is_active": emp.is_active,
+                    "company_id": emp.company_id,
+                    "work_location_id": emp.work_location_id
                 }
                 employees_data.append(emp_dict)
             
@@ -452,7 +454,9 @@ def get_employee_by_id(employee_id):
                 "leave_start_date": employee.leave_start_date.isoformat() if employee.leave_start_date else "",
                 "leave_end_date": employee.leave_end_date.isoformat() if employee.leave_end_date else "",
                 "status_reason": employee.status_reason or "",
-                "is_active": employee.is_active
+                "is_active": employee.is_active,
+                "company_id": employee.company_id,
+                "work_location_id": employee.work_location_id
             }
             
             print(f"✅ Funcionário {employee.name} (ID: {employee.id}) encontrado diretamente no banco")
