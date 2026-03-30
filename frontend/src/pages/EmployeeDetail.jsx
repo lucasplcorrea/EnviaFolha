@@ -267,69 +267,76 @@ const EmployeeDetail = () => {
 
   return (
     <div className="max-w-7xl mx-auto">
-      {/* Header com visual melhorado */}
+      {/* Header Estilo Banner Moderno */}
       <div className="mb-6">
         <button
           onClick={() => navigate('/employees')}
-          className="mb-4 inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
+          className="mb-4 inline-flex items-center text-sm text-gray-600 hover:text-gray-900 transition-colors"
         >
           <ArrowLeftIcon className="h-4 w-4 mr-2" />
-          Voltar para Colaboradores
+          Voltar para Lista
         </button>
         
-        <div className={`${config.classes.card} shadow-lg rounded-lg p-6 ${config.classes.border}`}>
-          <div className="flex items-start justify-between">
-            <div className="flex items-center space-x-4">
-              <div className="h-20 w-20 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white text-2xl font-bold">
-                {employee.full_name?.charAt(0) || 'C'}
+        <div className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden relative">
+          {/* abstract background banner */}
+          <div className="h-32 bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-800"></div>
+          
+          <div className="px-6 pb-6 pt-0 sm:flex sm:items-end sm:justify-between -mt-12 relative z-10">
+            <div className="sm:flex sm:space-x-5 items-end">
+              <div className="relative group">
+                <div className="h-28 w-28 rounded-full border-4 border-white bg-white flex items-center justify-center text-4xl font-bold text-blue-600 shadow-md overflow-hidden">
+                  {employee.full_name?.charAt(0) || 'C'}
+                </div>
+                <span className={`absolute bottom-2 right-2 h-5 w-5 rounded-full border-2 border-white ${employee.is_active ? 'bg-green-500' : 'bg-red-500'}`} title={employee.is_active ? 'Ativo' : 'Inativo'}></span>
               </div>
-              <div>
-                <h1 className={`text-3xl font-bold ${config.classes.text}`}>
-                  {employee.full_name}
-                </h1>
-                <div className="flex items-center space-x-4 mt-2">
-                  <span className="text-sm text-gray-500 flex items-center">
-                    <IdentificationIcon className="h-4 w-4 mr-1" />
-                    ID: {employee.unique_id}
-                  </span>
-                  <span className="text-sm text-gray-500 flex items-center">
-                    <BuildingOfficeIcon className="h-4 w-4 mr-1" />
-                    {employee.department || 'Sem departamento'}
-                  </span>
-                  <span className="text-sm text-gray-500">
-                    {employee.position || 'Sem cargo'}
-                  </span>
+              <div className="mt-4 sm:flex-1 sm:min-w-0 sm:flex sm:items-center sm:justify-end sm:space-x-6 sm:pb-3">
+                <div className="mt-6 sm:mt-0 sm:min-w-0 flex-1">
+                  <h1 className="text-3xl font-bold text-gray-900 truncate">
+                    {employee.full_name}
+                  </h1>
+                  <div className="flex flex-col sm:flex-row sm:flex-wrap sm:space-x-6 mt-1">
+                    <div className="mt-2 flex items-center text-sm text-gray-500 font-medium">
+                      <IdentificationIcon className="flex-shrink-0 mr-1.5 h-4 w-4 text-gray-400" />
+                      Matrícula: {employee.unique_id}
+                    </div>
+                    <div className="mt-2 flex items-center text-sm text-gray-500 font-medium">
+                      <BriefcaseIcon className="flex-shrink-0 mr-1.5 h-4 w-4 text-gray-400" />
+                      {employee.position || 'Nenhum cargo definido'}
+                    </div>
+                    <div className="mt-2 flex items-center text-sm text-gray-500 font-medium">
+                      <BuildingOfficeIcon className="flex-shrink-0 mr-1.5 h-4 w-4 text-gray-400" />
+                      {companies.find(c => c.id === employee.company_id)?.name || employee.department || 'Não alocado'}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
             
-            <div className="flex items-center space-x-3">
-              <span className={`px-4 py-2 rounded-full text-sm font-semibold ${getStatusBadge(statusForm.employment_status)}`}>
-                {statusForm.employment_status || 'Ativo'}
-              </span>
-              {!editingInfo && (
+            <div className="mt-6 flex flex-col justify-stretch space-y-3 sm:flex-row sm:space-y-0 sm:space-x-4 pb-2">
+              <div className={`inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-semibold rounded-md shadow-sm ${employee.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                 <span className={`h-2 w-2 rounded-full mr-2 ${employee.is_active ? 'bg-green-500' : 'bg-red-500'}`}></span>
+                 {employee.is_active ? 'Colaborador Ativo' : 'Desligado'}
+              </div>
+              
+              {!editingInfo ? (
                 <button
                   onClick={() => setEditingInfo(true)}
-                  className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                  className="inline-flex justify-center items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 transition-colors"
                 >
-                  <PencilIcon className="h-5 w-5 mr-2" />
-                  Editar Cadastro
+                  <PencilIcon className="h-4 w-4 mr-2 text-gray-400" />
+                  Editar Perfil
                 </button>
-              )}
-              {editingInfo && (
+              ) : (
                 <div className="flex space-x-2">
                   <button
                     onClick={handleInfoUpdate}
-                    className="inline-flex items-center px-4 py-2 border border-transparent rounded-md text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"
+                    className="inline-flex justify-center items-center px-5 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 transition"
                   >
-                    Salvar
+                    Salvar Alterações
                   </button>
                   <button
-                    onClick={() => {
-                      setEditingInfo(false);
-                      loadEmployee(); // Recarregar para reverter mudanças
-                    }}
-                    className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                    onClick={() => { setEditingInfo(false); loadEmployee(); }}
+                    className="inline-flex justify-center items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 transition"
                   >
                     Cancelar
                   </button>

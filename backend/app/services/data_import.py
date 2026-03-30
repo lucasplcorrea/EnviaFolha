@@ -139,11 +139,18 @@ class DataImportService:
             request_method=self.request_method, request_path=self.request_path
         )
 
-        # ── Pré-carregar mapeamento prefix → company_id ─────────────────
+        # ── Pré-carregar mapeamento prefix → company_id e work_location → id ─────────────────
         from app.models.company import Company as CompanyModel
+        from app.models.work_location import WorkLocation as WorkLocationModel
+        
         company_map: dict[str, int] = {
             c.payroll_prefix: c.id
             for c in self.db.query(CompanyModel).all()
+        }
+        
+        work_location_map: dict[tuple[int, str], int] = {
+            (loc.company_id, loc.name.lower()): loc.id
+            for loc in self.db.query(WorkLocationModel).all()
         }
 
         for i, row in enumerate(rows, start=1):
@@ -198,6 +205,17 @@ class DataImportService:
                     Employee.absolute_id == absolute_id
                 ).first()
 
+                # Resolve Work Location FK via String Match
+                company_id = company_map.get(prefix_4)
+                
+                local_trabalho = _clean_str(row.get('local_trabalho') or row.get('work_location') or row.get('local'))
+                work_location_id = None
+                
+                if company_id and local_trabalho:
+                    work_location_id = work_location_map.get((company_id, local_trabalho.lower()))
+                    if not work_location_id:
+                        self.logger.log_employee_action(f"Local '{local_trabalho}' não encontrado para empresa {company_id}", employee_id="N/A", user_id=self.user_id)
+
                 data = {
                     'absolute_id': absolute_id,
                     'unique_id': unique_id,
@@ -208,7 +226,8 @@ class DataImportService:
                     'department': department,
                     'position': position,
                     'company_code': prefix_4,
-                    'company_id': company_map.get(prefix_4),   # FK para companies
+                    'company_id': company_id,   # FK para companies
+                    'work_location_id': work_location_id, # FK para work_locations
                     'registration_number': mat_5,
                     'sex': sex,
                     'marital_status': marital_status,
