@@ -25,7 +25,7 @@ class HRIndicatorSnapshot(Base, TimestampMixin):
     # Metadados
     total_records = Column(Integer, nullable=True)  # Quantidade de registros analisados
     calculation_time_ms = Column(Integer, nullable=True)  # Tempo de processamento em milissegundos
-    is_valid = Column(Integer, default=1)  # SQLite usa INTEGER para Boolean
+    is_valid = Column(Integer, default=1)
     
     # Índices compostos para queries otimizadas
     __table_args__ = (

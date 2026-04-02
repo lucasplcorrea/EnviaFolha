@@ -5,7 +5,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from app.models.base import engine, Base
 from app.models.movement import MovementRecord
-from sqlalchemy import text, inspect
+from sqlalchemy import text
 
 def run_patch():
     try:
@@ -15,14 +15,8 @@ def run_patch():
         
         # Verify if migration is needed anyway
         with engine.connect() as conn:
-            is_sqlite = engine.url.drivername == 'sqlite'
-            
-            if is_sqlite:
-                result = conn.execute(text("PRAGMA table_info(movement_records)"))
-                columns = [row[1] for row in result]
-            else:
-                result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='movement_records'"))
-                columns = [row[0] for row in result]
+            result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='movement_records'"))
+            columns = [row[0] for row in result]
             
             if 'previous_work_location_id' not in columns:
                 print("Adding previous_work_location_id...")

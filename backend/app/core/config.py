@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     
     # Configurações do banco de dados
-    DATABASE_URL: str = "sqlite:///./nexo_rh.db"
+    DATABASE_URL: str = "postgresql://enviafolha_user:secure_password@localhost:5432/enviafolha_db"
     
     # Configurações PostgreSQL individuais
     DB_HOST: str = "localhost"

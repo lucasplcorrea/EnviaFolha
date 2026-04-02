@@ -64,10 +64,6 @@ logs
 *.tmp
 *.temp
 
-# Database
-*.db
-*.sqlite
-
 # Data directories (will be mounted as volumes)
 data/
 uploads/
