@@ -2,8 +2,10 @@
 WIPE TOTAL — Zera TODAS as tabelas exceto 'users' e 'roles'.
 """
 import psycopg2
+import os
 
-conn = psycopg2.connect("postgresql://enviafolha_user:secure_password@localhost:5432/enviafolha_db")
+database_url = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/dbname")
+conn = psycopg2.connect(database_url)
 conn.autocommit = False
 cur = conn.cursor()
 

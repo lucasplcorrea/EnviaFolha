@@ -67,13 +67,13 @@ if path == '/api/v1/auth/login':
 ```bash
 # Teste via frontend:
 http://localhost:3000/login
-Username: admin
-Password: admin123
+Username: <seu_usuario>
+Password: <sua_senha>
 
 # Ou via curl:
 curl -X POST http://localhost:8002/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin123"}'
+  -d '{"username":"<seu_usuario>","password":"<sua_senha>"}'
 ```
 
 **Resultado esperado:**

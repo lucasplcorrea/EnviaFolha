@@ -90,23 +90,8 @@ class AuthRouter(BaseRouter):
                     if 'db' in locals():
                         db.close()
             
-            # Fallback para credenciais padrão
-            if username == 'admin' and password == 'admin123':
-                print("✅ Login bem-sucedido com credenciais padrão!")
-                self.send_json_response({
-                    "access_token": "simple-token-123",
-                    "token_type": "bearer",
-                    "user": {
-                        "id": 1,
-                        "username": "admin",
-                        "full_name": "Administrador",
-                        "email": "admin@empresa.com",
-                        "is_admin": True
-                    }
-                })
-            else:
-                print("❌ Credenciais inválidas!")
-                self.send_error("Credenciais inválidas", 401)
+            print("❌ Credenciais inválidas!")
+            self.send_error("Credenciais inválidas", 401)
                 
         except Exception as e:
             print(f"❌ Erro no login: {e}")

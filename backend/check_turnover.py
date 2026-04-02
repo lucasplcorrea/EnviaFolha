@@ -8,7 +8,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from app.models.employee import Employee
 from datetime import date
 
-DATABASE_URL = "postgresql://enviafolha_user:secure_password@localhost:5432/enviafolha_db"
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/dbname")
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

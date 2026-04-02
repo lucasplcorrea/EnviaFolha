@@ -119,13 +119,14 @@ def setup_database():
         if not database_url:
             # Montar URL a partir de variáveis individuais
             db_user = os.getenv('DB_USER', 'enviafolha_user')
-            db_password = os.getenv('DB_PASSWORD', 'secure_password')
+            db_password = os.getenv('DB_PASSWORD', '')
             db_host = os.getenv('DB_HOST', 'localhost')
             db_port = os.getenv('DB_PORT', '5432')
             db_name = os.getenv('DB_NAME', 'enviafolha_db')
             database_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
         
-        print(f"🔌 Conectando ao PostgreSQL: {database_url}")
+        safe_database_url = re.sub(r":([^:@/]+)@", ":***@", database_url)
+        print(f"🔌 Conectando ao PostgreSQL: {safe_database_url}")
         
         # Criar engine com connection pooling otimizado
         engine = create_engine(
@@ -518,10 +519,19 @@ def save_employee_to_db(employee_data, created_by_user_id=3):
                     print("❌ Nenhum usuário encontrado no banco para created_by")
                     return False
             
+            reg_raw = str(employee_data.get('registration_number') or '').strip()
+            reg_digits = re.sub(r'\D', '', reg_raw)
+            if reg_digits:
+                employee_data['registration_number'] = reg_digits.zfill(5)
+
             # Verificar se funcionário já existe
             existing = db.query(Employee).filter(
                 Employee.unique_id == employee_data.get('unique_id')
             ).first()
+
+            status_reason_raw = str(employee_data.get('status_reason') or '').strip().lower()
+            termination_date_raw = str(employee_data.get('termination_date') or '').strip()
+            inferred_inactive = bool(termination_date_raw) or ('demit' in status_reason_raw) or ('deslig' in status_reason_raw)
             
             if existing:
                 # Atualizar existente - campos básicos
@@ -531,6 +541,8 @@ def save_employee_to_db(employee_data, created_by_user_id=3):
                 existing.department = employee_data.get('department', existing.department)
                 existing.position = employee_data.get('position', existing.position)
                 existing.is_active = employee_data.get('is_active', existing.is_active)
+                if inferred_inactive:
+                    existing.is_active = False
                 existing.unique_id = employee_data.get('unique_id', existing.unique_id)
                 existing.absolute_id = employee_data.get('absolute_id', existing.absolute_id)
                 existing.company_code = employee_data.get('company_code', existing.company_code)
@@ -558,10 +570,21 @@ def save_employee_to_db(employee_data, created_by_user_id=3):
                     existing.contract_type = employee_data['contract_type']
                 if employee_data.get('status_reason'):
                     existing.status_reason = employee_data['status_reason']
+                if 'termination_date' in employee_data:
+                    if employee_data.get('termination_date'):
+                        try:
+                            existing.termination_date = datetime.strptime(employee_data['termination_date'], '%Y-%m-%d').date()
+                        except:
+                            existing.termination_date = None
+                    else:
+                        existing.termination_date = None
                 if 'company_id' in employee_data:
                     existing.company_id = employee_data['company_id']
                 if 'work_location_id' in employee_data:
                     existing.work_location_id = employee_data['work_location_id']
+
+                from app.utils.parsers import generate_name_id
+                existing.name_id = generate_name_id(existing.company_code, existing.registration_number, existing.name)
             else:
                 # Criar novo - preparar campos de data
                 from datetime import datetime
@@ -577,6 +600,13 @@ def save_employee_to_db(employee_data, created_by_user_id=3):
                 if employee_data.get('admission_date'):
                     try:
                         admission_date_obj = datetime.strptime(employee_data['admission_date'], '%Y-%m-%d').date()
+                    except:
+                        pass
+
+                termination_date_obj = None
+                if employee_data.get('termination_date'):
+                    try:
+                        termination_date_obj = datetime.strptime(employee_data['termination_date'], '%Y-%m-%d').date()
                     except:
                         pass
                 
@@ -597,11 +627,14 @@ def save_employee_to_db(employee_data, created_by_user_id=3):
                     admission_date=admission_date_obj,
                     contract_type=employee_data.get('contract_type'),
                     status_reason=employee_data.get('status_reason'),
+                    termination_date=termination_date_obj,
                     company_id=employee_data.get('company_id'),
                     work_location_id=employee_data.get('work_location_id'),
-                    is_active=employee_data.get('is_active', True),
+                    is_active=False if inferred_inactive else employee_data.get('is_active', True),
                     created_by=created_by_user_id
                 )
+                from app.utils.parsers import generate_name_id
+                new_employee.name_id = generate_name_id(new_employee.company_code, new_employee.registration_number, new_employee.name)
                 db.add(new_employee)
             
             db.commit()
@@ -1924,23 +1957,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 if 'db' in locals():
                     db.close()
         
-        # Fallback para credenciais padrão
-        if username == 'admin' and password == 'admin123':
-            print("✅ Login bem-sucedido com credenciais padrão!")
-            self.send_json_response({
-                "access_token": "simple-token-123",
-                "token_type": "bearer",
-                "user": {
-                    "id": 1,
-                    "username": "admin",
-                    "full_name": "Administrador",
-                    "email": "admin@empresa.com",
-                    "is_admin": True
-                }
-            })
-        else:
-            print("❌ Credenciais inválidas!")
-            self.send_json_response({"detail": "Credenciais inválidas"}, 401)
+        print("❌ Credenciais inválidas!")
+        self.send_json_response({"detail": "Credenciais inválidas"}, 401)
     
     def send_status_response(self):
         """Resposta de status da aplicação"""
@@ -2314,10 +2332,21 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 "admission_date": data.get('admission_date', ''),
                 "contract_type": data.get('contract_type', ''),
                 "status_reason": data.get('status_reason', ''),
+                "termination_date": data.get('termination_date', ''),
                 "company_id": data.get('company_id'),
                 "work_location_id": data.get('work_location_id'),
                 "is_active": True
             }
+
+            reg_raw = str(employee_data.get('registration_number') or '').strip()
+            reg_digits = re.sub(r'\D', '', reg_raw)
+            if reg_digits:
+                employee_data['registration_number'] = reg_digits.zfill(5)
+
+            status_reason_raw = str(employee_data.get('status_reason') or '').strip().lower()
+            termination_date_raw = str(employee_data.get('termination_date') or '').strip()
+            if termination_date_raw or ('demit' in status_reason_raw) or ('deslig' in status_reason_raw):
+                employee_data['is_active'] = False
             
             # Salvar no banco
             if save_employee_to_db(employee_data):
@@ -2392,16 +2421,10 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     matricula_value = str(data.get('registration_number')).strip()
 
                 if matricula_value:
+                    matricula_value = re.sub(r'\D', '', matricula_value).zfill(5)
                     employee.registration_number = matricula_value
                     padded = matricula_value.zfill(5)
                     generated_unique_id = f"{selected_company_code}{padded}"
-
-                    # verificar duplicidade unique_id
-                    existing = db.query(Employee).filter(Employee.unique_id == generated_unique_id, Employee.id != employee.id).first()
-                    if existing:
-                        db.close()
-                        self.send_json_response({"error": f"ID único {generated_unique_id} já existe em outro funcionário"}, 400)
-                        return
 
                     employee.unique_id = generated_unique_id
 
@@ -2436,8 +2459,6 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 prev_loc = employee.work_location_id
 
                 # Atualizar campos básicos
-                if 'unique_id' in data:
-                    employee.unique_id = data['unique_id']
                 if 'full_name' in data:
                     employee.name = data['full_name']
                 if 'cpf' in data:
@@ -2505,6 +2526,14 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                             employee.termination_date = None
                     else:
                         employee.termination_date = None
+
+                # Sincroniza automaticamente o status ativo com sinais de desligamento.
+                status_reason_raw = str(employee.status_reason or '').strip().lower()
+                if employee.termination_date or ('demit' in status_reason_raw) or ('deslig' in status_reason_raw):
+                    employee.is_active = False
+
+                from app.utils.parsers import generate_name_id
+                employee.name_id = generate_name_id(employee.company_code, employee.registration_number, employee.name)
                 
                 if 'leave_start_date' in data:
                     from datetime import datetime

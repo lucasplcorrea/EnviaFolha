@@ -111,3 +111,10 @@ data/
 /MDs/*
 backend/payroll_csv_import_check.json
 backend/payroll_csv_import_check_infra.json
+backend/import_test*.json
+backend/import_test_report*.json
+backend/test_output_*.txt
+backend/dry_run*.json
+backend/*validation*.xlsx
+backend/*report*.xlsx
+backend/*report*.csv
