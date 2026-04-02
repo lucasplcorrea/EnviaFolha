@@ -13,6 +13,10 @@ from app.routes.base import BaseRouter
 class PayrollRouter(BaseRouter):
     """Router para endpoints de folha de pagamento."""
 
+    def handle_process_payroll_file(self):
+        """Mantém compatibilidade com o fluxo legado de processamento de PDFs."""
+        return self.handler.handle_process_payroll_file()
+
     def handle_get(self, path: str):
         if path == '/api/v1/payroll/statistics':
             self.handle_payroll_statistics()
@@ -57,6 +61,7 @@ class PayrollRouter(BaseRouter):
 
     def handle_upload_payroll_csv(self):
         """POST /api/v1/payroll/upload-csv"""
+        db = None
         try:
             data = self.get_request_data()
             file_path = data.get('file_path')
@@ -91,12 +96,14 @@ class PayrollRouter(BaseRouter):
 
         finally:
             try:
-                db.close()
+                if db is not None:
+                    db.close()
             except Exception:
                 pass
 
     def handle_payroll_statistics(self):
         """GET /api/v1/payroll/statistics"""
+        db = None
         try:
             query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.handler.path).query)
 
@@ -142,7 +149,8 @@ class PayrollRouter(BaseRouter):
 
         finally:
             try:
-                db.close()
+                if db is not None:
+                    db.close()
             except Exception:
                 pass
 
