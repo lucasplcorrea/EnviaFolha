@@ -17,6 +17,11 @@ class Employee(Base, TimestampMixin):
     # unique=True REMOVIDO: contabilidade pode reutilizar a mesma matrícula.
     unique_id = Column(String(50), index=True, nullable=True)
 
+    # name_id: chave auxiliar para matching de CSVs = company_code + registration_number (5 digits) + nome_normalizado
+    # Normalização: UPPERCASE + sem acentos + sem pontuação = "0060" + "00048" + "JOAO DA SILVA"
+    # Permite matching robusto mesmo quando CPF não está disponível no CSV
+    name_id = Column(String(255), index=True, nullable=True)
+
     # cpf: mantido para exibição/referência, mas unique=True REMOVIDO.
     # Um mesmo CPF pode ter mais de um contrato (demissão + readmissão).
     cpf = Column(String(14), index=True, nullable=True)

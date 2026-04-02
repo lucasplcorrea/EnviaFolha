@@ -322,6 +322,98 @@ def map_csv_column(csv_column: str) -> str:
     return CSV_COLUMN_MAPPING.get(csv_column.upper(), csv_column)
 
 
+def normalize_name_for_payroll(name: str) -> str:
+    """
+    Normaliza nome para matching de CSVs: UPPERCASE + sem acentos + sem pontuação
+    
+    Função auxiliar para geração de name_id. Remove variações de acentuação e 
+    pontuação que causam false negatives em matching de nomes.
+    
+    Padrão: "João da Silva" → "JOAO DA SILVA"
+    
+    Args:
+        name: Nome original (ex: "José Alberto Gómez")
+        
+    Returns:
+        Nome normalizado (ex: "JOSE ALBERTO GOMEZ")
+        
+    Examples:
+        >>> normalize_name_for_payroll("João da Silva")
+        "JOAO DA SILVA"
+        >>> normalize_name_for_payroll("MARIA DE JESUS")
+        "MARIA DE JESUS"
+        >>> normalize_name_for_payroll("Luís Henrique")
+        "LUIS HENRIQUE"
+        >>> normalize_name_for_payroll("D'Angelo")
+        "DANGELO"
+    """
+    import unicodedata
+    
+    if not name:
+        return ""
+    
+    # 1. Converter para UPPERCASE
+    s = str(name).strip().upper()
+    
+    # 2. Normalizar acentuação (NFKD: decomposição compatível)
+    s = unicodedata.normalize("NFKD", s)
+    
+    # 3. Remover caracteres de combinação (acentos, til, etc)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    
+    # 4. Remover pontuação e símbolos especiais, mantendo apenas A-Z, 0-9 e espaços
+    s = re.sub(r"[^A-Z0-9 ]+", " ", s)
+    
+    # 5. Collapse múltiplos espaços em um
+    s = re.sub(r"\s+", " ", s).strip()
+    
+    return s
+
+
+def generate_name_id(company_code: str, registration_number: str, name: str) -> Optional[str]:
+    """
+    Gera chave auxiliar de matching: company_code + registration_number (5 dígitos) + nome normalizado
+    
+    Formato exemplo: "0060" + "00048" + "JOAO SILVA" = "006000048JOAO SILVA"
+    
+    Esta chave permite matching robusto de CSVs que não têm CPF, utilizando:
+    - Código da empresa (imutável)
+    - Número da matrícula (5 dígitos, padronizado)
+    - Nome normalizado (sem acentos, maiúscula, sem pontuação)
+    
+    Args:
+        company_code: Código da empresa (ex: "0060", "0059")
+        registration_number: Número de matrícula (ex: "123" → "00123")
+        name: Nome do funcionário (será normalizado)
+        
+    Returns:
+        name_id formatado ou None se algum campo inválido
+        
+    Examples:
+        >>> generate_name_id("0060", "123", "João Silva")
+        "006000123JOAO SILVA"
+        >>> generate_name_id("0059", "8", "Maria de Jesus")
+        "005900008MARIA DE JESUS"
+    """
+    if not company_code or not registration_number or not name:
+        return None
+    
+    # Normalizar código da empresa (remover pontos, pegar 4 primeiros dígitos)
+    code = re.sub(r'\D', '', str(company_code))[-4:].zfill(4)
+    
+    # Normalizar matrícula (5 dígitos à esquerda)
+    regnum = str(registration_number).strip()
+    regnum = re.sub(r'\D', '', regnum).zfill(5)[-5:]
+    
+    # Normalizar nome
+    normalized_name = normalize_name_for_payroll(name)
+    
+    if not normalized_name:
+        return None
+    
+    return f"{code}{regnum}{normalized_name}"
+
+
 if __name__ == '__main__':
     # Testes rápidos
     print("=== Testes de Parsers ===\n")

@@ -336,6 +336,9 @@ def load_employees_data(include_inactive=False):
                 emp_dict = {
                     "id": emp.id,
                     "unique_id": emp.unique_id,
+                    "absolute_id": emp.absolute_id or "",
+                    "company_code": emp.company_code or "",
+                    "registration_number": emp.registration_number or "",
                     "full_name": emp.name,
                     "cpf": emp.cpf or "",
                     "phone_number": emp.phone or "",
@@ -443,6 +446,9 @@ def get_employee_by_id(employee_id):
             emp_dict = {
                 "id": employee.id,
                 "unique_id": employee.unique_id,
+                "absolute_id": employee.absolute_id or "",
+                "company_code": employee.company_code or "",
+                "registration_number": employee.registration_number or "",
                 "full_name": employee.name,
                 "cpf": employee.cpf,
                 "phone_number": employee.phone,
@@ -525,6 +531,12 @@ def save_employee_to_db(employee_data, created_by_user_id=3):
                 existing.department = employee_data.get('department', existing.department)
                 existing.position = employee_data.get('position', existing.position)
                 existing.is_active = employee_data.get('is_active', existing.is_active)
+                existing.unique_id = employee_data.get('unique_id', existing.unique_id)
+                existing.absolute_id = employee_data.get('absolute_id', existing.absolute_id)
+                existing.company_code = employee_data.get('company_code', existing.company_code)
+                existing.registration_number = employee_data.get('registration_number', existing.registration_number)
+                if employee_data.get('cpf'):
+                    existing.cpf = employee_data.get('cpf')
                 
                 # Atualizar novos campos RH
                 from datetime import datetime
@@ -570,8 +582,11 @@ def save_employee_to_db(employee_data, created_by_user_id=3):
                 
                 new_employee = Employee(
                     unique_id=employee_data.get('unique_id'),
+                    absolute_id=employee_data.get('absolute_id'),
+                    company_code=employee_data.get('company_code'),
+                    registration_number=employee_data.get('registration_number'),
                     name=employee_data.get('full_name'),
-                    cpf=employee_data.get('unique_id', '000.000.000-00'),
+                    cpf=employee_data.get('cpf') or employee_data.get('unique_id', '000.000.000-00'),
                     phone=employee_data.get('phone_number'),
                     email=employee_data.get('email'),
                     department=employee_data.get('department'),
@@ -1563,6 +1578,9 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_report_generate()
         # ===================================
         
+        elif path == '/api/v1/payroll' or path.startswith('/api/v1/payroll/'):
+            from app.routes.payroll import PayrollRouter
+            PayrollRouter(self).handle_get(path)
         elif path == '/api/v1/payrolls/processed':
             self.handle_payrolls_processed()
         elif path == '/api/v1/tax-statements':
@@ -1681,6 +1699,10 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             WorkLocationsRouter(self).handle_create()
         elif path == '/api/v1/users/permissions':
             self.handle_update_user_permissions()
+        elif path == '/api/v1/payroll' or path.startswith('/api/v1/payroll/'):
+            from app.routes.payroll import PayrollRouter
+            PayrollRouter(self).handle_post(path)
+            return
         elif path == '/api/v1/payroll/periods':
             self.handle_create_payroll_period()
         elif path == '/api/v1/payroll/templates':
@@ -2277,7 +2299,11 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             # Preparar dados do funcionário (campos básicos + novos campos RH)
             employee_data = {
                 "unique_id": data.get('unique_id'),
+                "absolute_id": data.get('absolute_id'),
+                "company_code": data.get('company_code'),
+                "registration_number": data.get('registration_number'),
                 "full_name": data.get('full_name'),
+                "cpf": data.get('cpf'),
                 "phone_number": data.get('phone_number'),
                 "email": data.get('email', ''),
                 "department": data.get('department', ''),
@@ -2336,17 +2362,73 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     self.send_json_response({"error": "Funcionário não encontrado"}, 404)
                     return
                 
-                # Verificar se unique_id já existe em outro funcionário
-                if data.get('unique_id') and data.get('unique_id') != employee.unique_id:
-                    existing = db.query(Employee).filter(
-                        Employee.unique_id == data.get('unique_id'),
-                        Employee.id != employee.id
-                    ).first()
-                    
+                # Evitar alteração direta de unique_id/absolute_id via input
+                if 'unique_id' in data:
+                    # manter o valor atual, mas logar possibilidade
+                    print(f"⚠️ Tentativa de alterar unique_id via payload: {data.get('unique_id')} (ignorado)")
+
+                if 'absolute_id' in data:
+                    print(f"⚠️ Tentativa de alterar absolute_id via payload: {data.get('absolute_id')} (ignorado)")
+
+                # Se houver alteração de company_id/codigo/matricula/cpf, recalcula unique_id e absolute_id
+                selected_company_code = employee.company_code
+                if 'company_id' in data and data.get('company_id'):
+                    from app.models import Company
+                    comp = db.query(Company).filter(Company.id == data.get('company_id')).first()
+                    if comp:
+                        employee.company_id = comp.id
+                        employee.company_code = comp.payroll_prefix
+                        selected_company_code = comp.payroll_prefix
+
+                if 'company_code' in data and data.get('company_code'):
+                    employee.company_code = data.get('company_code')
+                    selected_company_code = data.get('company_code')
+
+                # matrícula robusta também pode vir como registration_number ou matricula
+                matricula_value = None
+                if 'matricula' in data and data.get('matricula'):
+                    matricula_value = str(data.get('matricula')).strip()
+                elif 'registration_number' in data and data.get('registration_number'):
+                    matricula_value = str(data.get('registration_number')).strip()
+
+                if matricula_value:
+                    employee.registration_number = matricula_value
+                    padded = matricula_value.zfill(5)
+                    generated_unique_id = f"{selected_company_code}{padded}"
+
+                    # verificar duplicidade unique_id
+                    existing = db.query(Employee).filter(Employee.unique_id == generated_unique_id, Employee.id != employee.id).first()
                     if existing:
                         db.close()
-                        self.send_json_response({"error": f"ID único {data.get('unique_id')} já existe"}, 400)
+                        self.send_json_response({"error": f"ID único {generated_unique_id} já existe em outro funcionário"}, 400)
                         return
+
+                    employee.unique_id = generated_unique_id
+
+                    # CPF disponível para absolute_id
+                    cpf_value = data.get('cpf') or employee.cpf
+                    absolute_id = f"{selected_company_code}-{generated_unique_id}"
+                    if cpf_value:
+                        from app.utils.parsers import normalize_cpf
+                        cpf_normalized = normalize_cpf(str(cpf_value))
+                        absolute_id = f"{absolute_id}-{cpf_normalized}" if cpf_normalized else absolute_id
+
+                    # verificar duplicidade absolute_id
+                    existing_abs = db.query(Employee).filter(Employee.absolute_id == absolute_id, Employee.id != employee.id).first()
+                    if existing_abs:
+                        db.close()
+                        self.send_json_response({"error": f"absolute_id {absolute_id} já existe em outro funcionário"}, 400)
+                        return
+
+                    employee.absolute_id = absolute_id
+
+                # CPF definido no payload também pode invalidar absolute_id do final
+                if 'cpf' in data and data.get('cpf'):
+                    from app.utils.parsers import normalize_cpf
+                    cpf_normalized = normalize_cpf(str(data.get('cpf')))
+                    employee.cpf = cpf_normalized
+                    if employee.unique_id and employee.company_code:
+                        employee.absolute_id = f"{employee.company_code}-{employee.unique_id}-{cpf_normalized}"
                 
                 # Salvar estado anterior para log de movimentação
                 prev_pos = employee.position
@@ -2467,6 +2549,9 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 updated_employee = {
                     "id": employee.id,
                     "unique_id": employee.unique_id,
+                    "absolute_id": employee.absolute_id or "",
+                    "company_code": employee.company_code or "",
+                    "registration_number": employee.registration_number or "",
                     "full_name": employee.name,
                     "cpf": employee.cpf,
                     "phone_number": employee.phone,

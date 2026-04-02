@@ -42,6 +42,7 @@ const Employees = () => {
   
   const [formData, setFormData] = useState({
     unique_id: '',
+    registration_number: '',
     cpf: '',
     full_name: '',
     phone_number: '',
@@ -106,6 +107,8 @@ const Employees = () => {
       
       setFormData({
         unique_id: '',
+        registration_number: '',
+        cpf: '',
         full_name: '',
         phone_number: '',
         email: '',
@@ -131,8 +134,23 @@ const Employees = () => {
 
   const handleEdit = (employee) => {
     setEditingEmployee(employee);
+
+    let registration_number = employee.registration_number || '';
+    if (!registration_number && employee.unique_id) {
+      // Tenta extrair matrícula do unique_id (prefixo + matrícula)
+      const prefix = companies.find(c => c.id === employee.company_id)?.payroll_prefix?.replace(/\D/g, '')?.padStart(4, '0') || '';
+      if (prefix && employee.unique_id.startsWith(prefix)) {
+        const rest = employee.unique_id.slice(prefix.length);
+        registration_number = rest.replace(/^0+/, '') || rest;
+      } else if (employee.unique_id.length >= 5) {
+        const suffix = employee.unique_id.slice(-5);
+        registration_number = suffix.replace(/^0+/, '') || suffix;
+      }
+    }
+
     setFormData({
       unique_id: employee.unique_id || '',
+      registration_number,
       cpf: employee.cpf || '',
       full_name: employee.full_name || '',
       phone_number: employee.phone_number || '',
@@ -156,6 +174,7 @@ const Employees = () => {
     setEditingEmployee(null);
     setFormData({
       unique_id: '',
+      registration_number: '',
       cpf: '',
       full_name: '',
       phone_number: '',
@@ -782,14 +801,64 @@ const Employees = () => {
             </div>
             <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-4 sm:grid-cols-2 max-h-[75vh] overflow-y-auto pr-2 pb-2 custom-scrollbar">
             <div>
-              <label className="block text-sm font-medium text-gray-700">ID Único *</label>
+              <label className="block text-sm font-medium text-gray-700">Empresa Responsável</label>
+              <select
+                value={formData.company_id || ''}
+                onChange={(e) => {
+                  const companyId = e.target.value;
+                  const company = companies.find(c => String(c.id) === companyId);
+                  const prefix = company?.payroll_prefix?.replace(/\D/g, '')?.padStart(4, '0') || '';
+
+                  const matricula = (formData.registration_number || '').replace(/\D/g, '').padStart(5, '0');
+                  const generatedUniqueId = matricula ? `${prefix}${matricula}` : '';
+
+                  setFormData({
+                    ...formData,
+                    company_id: companyId ? parseInt(companyId) : '',
+                    unique_id: generatedUniqueId,
+                    registration_number: formData.registration_number || ''
+                  });
+                }}
+                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+              >
+                <option value="">Selecione...</option>
+                {companies.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} (Prefixo {c.payroll_prefix})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Matrícula *</label>
               <input
                 type="text"
                 required
-                value={formData.unique_id}
-                onChange={(e) => setFormData({...formData, unique_id: e.target.value})}
+                value={formData.registration_number}
+                onChange={(e) => {
+                  const rawMatricula = e.target.value.replace(/\D/g, '');
+                  const matricula = rawMatricula.padStart(5, '0');
+                  const company = companies.find(c => c.id === formData.company_id);
+                  const prefix = company?.payroll_prefix?.replace(/\D/g, '')?.padStart(4, '0') || '';
+                  const generatedUniqueId = matricula ? `${prefix}${matricula}` : '';
+
+                  setFormData({...formData, registration_number: rawMatricula, unique_id: generatedUniqueId});
+                }}
                 className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
-                placeholder="000012345"
+                placeholder="00000"
+              />
+              <p className="text-xs text-gray-500">Genere automaticamente ID único via empresa+matrícula.</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700">ID Único</label>
+              <input
+                type="text"
+                value={formData.unique_id}
+                readOnly
+                className="mt-1 block w-full bg-gray-100 border-gray-300 rounded-md shadow-sm px-3 py-2 border"
+                placeholder="company_prefix + matrícula"
               />
             </div>
 
@@ -837,38 +906,6 @@ const Employees = () => {
               />
             </div>
             
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Empresa Responsável</label>
-              <select
-                value={formData.company_id || ''}
-                onChange={(e) => {
-                  const companyId = e.target.value;
-                  const company = companies.find(c => String(c.id) === companyId);
-                  
-                  let newUniqueId = formData.unique_id;
-                  if (company && company.payroll_prefix) {
-                      const prefix = company.payroll_prefix.replace(/\D/g, '').padStart(4, '0');
-                      const matricula = newUniqueId.slice(-5).padStart(5, '0');
-                      newUniqueId = `${prefix}${matricula}`;
-                  }
-
-                  setFormData({
-                    ...formData, 
-                    company_id: companyId ? parseInt(companyId) : '',
-                    unique_id: newUniqueId
-                  });
-                }}
-                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
-              >
-                <option value="">Selecione...</option>
-                {companies.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} (Prefixo {c.payroll_prefix})
-                  </option>
-                ))}
-              </select>
-            </div>
-
             <div>
               <label className="block text-sm font-medium text-gray-700">Local de Trabalho / Obra</label>
               <select

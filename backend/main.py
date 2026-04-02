@@ -35,6 +35,7 @@ from main_legacy import (
 )
 
 from app.routes import TaxStatementsRouter
+from app.routes.payroll import PayrollRouter
 
 # Configurações
 PORT = int(os.getenv('PORT', 8002))
@@ -54,6 +55,10 @@ class ModularEnviaFolhaHandler(EnviaFolhaHandler):
     def do_GET(self):
         raw_path = urllib.parse.urlparse(self.path).path
         path = self._normalize_path(raw_path)
+
+        if path == '/api/v1/payroll' or path.startswith('/api/v1/payroll/'):
+            PayrollRouter(self).handle_get(path)
+            return
 
         if path == '/api/v1/tax-statements/export/sent':
             TaxStatementsRouter(self).handle_export_sent()
@@ -82,6 +87,10 @@ class ModularEnviaFolhaHandler(EnviaFolhaHandler):
     def do_POST(self):
         raw_path = urllib.parse.urlparse(self.path).path
         path = self._normalize_path(raw_path)
+
+        if path == '/api/v1/payroll' or path.startswith('/api/v1/payroll/'):
+            PayrollRouter(self).handle_post(path)
+            return
 
         if path == '/api/v1/tax-statements/process':
             TaxStatementsRouter(self).handle_process()

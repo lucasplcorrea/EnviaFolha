@@ -4,6 +4,7 @@ VERSÃO SIMPLIFICADA - apenas colunas essenciais conforme mapeamento RH
 """
 import os
 import time
+import re
 import calendar
 import pandas as pd
 from typing import Dict, Any, List, Optional
@@ -12,9 +13,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
 from app.models.employee import Employee
+from app.models.company import Company
 from app.models.payroll import PayrollPeriod, PayrollData
 from app.models.leave import LeaveRecord
 from app.models.user import User
+from sqlalchemy.sql import func
 from app.utils.parsers import (
     parse_br_number,
     parse_br_date,
@@ -22,6 +25,8 @@ from app.utils.parsers import (
     extract_employee_code,
     normalize_cpf,
     normalize_phone,
+    normalize_name_for_payroll,
+    generate_name_id,
     CSV_COLUMN_MAPPING
 )
 
@@ -77,7 +82,109 @@ class PayrollCSVProcessor:
                 except Exception:
                     continue
         return default
-    
+
+    def _normalize_cnpj(self, cnpj: Optional[str]) -> str:
+        if not cnpj:
+            return ''
+        digits = re.sub(r'\D', '', str(cnpj))
+        if len(digits) == 14:
+            return f"{digits[:2]}.{digits[2:5]}.{digits[5:8]}/{digits[8:12]}-{digits[12:]}"
+        return digits
+
+    def _infer_division_code_from_cnpj(self, cnpj: Optional[str]) -> Optional[str]:
+        normalized = self._normalize_cnpj(cnpj)
+        if not normalized:
+            return None
+        company = self.db.query(Company).filter(Company.cnpj == normalized).first()
+        if company:
+            return company.payroll_prefix
+        return None
+
+    def _normalize_name(self, name: Optional[str]) -> str:
+        if not name:
+            return ''
+        return re.sub(r'\s+', ' ', str(name).strip().lower())
+
+    def _find_employee(self, division_code: str, matricula: str, absolute_id: str, name: str) -> Optional[Employee]:
+        """
+        Tenta localizar employee através de regras de prioridade:
+        
+        1. Absolute_id (company + matricula + cpf_digits) - máxima confiança
+        2. Name_id (company + matricula + nome_normalizado) - alta confiança, sem CPF
+        3. Company + Matricula + Nome - confiança média
+        4. Empresa + Matrícula único - confiança baixa
+        5. Nenhum match - revisão manual necessária
+        """
+        match_source = None
+        
+        # 1) Absolute_id direto (maior confiança)
+        if absolute_id:
+            abs_employees = self.db.query(Employee).filter(Employee.absolute_id == absolute_id).all()
+            if len(abs_employees) > 1:
+                self.warnings.append({
+                    'absolute_id': absolute_id,
+                    'message': 'Duplicidade de absolute_id encontrada. Revisão manual necessária.',
+                    'candidates': [{'id': e.id, 'name': e.name, 'company_code': e.company_code} for e in abs_employees]
+                })
+                return None
+            if len(abs_employees) == 1:
+                match_source = 'absolute_id'
+                return abs_employees[0]
+        
+        # 2) Name_id (empresa + matrícula + nome normalizado)
+        if division_code and matricula and name:
+            name_id_csv = generate_name_id(division_code, matricula, name)
+            if name_id_csv:
+                name_id_employees = self.db.query(Employee).filter(
+                    Employee.name_id == name_id_csv
+                ).all()
+                if len(name_id_employees) == 1:
+                    match_source = 'name_id'
+                    return name_id_employees[0]
+                elif len(name_id_employees) > 1:
+                    self.warnings.append({
+                        'name_id': name_id_csv,
+                        'message': f'Múltiplos colaboradores para name_id {name_id_csv}. Revisão manual necessária.',
+                        'candidates': [{'id': e.id, 'name': e.name, 'company_code': e.company_code} for e in name_id_employees]
+                    })
+
+        # 3) Empresa + matricula (com fallback para nome)
+        candidates = self.db.query(Employee).filter(
+            Employee.company_code == division_code,
+            Employee.unique_id == matricula
+        ).all()
+
+        if len(candidates) == 1:
+            match_source = 'company_matricula_unique'
+            return candidates[0]
+
+        normalized_name = self._normalize_name(name)
+        if normalized_name:
+            name_matches = [e for e in candidates if self._normalize_name(e.name) == normalized_name]
+            if len(name_matches) == 1:
+                match_source = 'company_matricula_name'
+                return name_matches[0]
+
+        # 4) Fallback somente unique_id (várias ou não acompanhadas)
+        candidates_by_unique = self.db.query(Employee).filter(Employee.unique_id == matricula).all()
+        if len(candidates_by_unique) == 1:
+            match_source = 'unique_id_only'
+            return candidates_by_unique[0]
+
+        # Nao encontrou único, retorna None para ação manual
+        return None
+
+    def _compute_absolute_id(self, division_code: str, matricula: str, cpf: Optional[str] = None) -> str:
+        """Gera absolute_id baseado em divisão+matrícula+CPF (somente dígitos)."""
+        cpf_digits = ''
+        if cpf:
+            cpf_digits = re.sub(r'\D', '', str(cpf))
+
+        if cpf_digits:
+            return f"{division_code}-{matricula}-{cpf_digits}"
+
+        return f"{division_code}-{matricula}"
+
     def process_csv_file(
         self, 
         file_path: str, 
@@ -286,23 +393,60 @@ class PayrollCSVProcessor:
         
         # 2. Gerar matrícula completa
         matricula = extract_employee_code(codigo_func, division_code)
-        
-        # 3. Buscar employee
-        employee = self.db.query(Employee).filter(
-            Employee.unique_id == matricula
-        ).first()
-        
+
+        # Em alguns CSVs, pode haver CPF para disambiguar
+        cpf_value = row.get('CPF', row.get('CPF_FUNC', row.get('Cpf', row.get('cpf', None))))
+        cpf_normalized = normalize_cpf(cpf_value) if cpf_value else None
+        absolute_id = self._compute_absolute_id(division_code, matricula, cpf_normalized)
+
+# 3. Definir divisão/empresa com base no CSV se não informado pelo frontend
+        if not division_code and not cpf_normalized:
+            cnpj_value = row.get('CNPJ', row.get('Cnpj', row.get('cnpj', None)))
+            inferred_division = self._infer_division_code_from_cnpj(cnpj_value)
+            if inferred_division:
+                division_code = inferred_division
+
+        # Resolver pelo método unificado de matching
+        collaborator_name = str(row.get('Nome Colaborador', row.get('NOME', '') or '')).strip()
+        employee = self._find_employee(division_code=division_code, matricula=matricula, absolute_id=absolute_id, name=collaborator_name)
+
+        # Se houver candidatos em múltiplas opções, identificamos a problemática
         if not employee:
-            if auto_create_employees:
-                employee = self._create_employee_from_csv(row, matricula, division_code)
-                self.stats['new_employees'] += 1
-            else:
+            candidates = self.db.query(Employee).filter(
+                Employee.company_code == division_code,
+                Employee.unique_id == matricula
+            ).all()
+            if len(candidates) > 1:
                 self.warnings.append({
                     'matricula': matricula,
-                    'message': f"Funcionário não encontrado (matrícula: {matricula})"
+                    'name': collaborator_name,
+                    'message': 'Múltiplos colaboradores para mesma empresa+matrícula (colisão). Revisão manual necessária.',
+                    'candidates': [{'id': e.id, 'name': e.name} for e in candidates]
                 })
                 self.stats['skipped'] += 1
                 return
+
+            candidates_by_unique = self.db.query(Employee).filter(Employee.unique_id == matricula).all()
+            if len(candidates_by_unique) > 1:
+                self.warnings.append({
+                    'matricula': matricula,
+                    'name': collaborator_name,
+                    'message': 'Múltiplos colaboradores para mesma matrícula (sem empresa). Revisão manual necessária.',
+                    'candidates': [{'id': e.id, 'name': e.name, 'company_code': e.company_code} for e in candidates_by_unique]
+                })
+                self.stats['skipped'] += 1
+                return
+
+        # Não atualizar dados de employee automaticamente para evitar correções silenciosas.
+        # Não criar novos employees nessa rotina (força tarefa de validação / revisão manual).
+        if not employee:
+            self.warnings.append({
+                'matricula': matricula,
+                'name': str(row.get('Nome Colaborador', row.get('NOME', ''))).strip(),
+                'message': f"Funcionário não encontrado (matrícula: {matricula}); não será criado automaticamente"
+            })
+            self.stats['skipped'] += 1
+            return
         
         # 4. Construir JSONs SIMPLIFICADOS
         earnings_data = self._extract_earnings(row)
@@ -444,8 +588,15 @@ class PayrollCSVProcessor:
     
     def _create_employee_from_csv(self, row: pd.Series, matricula: str, division_code: str) -> Employee:
         """Cria employee temporário a partir do CSV"""
+        # Determinar CPF e absolute_id para consistência única
+        cpf_str = row.get('CPF', row.get('CPF_FUNC', None)) or ''
+        cpf_normalized = normalize_cpf(cpf_str) if cpf_str else None
+        absolute_id = self._compute_absolute_id(division_code, matricula, cpf_normalized)
+
         employee = Employee(
             unique_id=matricula,
+            absolute_id=absolute_id,
+            cpf=cpf_normalized or None,
             name=str(row.get('Nome Colaborador', row.get('NOME', ''))).strip(),
             company_code=division_code  # Usar company_code ao invés de division_code
         )

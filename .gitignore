@@ -115,3 +115,5 @@ data/
 *.ps1
 
 /MDs/*
+backend/payroll_csv_import_check.json
+backend/payroll_csv_import_check_infra.json
