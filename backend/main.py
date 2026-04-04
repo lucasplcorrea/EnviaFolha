@@ -36,6 +36,7 @@ from main_legacy import (
 
 from app.routes import TaxStatementsRouter
 from app.routes.payroll import PayrollRouter
+from app.routes.benefits import BenefitsRouter
 
 # Configurações
 PORT = int(os.getenv('PORT', 8002))
@@ -66,6 +67,14 @@ class ModularEnviaFolhaHandler(EnviaFolhaHandler):
 
         if path == '/api/v1/tax-statements':
             TaxStatementsRouter(self).handle_list()
+            return
+
+        if path == '/api/v1/benefits/periods' or path == '/api/v1/benefits/processing-logs' or path.startswith('/api/v1/benefits/periods/'):
+            BenefitsRouter(self).handle_get(path)
+            return
+
+        if path.startswith('/api/v1/employees/') and path.endswith('/benefits'):
+            BenefitsRouter(self).handle_get(path)
             return
 
         if path.startswith('/api/v1/tax-statements/process/') and path.endswith('/status'):
@@ -104,7 +113,21 @@ class ModularEnviaFolhaHandler(EnviaFolhaHandler):
             TaxStatementsRouter(self).handle_delete()
             return
 
+        if path == '/api/v1/benefits/upload-xlsx':
+            BenefitsRouter(self).handle_post(path)
+            return
+
         super().do_POST()
+
+    def do_DELETE(self):
+        raw_path = urllib.parse.urlparse(self.path).path
+        path = self._normalize_path(raw_path)
+
+        if path.startswith('/api/v1/benefits/periods/'):
+            BenefitsRouter(self).handle_delete(path)
+            return
+
+        super().do_DELETE()
 
 
 def print_startup_banner():

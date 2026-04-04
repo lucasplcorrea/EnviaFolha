@@ -65,8 +65,9 @@ def calculate_payroll_statistics(
     where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
     
     # ===============================
-    # QUERY ÚNICA PARA TODAS AS SEÇÕES
-    # Inclui LEFT JOIN com benefits_data para incluir valores de benefícios iFood
+    # QUERY ÚNICA PARA TODAS AS SEÇÕES (exceto benefícios iFood)
+    # Benefícios iFood são agregados em consulta separada para evitar
+    # dupla contagem quando há múltiplos períodos de folha no mesmo mês.
     # ===============================
     query = text(f"""
         SELECT 
@@ -89,11 +90,11 @@ def calculate_payroll_statistics(
             COALESCE(SUM((pd.earnings_data->>'AJUDA_CUSTO')::numeric), 0) as total_ajuda_custo,
             COALESCE(SUM((pd.earnings_data->>'LICENCA_PATERNIDADE')::numeric), 0) as total_licenca_paternidade,
             
-            -- Benefícios iFood (agregados por período)
-            COALESCE(SUM(bd.refeicao), 0) as total_vale_refeicao,
-            COALESCE(SUM(bd.alimentacao), 0) as total_vale_alimentacao,
-            COALESCE(SUM(bd.mobilidade), 0) as total_vale_mobilidade,
-            COALESCE(SUM(bd.livre), 0) as total_saldo_livre,
+            -- Benefícios iFood (preenchidos por consulta separada)
+            0::numeric as total_vale_refeicao,
+            0::numeric as total_vale_alimentacao,
+            0::numeric as total_vale_mobilidade,
+            0::numeric as total_saldo_livre,
             
             -- Encargos Trabalhistas
             COALESCE(SUM((pd.deductions_data->>'INSS')::numeric), 0) as total_inss,
@@ -120,11 +121,6 @@ def calculate_payroll_statistics(
         FROM payroll_data pd
         INNER JOIN employees e ON e.id = pd.employee_id
         INNER JOIN payroll_periods pp ON pp.id = pd.period_id
-        LEFT JOIN benefits_data bd ON bd.employee_id = e.id 
-            AND bd.period_id IN (
-                SELECT bp.id FROM benefits_periods bp 
-                WHERE bp.year = pp.year AND bp.month = pp.month AND bp.company = pp.company
-            )
         WHERE {where_sql}
     """)
     
@@ -132,6 +128,12 @@ def calculate_payroll_statistics(
     
     if not result:
         return _empty_statistics()
+
+    benefits_totals = _calculate_benefits_totals(
+        db_session=db_session,
+        where_sql=where_sql,
+        params=params,
+    )
     
     # Calcular médias
     total_funcionarios = int(result[0]) if result[0] else 0
@@ -171,17 +173,18 @@ def calculate_payroll_statistics(
             "insalubridade": float(result[8]),
             "vale_transporte": 0.0,  # Zerado conforme solicitado
             "plano_saude": float(result[9]),
-            "vale_mobilidade": float(result[16]),  # Benefícios iFood
-            "vale_refeicao": float(result[13]),     # Benefícios iFood
-            "vale_alimentacao": float(result[14]),  # Benefícios iFood
-            "saldo_livre": float(result[15]),       # Benefícios iFood
+            "vale_mobilidade": benefits_totals["vale_mobilidade"],
+            "vale_refeicao": benefits_totals["vale_refeicao"],
+            "vale_alimentacao": benefits_totals["vale_alimentacao"],
+            "saldo_livre": benefits_totals["saldo_livre"],
             "transferencia_filial": float(result[10]),
             "ajuda_custo": float(result[11]),
             "licenca_paternidade": float(result[12]),
             "total": (
                 float(result[6]) + float(result[7]) + float(result[8]) + float(result[9]) + 
                 float(result[10]) + float(result[11]) + float(result[12]) +
-                float(result[13]) + float(result[14]) + float(result[15]) + float(result[16])  # Incluir benefícios no total
+                benefits_totals["vale_refeicao"] + benefits_totals["vale_alimentacao"] +
+                benefits_totals["saldo_livre"] + benefits_totals["vale_mobilidade"]
             )
         },
         
@@ -218,6 +221,57 @@ def calculate_payroll_statistics(
             "adiantamentos": float(result[30]),
             "total": float(result[29]) + float(result[30])
         }
+    }
+
+
+def _calculate_benefits_totals(
+    db_session: Session,
+    where_sql: str,
+    params: Dict[str, Any],
+) -> Dict[str, float]:
+    """Agrega benefícios sem duplicar registros entre múltiplos períodos de folha."""
+    query = text(f"""
+        SELECT
+            COALESCE(SUM(x.refeicao), 0) AS total_vale_refeicao,
+            COALESCE(SUM(x.alimentacao), 0) AS total_vale_alimentacao,
+            COALESCE(SUM(x.mobilidade), 0) AS total_vale_mobilidade,
+            COALESCE(SUM(x.livre), 0) AS total_saldo_livre
+        FROM (
+            SELECT DISTINCT
+                bd.id,
+                bd.refeicao,
+                bd.alimentacao,
+                bd.mobilidade,
+                bd.livre
+            FROM payroll_data pd
+            INNER JOIN employees e ON e.id = pd.employee_id
+            INNER JOIN payroll_periods pp ON pp.id = pd.period_id
+            INNER JOIN benefits_periods bp
+                ON bp.year = pp.year
+                AND bp.month = pp.month
+                AND bp.company = pp.company
+            INNER JOIN benefits_data bd
+                ON bd.period_id = bp.id
+                AND bd.employee_id = e.id
+            WHERE {where_sql}
+        ) x
+    """)
+
+    row = db_session.execute(query, params).fetchone()
+
+    if not row:
+        return {
+            "vale_refeicao": 0.0,
+            "vale_alimentacao": 0.0,
+            "vale_mobilidade": 0.0,
+            "saldo_livre": 0.0,
+        }
+
+    return {
+        "vale_refeicao": float(row[0] or 0),
+        "vale_alimentacao": float(row[1] or 0),
+        "vale_mobilidade": float(row[2] or 0),
+        "saldo_livre": float(row[3] or 0),
     }
 
 

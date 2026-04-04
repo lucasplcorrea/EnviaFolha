@@ -1504,15 +1504,6 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             period_id = path.split('/')[-1]
             self.handle_payroll_period_summary(period_id)
         
-        # Rotas de benefícios
-        elif path == '/api/v1/benefits/periods':
-            self.handle_benefits_periods_list()
-        elif path == '/api/v1/benefits/processing-logs':
-            self.handle_benefits_processing_logs()
-        elif path.startswith('/api/v1/benefits/periods/'):
-            period_id = path.split('/')[-1]
-            self.handle_benefits_period_detail(period_id)
-        
         # Rotas de cartão ponto
         elif path == '/api/v1/timecard/periods':
             self.handle_timecard_periods_list()
@@ -1545,7 +1536,13 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 print(f"✅ Rota de lotaçoes detectada para employee_id: {employee_id}")
                 self.handle_get_employee_movements(employee_id)
                 return
-            
+
+            if len(parts) >= 6 and parts[5] == 'payroll':
+                employee_id = parts[4]
+                print(f"✅ Rota de folha detectada para employee_id: {employee_id}")
+                self.handle_get_employee_payroll(employee_id)
+                return
+
             # Rota padrão de detalhes do employee
             employee_id = path.split('/')[-1]
             print(f"🔍 Rota de detalhes capturada para employee_id: {employee_id}")
@@ -1748,9 +1745,6 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         elif path == '/api/v1/payroll/upload-csv':
             self.handle_upload_payroll_csv()  # 🆕 Novo endpoint para CSVs da pasta Analiticos
             return
-        elif path == '/api/v1/benefits/upload-xlsx':
-            self.handle_upload_benefits_xlsx()  # Upload de XLSX de benefícios
-            return
         elif path == '/api/v1/timecard/upload-xlsx':
             self.handle_upload_timecard_xlsx()  # Upload de XLSX de cartão ponto
             return
@@ -1853,9 +1847,6 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         elif path.startswith('/api/v1/payroll/periods/'):
             period_id = path.split('/')[-1]
             self.handle_delete_payroll_period(period_id)
-        elif path.startswith('/api/v1/benefits/periods/'):
-            period_id = path.split('/')[-1]
-            self.handle_delete_benefits_period(period_id)
         elif path.startswith('/api/v1/timecard/periods/'):
             period_id = path.split('/')[-1]
             self.handle_delete_timecard_period(period_id)
@@ -2652,6 +2643,125 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
         except Exception as e:
             print(f"❌ Erro ao deletar funcionário: {e}")
+            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_get_employee_payroll(self, employee_id):
+        """Lista folha de pagamento de um colaborador com filtros opcionais"""
+        try:
+            if not SessionLocal:
+                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
+                return
+
+            from app.models import Employee
+            from app.models.payroll import PayrollData, PayrollPeriod
+
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            year = query_params.get('year', [None])[0]
+            month = query_params.get('month', [None])[0]
+            period_id = query_params.get('period_id', [None])[0]
+            company = query_params.get('company', [None])[0]
+            limit = int(query_params.get('limit', ['24'])[0] or 24)
+            employee_id_str = str(employee_id).strip()
+            employee_id_int = int(employee_id_str) if employee_id_str.isdigit() else None
+
+            db = SessionLocal()
+
+            employee_filter = (Employee.unique_id == employee_id_str)
+            if employee_id_int is not None:
+                employee_filter = (Employee.id == employee_id_int) | employee_filter
+
+            employee = db.query(Employee).filter(employee_filter).first()
+
+            if not employee:
+                db.close()
+                self.send_json_response({"error": "Funcionário não encontrado"}, 404)
+                return
+
+            payroll_query = db.query(PayrollData, PayrollPeriod).outerjoin(
+                PayrollPeriod, PayrollPeriod.id == PayrollData.period_id
+            ).filter(PayrollData.employee_id == employee.id)
+
+            if year:
+                payroll_query = payroll_query.filter(PayrollPeriod.year == int(year))
+            if month:
+                payroll_query = payroll_query.filter(PayrollPeriod.month == int(month))
+            if period_id:
+                payroll_query = payroll_query.filter(PayrollData.period_id == int(period_id))
+            if company and company != 'all':
+                payroll_query = payroll_query.filter(PayrollPeriod.company == company)
+
+            records = payroll_query.order_by(
+                PayrollPeriod.year.desc(),
+                PayrollPeriod.month.desc(),
+                PayrollData.id.desc()
+            ).limit(max(1, min(limit, 120))).all()
+
+            payrolls = []
+            total_net = 0.0
+            total_gross = 0.0
+
+            for payroll, period in records:
+                gross_salary = float(payroll.gross_salary or 0)
+                net_salary = float(payroll.net_salary or 0)
+                total_gross += gross_salary
+                total_net += net_salary
+
+                period_year = period.year if period else None
+                period_month = period.month if period else None
+                period_name = period.period_name if period else f"Período {payroll.period_id}"
+                period_company = period.company if period else None
+
+                payrolls.append({
+                    "id": payroll.id,
+                    "period": {
+                        "id": payroll.period_id,
+                        "year": period_year,
+                        "month": period_month,
+                        "name": period_name,
+                        "company": period_company
+                    },
+                    "gross_salary": gross_salary,
+                    "net_salary": net_salary,
+                    "earnings_data": payroll.earnings_data or {},
+                    "deductions_data": payroll.deductions_data or {},
+                    "benefits_data": payroll.benefits_data or {},
+                    "additional_data": payroll.additional_data or {},
+                    "upload_filename": payroll.upload_filename,
+                    "upload_date": payroll.upload_date.isoformat() if payroll.upload_date else None,
+                    "updated_at": payroll.updated_at.isoformat() if getattr(payroll, 'updated_at', None) else None
+                })
+
+            response = {
+                "employee": {
+                    "id": employee.id,
+                    "unique_id": employee.unique_id,
+                    "name": employee.name
+                },
+                "filters": {
+                    "year": int(year) if year else None,
+                    "month": int(month) if month else None,
+                    "period_id": int(period_id) if period_id else None,
+                    "company": company,
+                    "limit": limit
+                },
+                "total_records": len(payrolls),
+                "summary": {
+                    "total_gross_salary": total_gross,
+                    "total_net_salary": total_net,
+                    "avg_net_salary": (total_net / len(payrolls)) if payrolls else 0.0
+                },
+                "payrolls": payrolls
+            }
+
+            db.close()
+            self.send_json_response(response, 200)
+
+        except Exception as e:
+            print(f"❌ Erro ao buscar folha do colaborador: {e}")
+            import traceback
+            traceback.print_exc()
+            if 'db' in locals():
+                db.close()
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
 
     # ===== HANDLERS DE AFASTAMENTOS (LEAVES) =====
@@ -9650,378 +9760,6 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             print(f"❌ Erro ao invalidar cache: {e}")
             self.send_json_response({"error": str(e)}, 500)
     
-    # ========================================
-    # HANDLERS DE BENEFÍCIOS (iFood)
-    # ========================================
-    
-    def handle_upload_benefits_xlsx(self):
-        """
-        Upload e processamento de arquivo XLSX de benefícios
-        Endpoint: POST /api/v1/benefits/upload-xlsx
-        """
-        try:
-            print("📊 === UPLOAD DE XLSX DE BENEFÍCIOS ===")
-            
-            # Parse multipart form data
-            content_type = self.headers.get('Content-Type', '')
-            if not content_type.startswith('multipart/form-data'):
-                self.send_json_response({"error": "Content-Type deve ser multipart/form-data"}, 400)
-                return
-            
-            # Get boundary
-            boundary = None
-            for part in content_type.split(';'):
-                if 'boundary=' in part:
-                    boundary = part.split('boundary=')[1].strip()
-                    break
-            
-            if not boundary:
-                self.send_json_response({"error": "Boundary não encontrado"}, 400)
-                return
-            
-            # Read body
-            content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length)
-            
-            # Parse multipart data manualmente
-            import re
-            import tempfile
-            import shutil
-            
-            # Converter boundary para bytes
-            boundary_bytes = f'--{boundary}'.encode()
-            
-            # Dividir por boundary
-            parts = body.split(boundary_bytes)
-            
-            file_data = None
-            year = None
-            month = None
-            company = '0060'
-            
-            for part in parts:
-                if not part or part == b'--\r\n' or part == b'--':
-                    continue
-                    
-                # Procurar por headers
-                if b'Content-Disposition' in part:
-                    # Extrair nome do campo
-                    if b'name="file"' in part:
-                        # Extrair dados do arquivo
-                        # Formato: headers\r\n\r\nbody
-                        split_point = part.find(b'\r\n\r\n')
-                        if split_point != -1:
-                            file_data = part[split_point + 4:].rstrip(b'\r\n')
-                    
-                    elif b'name="year"' in part:
-                        split_point = part.find(b'\r\n\r\n')
-                        if split_point != -1:
-                            year = int(part[split_point + 4:].strip())
-                    
-                    elif b'name="month"' in part:
-                        split_point = part.find(b'\r\n\r\n')
-                        if split_point != -1:
-                            month = int(part[split_point + 4:].strip())
-                    
-                    elif b'name="company"' in part:
-                        split_point = part.find(b'\r\n\r\n')
-                        if split_point != -1:
-                            company = part[split_point + 4:].strip().decode('utf-8')
-            
-            # Validar dados extraídos
-            if not file_data:
-                self.send_json_response({"error": "Arquivo não enviado"}, 400)
-                return
-            
-            if not year or not month:
-                self.send_json_response({"error": "Ano e mês são obrigatórios"}, 400)
-                return
-            
-            # Validar parâmetros
-            if not (1 <= month <= 12):
-                self.send_json_response({"error": "Mês deve estar entre 1 e 12"}, 400)
-                return
-            
-            if company not in ['0060', '0059']:
-                self.send_json_response({"error": "Empresa deve ser '0060' ou '0059'"}, 400)
-                return
-            
-            # Salvar arquivo temporariamente
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
-                tmp_file.write(file_data)
-                tmp_filepath = tmp_file.name
-            
-            print(f"📁 Arquivo temporário: {tmp_filepath}")
-            print(f"📅 Período: {month}/{year}")
-            print(f"🏢 Empresa: {company}")
-            
-            try:
-                # Criar sessão do banco
-                db = SessionLocal()
-                
-                # Obter user_id do usuário autenticado
-                user_id = None
-                authenticated_user = self.get_authenticated_user(db)
-                if authenticated_user:
-                    user_id = authenticated_user.id
-                    print(f"👤 Processado por: {authenticated_user.username} (ID: {user_id})")
-                
-                # Processar arquivo
-                from app.services.benefits_xlsx_processor import BenefitsXLSXProcessor
-                processor = BenefitsXLSXProcessor(db, user_id=user_id)
-                
-                result = processor.process_xlsx_file(
-                    file_path=tmp_filepath,
-                    year=year,
-                    month=month,
-                    company=company
-                )
-                
-                db.close()
-                
-                # Remover arquivo temporário
-                import os
-                os.unlink(tmp_filepath)
-                
-                if result['success']:
-                    print(f"✅ XLSX processado com sucesso!")
-                    self.send_json_response(result, 200)
-                else:
-                    print(f"❌ Erro ao processar XLSX: {result.get('error')}")
-                    self.send_json_response(result, 400)
-                    
-            except Exception as e:
-                # Limpar arquivo temporário em caso de erro
-                import os
-                if os.path.exists(tmp_filepath):
-                    os.unlink(tmp_filepath)
-                raise
-                
-        except Exception as e:
-            print(f"❌ Erro crítico ao processar XLSX: {e}")
-            import traceback
-            traceback.print_exc()
-            self.send_json_response({
-                "success": False,
-                "error": f"Erro interno: {str(e)}"
-            }, 500)
-    
-    def handle_benefits_periods_list(self):
-        """Lista períodos de benefícios"""
-        try:
-            if SessionLocal:
-                from app.models.payroll import BenefitsPeriod
-                
-                db = SessionLocal()
-                periods = db.query(BenefitsPeriod).filter(
-                    BenefitsPeriod.is_active == True
-                ).order_by(
-                    BenefitsPeriod.year.desc(), 
-                    BenefitsPeriod.month.desc()
-                ).all()
-                
-                periods_data = []
-                for period in periods:
-                    # Mapear código da empresa para nome
-                    company_name = "Empreendimentos" if period.company == "0060" else "Infraestrutura" if period.company == "0059" else period.company
-                    
-                    # Contar registros
-                    from app.models.payroll import BenefitsData
-                    total_records = db.query(BenefitsData).filter(
-                        BenefitsData.period_id == period.id
-                    ).count()
-                    
-                    periods_data.append({
-                        "id": period.id,
-                        "year": period.year,
-                        "month": period.month,
-                        "period_name": period.period_name,
-                        "company": period.company,
-                        "company_name": company_name,
-                        "description": period.description,
-                        "total_records": total_records,
-                        "created_at": period.created_at.isoformat() if hasattr(period, 'created_at') and period.created_at else None
-                    })
-                
-                db.close()
-                self.send_json_response({"periods": periods_data, "total": len(periods_data)})
-                
-            else:
-                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
-                
-        except Exception as e:
-            print(f"❌ Erro ao listar períodos de benefícios: {e}")
-            import traceback
-            traceback.print_exc()
-            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
-    
-    def handle_benefits_period_detail(self, period_id: str):
-        """Detalhes de um período de benefícios"""
-        try:
-            if SessionLocal:
-                from app.models.payroll import BenefitsPeriod, BenefitsData, BenefitsProcessingLog
-                from app.models.employee import Employee
-                
-                db = SessionLocal()
-                period = db.query(BenefitsPeriod).filter(BenefitsPeriod.id == int(period_id)).first()
-                
-                if not period:
-                    db.close()
-                    self.send_json_response({"error": "Período não encontrado"}, 404)
-                    return
-                
-                # Buscar dados de benefícios
-                benefits_records = db.query(BenefitsData, Employee).join(
-                    Employee, BenefitsData.employee_id == Employee.id
-                ).filter(BenefitsData.period_id == period.id).all()
-                
-                records_data = []
-                for benefit, employee in benefits_records:
-                    records_data.append({
-                        "id": benefit.id,
-                        "employee_id": employee.id,
-                        "employee_name": employee.name,
-                        "cpf": benefit.cpf,
-                        "refeicao": float(benefit.refeicao) if benefit.refeicao else 0,
-                        "alimentacao": float(benefit.alimentacao) if benefit.alimentacao else 0,
-                        "mobilidade": float(benefit.mobilidade) if benefit.mobilidade else 0,
-                        "livre": float(benefit.livre) if benefit.livre else 0,
-                        "total": benefit.get_total_benefits()
-                    })
-                
-                # Buscar logs de processamento
-                logs = db.query(BenefitsProcessingLog).filter(
-                    BenefitsProcessingLog.period_id == period.id
-                ).order_by(BenefitsProcessingLog.created_at.desc()).all()
-                
-                logs_data = []
-                for log in logs:
-                    logs_data.append({
-                        "id": log.id,
-                        "filename": log.filename,
-                        "status": log.status,
-                        "total_rows": log.total_rows,
-                        "processed_rows": log.processed_rows,
-                        "error_rows": log.error_rows,
-                        "processing_time": float(log.processing_time) if log.processing_time else 0,
-                        "created_at": log.created_at.isoformat() if log.created_at else None
-                    })
-                
-                db.close()
-                
-                self.send_json_response({
-                    "period": {
-                        "id": period.id,
-                        "year": period.year,
-                        "month": period.month,
-                        "period_name": period.period_name,
-                        "company": period.company,
-                        "company_name": "Empreendimentos" if period.company == "0060" else "Infraestrutura",
-                        "description": period.description
-                    },
-                    "records": records_data,
-                    "logs": logs_data,
-                    "total_records": len(records_data)
-                })
-                
-            else:
-                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
-                
-        except Exception as e:
-            print(f"❌ Erro ao buscar detalhes do período: {e}")
-            import traceback
-            traceback.print_exc()
-            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
-    
-    def handle_delete_benefits_period(self, period_id: str):
-        """Deleta um período de benefícios e todos os dados relacionados"""
-        try:
-            print(f"🗑️ Deletando período de benefícios ID: {period_id}")
-            
-            if SessionLocal:
-                from app.models.payroll import BenefitsPeriod
-                
-                db = SessionLocal()
-                period = db.query(BenefitsPeriod).filter(BenefitsPeriod.id == int(period_id)).first()
-                
-                if not period:
-                    db.close()
-                    self.send_json_response({
-                        "success": False,
-                        "error": "Período não encontrado"
-                    }, 404)
-                    return
-                
-                period_name = period.period_name
-                
-                # Deletar período (cascade vai deletar dados e logs)
-                db.delete(period)
-                db.commit()
-                db.close()
-                
-                print(f"✅ Período deletado: {period_name}")
-                self.send_json_response({
-                    "success": True,
-                    "message": f"Período '{period_name}' deletado com sucesso"
-                })
-                
-            else:
-                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
-                
-        except Exception as e:
-            print(f"❌ Erro ao deletar período: {e}")
-            import traceback
-            traceback.print_exc()
-            self.send_json_response({
-                "success": False,
-                "error": f"Erro interno: {str(e)}"
-            }, 500)
-    
-    def handle_benefits_processing_logs(self):
-        """Retorna histórico de processamento de arquivos de benefícios"""
-        try:
-            if SessionLocal:
-                from app.models.payroll import BenefitsProcessingLog, BenefitsPeriod
-                
-                db = SessionLocal()
-                logs = db.query(
-                    BenefitsProcessingLog,
-                    BenefitsPeriod.year,
-                    BenefitsPeriod.month
-                ).join(
-                    BenefitsPeriod,
-                    BenefitsProcessingLog.period_id == BenefitsPeriod.id
-                ).order_by(
-                    BenefitsProcessingLog.created_at.desc()
-                ).limit(50).all()
-                
-                logs_data = []
-                for log, year, month in logs:
-                    logs_data.append({
-                        "id": log.id,
-                        "filename": log.filename,
-                        "year": year,
-                        "month": month,
-                        "status": log.status,
-                        "total_rows": log.total_rows,
-                        "processed_rows": log.processed_rows,
-                        "error_rows": log.error_rows,
-                        "processing_time": float(log.processing_time) if log.processing_time else 0,
-                        "created_at": log.created_at.isoformat() if log.created_at else None
-                    })
-                
-                db.close()
-                self.send_json_response({"logs": logs_data, "total": len(logs_data)})
-                
-            else:
-                self.send_json_response({"error": "PostgreSQL não disponível"}, 500)
-                
-        except Exception as e:
-            print(f"❌ Erro ao buscar histórico de processamento: {e}")
-            import traceback
-            traceback.print_exc()
-            self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
-    
     # ============================
     # TIMECARD HANDLERS
     # ============================
@@ -10033,6 +9771,11 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 from app.models.timecard import TimecardPeriod, TimecardData
                 from sqlalchemy import func
                 from decimal import Decimal
+                from sqlalchemy import inspect
+
+                if not db_engine or not inspect(db_engine).has_table('timecard_periods'):
+                    self.send_json_response({"periods": [], "total": 0})
+                    return
                 
                 db = SessionLocal()
                 periods = db.query(TimecardPeriod).filter(
@@ -10107,6 +9850,11 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             if SessionLocal:
                 from app.models.timecard import TimecardPeriod, TimecardData, TimecardProcessingLog
                 from decimal import Decimal
+                from sqlalchemy import inspect
+
+                if not db_engine or not inspect(db_engine).has_table('timecard_periods'):
+                    self.send_json_response({"error": "Módulo de cartão ponto não configurado"}, 404)
+                    return
                 
                 db = SessionLocal()
                 period = db.query(TimecardPeriod).filter(TimecardPeriod.id == int(period_id)).first()
@@ -10191,6 +9939,26 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             if SessionLocal:
                 from app.models.timecard import TimecardData, TimecardPeriod
                 from decimal import Decimal
+                from sqlalchemy import inspect
+
+                if not db_engine or not inspect(db_engine).has_table('timecard_data'):
+                    self.send_json_response({
+                        "total_employees": 0,
+                        "overtime_50": 0,
+                        "overtime_100": 0,
+                        "night_overtime_50": 0,
+                        "night_overtime_100": 0,
+                        "night_hours": 0,
+                        "total_overtime_hours": 0,
+                        "total_night_hours": 0,
+                        "employees_with_overtime": 0,
+                        "employees_with_night_hours": 0,
+                        "average_overtime": 0,
+                        "average_night_hours": 0,
+                        "by_company": {},
+                        "module_available": False
+                    })
+                    return
                 
                 # Obter parâmetros da query string
                 query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
@@ -10335,7 +10103,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     "employees_with_night_hours": employees_with_night,
                     "average_overtime": float(avg_overtime),
                     "average_night_hours": float(avg_night),
-                    "by_company": by_company
+                    "by_company": by_company,
+                    "module_available": True
                 })
                 
             else:
@@ -10352,6 +10121,11 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         try:
             if SessionLocal:
                 from app.models.timecard import TimecardProcessingLog, TimecardPeriod
+                from sqlalchemy import inspect
+
+                if not db_engine or not inspect(db_engine).has_table('timecard_processing_logs'):
+                    self.send_json_response({"logs": [], "total": 0})
+                    return
                 
                 db = SessionLocal()
                 logs = db.query(
