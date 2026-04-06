@@ -179,7 +179,7 @@ class ModularEnviaFolhaHandler(BaseHTTPRequestHandler):
             UsersRouter(self).handle_get(path)
             return
 
-        if path.startswith('/api/v1/benefits/periods/') or path in ('/api/v1/benefits/periods', '/api/v1/benefits/processing-logs'):
+        if path.startswith('/api/v1/benefits/periods/') or path in ('/api/v1/benefits/periods', '/api/v1/benefits/processing-logs') or '/employees/' in path and '/benefits' in path:
             BenefitsRouter(self).handle_get(path)
             return
 
@@ -324,6 +324,10 @@ class ModularEnviaFolhaHandler(BaseHTTPRequestHandler):
                 WorkLocationsRouter(self).handle_delete(location_id)
             except ValueError:
                 self.send_error('Local inválido', 400)
+            return
+
+        if path.startswith('/api/v1/benefits/'):
+            BenefitsRouter(self).handle_delete(path)
             return
 
         if path == '/api/v1/employees/bulk' or path == '/api/v1/employees' or path.startswith('/api/v1/employees/'):

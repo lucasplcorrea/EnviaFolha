@@ -375,6 +375,7 @@ class BenefitsXLSXProcessor:
             total_rows = 0
             processed_rows = 0
             error_rows = 0
+            change_set: List[Dict] = []
 
             matched_by_cpf = 0
             matched_by_name = 0
@@ -404,7 +405,7 @@ class BenefitsXLSXProcessor:
                     name_str = str(name).strip() if name is not None else ''
                     
                     # Processar linha
-                    success, match_type = self._process_benefits_row(
+                    success, match_type, change_entry = self._process_benefits_row(
                         period=period,
                         cpf=cpf_str,
                         name=name_str,
@@ -419,6 +420,9 @@ class BenefitsXLSXProcessor:
                         row_number=row_idx,
                         merge_mode=merge_mode
                     )
+
+                    if success and change_entry:
+                        change_set.append(change_entry)
                     
                     if success:
                         processed_rows += 1
@@ -470,7 +474,9 @@ class BenefitsXLSXProcessor:
                     "matched_by_name": matched_by_name,
                     "company": company,
                     "month": month,
-                    "year": year
+                    "year": year,
+                    "rollback_version": 1,
+                    "change_set": change_set,
                 }
             )
             
@@ -556,7 +562,7 @@ class BenefitsXLSXProcessor:
         filename: str,
         row_number: int,
         merge_mode: str = 'sum'
-    ) -> Tuple[bool, Optional[str]]:
+    ) -> Tuple[bool, Optional[str], Optional[Dict]]:
         """Processa uma linha de benefícios"""
         try:
             employee, match_type = self._find_employee(
@@ -575,7 +581,7 @@ class BenefitsXLSXProcessor:
                 )
                 logger.warning(warning_msg)
                 self.warnings.append(warning_msg)
-                return False, None
+                return False, None, None
             
             # Verificar se já existe registro para este período e colaborador
             existing = self.db.query(BenefitsData).filter(
@@ -589,6 +595,14 @@ class BenefitsXLSXProcessor:
             livre_value = self._to_decimal(livre)
             
             if existing:
+                before_snapshot = {
+                    'refeicao': str(existing.refeicao or Decimal('0')),
+                    'alimentacao': str(existing.alimentacao or Decimal('0')),
+                    'mobilidade': str(existing.mobilidade or Decimal('0')),
+                    'livre': str(existing.livre or Decimal('0')),
+                    'upload_filename': existing.upload_filename,
+                    'processed_by': existing.processed_by,
+                }
                 # Atualizar registro existente
                 if merge_mode == 'replace':
                     existing.refeicao = refeicao_value
@@ -602,6 +616,23 @@ class BenefitsXLSXProcessor:
                     existing.livre = (existing.livre or Decimal('0')) + livre_value
                 existing.upload_filename = filename
                 existing.processed_by = self.user_id
+
+                after_snapshot = {
+                    'refeicao': str(existing.refeicao or Decimal('0')),
+                    'alimentacao': str(existing.alimentacao or Decimal('0')),
+                    'mobilidade': str(existing.mobilidade or Decimal('0')),
+                    'livre': str(existing.livre or Decimal('0')),
+                    'upload_filename': existing.upload_filename,
+                    'processed_by': existing.processed_by,
+                }
+
+                change_entry = {
+                    'action': 'updated',
+                    'employee_id': employee.id,
+                    'benefits_data_id': existing.id,
+                    'before': before_snapshot,
+                    'after': after_snapshot,
+                }
             else:
                 # Criar novo registro
                 benefits_data = BenefitsData(
@@ -616,14 +647,28 @@ class BenefitsXLSXProcessor:
                     processed_by=self.user_id
                 )
                 self.db.add(benefits_data)
+
+                change_entry = {
+                    'action': 'created',
+                    'employee_id': employee.id,
+                    'before': None,
+                    'after': {
+                        'refeicao': str(refeicao_value),
+                        'alimentacao': str(alimentacao_value),
+                        'mobilidade': str(mobilidade_value),
+                        'livre': str(livre_value),
+                        'upload_filename': filename,
+                        'processed_by': self.user_id,
+                    },
+                }
             
-            return True, match_type
+            return True, match_type, change_entry
             
         except Exception as e:
             error_msg = f"Linha {row_number}: {str(e)}"
             logger.error(error_msg)
             self.errors.append(error_msg)
-            return False, None
+            return False, None, None
     
     def _create_processing_log(
         self,

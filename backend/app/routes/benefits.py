@@ -4,6 +4,7 @@ import os
 import re
 import tempfile
 import urllib.parse
+from decimal import Decimal
 
 from app.models.base import SessionLocal
 from app.models.employee import Employee
@@ -44,6 +45,11 @@ class BenefitsRouter(BaseRouter):
         self.send_error('Endpoint não encontrado', 404)
 
     def handle_delete(self, path: str):
+        if path.startswith('/api/v1/benefits/processing-logs/'):
+            log_id = path.split('/')[5]
+            self.handle_delete_benefits_processing_log(log_id)
+            return
+
         if path.startswith('/api/v1/benefits/periods/'):
             period_id = path.split('/')[5]
             self.handle_delete_benefits_period(period_id)
@@ -353,8 +359,34 @@ class BenefitsRouter(BaseRouter):
             logs_data = []
             for log, year, month, company, period_name in logs:
                 company_name = 'Empreendimentos' if company == '0060' else 'Infraestrutura' if company == '0059' else company
+                summary = log.processing_summary or {}
+
+                # Verificar se tem change_set (pode ser lista vazia, o que é válido)
+                has_change_set = summary.get('rollback_version') == 1 and isinstance(summary.get('change_set'), list)
+                has_newer_log = db.query(BenefitsProcessingLog).filter(
+                    BenefitsProcessingLog.period_id == log.period_id,
+                    BenefitsProcessingLog.id > log.id
+                ).count() > 0
+
+                # Dois tipos de deleção:
+                # 1. "rollback" - com change_set (antes/depois) para uploads recentes
+                # 2. "simple" - apena remove registros criados por este arquivo (uploads antigos)
+                can_rollback = has_change_set and not has_newer_log
+                can_delete = not has_newer_log  # Pode deletar se não há upload mais recente
+                
+                rollback_reason = None
+                delete_mode = None
+                
+                if has_newer_log:
+                    rollback_reason = 'Existe upload mais recente no mesmo período'
+                elif has_change_set:
+                    delete_mode = 'rollback'  # Com change_set
+                else:
+                    delete_mode = 'simple'  # Sem change_set, só remove pelo filename
+
                 logs_data.append({
                     'id': log.id,
+                    'period_id': log.period_id,
                     'filename': log.filename,
                     'year': year,
                     'month': month,
@@ -366,7 +398,11 @@ class BenefitsRouter(BaseRouter):
                     'processed_rows': log.processed_rows,
                     'error_rows': log.error_rows,
                     'processing_time': float(log.processing_time) if log.processing_time else 0,
-                    'processing_summary': log.processing_summary or {},
+                    'processing_summary': summary,
+                    'can_rollback': can_rollback,
+                    'can_delete': can_delete,
+                    'delete_mode': delete_mode,
+                    'rollback_reason': rollback_reason,
                     'created_at': log.created_at.isoformat() if log.created_at else None,
                 })
 
@@ -374,6 +410,115 @@ class BenefitsRouter(BaseRouter):
 
         except Exception as ex:
             self.send_json_response({'error': f'Erro interno: {str(ex)}'}, 500)
+
+        finally:
+            try:
+                if db is not None:
+                    db.close()
+            except Exception:
+                pass
+
+    def handle_delete_benefits_processing_log(self, log_id: str):
+        db = None
+        try:
+            db = SessionLocal()
+
+            try:
+                log_id_int = int(log_id)
+            except ValueError:
+                self.send_json_response({'success': False, 'error': 'ID de log inválido'}, 400)
+                return
+
+            log = db.query(BenefitsProcessingLog).filter(BenefitsProcessingLog.id == log_id_int).first()
+            if not log:
+                self.send_json_response({'success': False, 'error': 'Log não encontrado'}, 404)
+                return
+
+            # Verificar se há uploads mais recentes
+            has_newer_log = db.query(BenefitsProcessingLog).filter(
+                BenefitsProcessingLog.period_id == log.period_id,
+                BenefitsProcessingLog.id > log.id
+            ).count() > 0
+            
+            if has_newer_log:
+                self.send_json_response({
+                    'success': False,
+                    'error': 'Existe upload mais recente neste período. Remova os uploads mais novos antes deste.'
+                }, 409)
+                return
+
+            summary = log.processing_summary or {}
+            change_set = summary.get('change_set') or []
+            rollback_version = summary.get('rollback_version')
+
+            # Determinar modo de deleção
+            has_change_set = rollback_version == 1 and isinstance(change_set, list) and len(change_set) > 0
+            delete_mode = 'rollback' if has_change_set else 'simple'
+
+            period_id = log.period_id
+            filename = log.filename
+            reverted_rows = 0
+
+            if delete_mode == 'rollback':
+                # Modo 1: Rollback com change_set (uploads recentes)
+                for entry in reversed(change_set):
+                    employee_id = entry.get('employee_id')
+                    action = entry.get('action')
+                    before = entry.get('before')
+
+                    if not employee_id:
+                        continue
+
+                    record = db.query(BenefitsData).filter(
+                        BenefitsData.period_id == period_id,
+                        BenefitsData.employee_id == int(employee_id)
+                    ).first()
+
+                    if action == 'created':
+                        if record:
+                            db.delete(record)
+                            reverted_rows += 1
+                        continue
+
+                    if action == 'updated' and before:
+                        if not record:
+                            continue
+
+                        record.refeicao = Decimal(str(before.get('refeicao', '0') or '0'))
+                        record.alimentacao = Decimal(str(before.get('alimentacao', '0') or '0'))
+                        record.mobilidade = Decimal(str(before.get('mobilidade', '0') or '0'))
+                        record.livre = Decimal(str(before.get('livre', '0') or '0'))
+                        record.upload_filename = before.get('upload_filename')
+                        record.processed_by = before.get('processed_by')
+                        reverted_rows += 1
+            else:
+                # Modo 2: Deleção simples por filename (uploads antigos sem change_set)
+                records_to_delete = db.query(BenefitsData).filter(
+                    BenefitsData.period_id == period_id,
+                    BenefitsData.upload_filename == filename
+                ).all()
+                
+                for record in records_to_delete:
+                    db.delete(record)
+                    reverted_rows += 1
+
+            db.delete(log)
+            db.commit()
+
+            remaining_records = db.query(BenefitsData).filter(BenefitsData.period_id == period_id).count()
+
+            self.send_json_response({
+                'success': True,
+                'message': f"Upload '{filename}' removido com sucesso ({reverted_rows} registros)",
+                'reverted_rows': reverted_rows,
+                'remaining_records': remaining_records,
+                'delete_mode': delete_mode,
+            })
+
+        except Exception as ex:
+            if db is not None:
+                db.rollback()
+            self.send_json_response({'success': False, 'error': f'Erro interno: {str(ex)}'}, 500)
 
         finally:
             try:
