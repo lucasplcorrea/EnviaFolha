@@ -1,6 +1,12 @@
 from pydantic_settings import BaseSettings
 from typing import Optional
 import os
+from pathlib import Path
+
+
+CURRENT_FILE = Path(__file__).resolve()
+BACKEND_DIR = CURRENT_FILE.parents[2]
+REPO_DIR = CURRENT_FILE.parents[3]
 
 class Settings(BaseSettings):
     # Configurações básicas
@@ -9,7 +15,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     
     # Configurações do banco de dados
-    DATABASE_URL: str = "postgresql://user:password@localhost:5432/dbname"
+    DATABASE_URL: Optional[str] = None
     
     # Configurações PostgreSQL individuais
     DB_HOST: str = "localhost"
@@ -47,7 +53,10 @@ class Settings(BaseSettings):
     ADMIN_WHATSAPP_NUMBER: Optional[str] = None
     
     class Config:
-        env_file = ".env"
+        env_file = (
+            str(BACKEND_DIR / ".env"),
+            str(REPO_DIR / ".env"),
+        )
         env_file_encoding = "utf-8"
         extra = "allow"  # Permite campos extras
         case_sensitive = True
@@ -68,6 +77,13 @@ class Settings(BaseSettings):
         return all([self.SMTP_HOST, self.SMTP_USER, self.SMTP_PASSWORD])
 
 settings = Settings()
+
+# Fallback para manter compatibilidade quando DATABASE_URL nao foi informado.
+if not settings.DATABASE_URL:
+    settings.DATABASE_URL = (
+        f"postgresql://{settings.DB_USER}:{settings.DB_PASSWORD}"
+        f"@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
+    )
 
 # Criar diretórios necessários
 os.makedirs(settings.UPLOAD_FOLDER, exist_ok=True)

@@ -3,6 +3,7 @@ Companies Router — CRUD completo para /api/v1/companies
 """
 from .base import BaseRouter
 from datetime import datetime
+from app.services.runtime_compat import SessionLocal
 
 
 def _company_to_dict(c) -> dict:
@@ -30,7 +31,6 @@ class CompaniesRouter(BaseRouter):
 
     # ── GET /api/v1/companies ─────────────────────────────────────────────
     def handle_list(self):
-        from main_legacy import SessionLocal
         from app.models import Company
         from sqlalchemy.orm import joinedload
 
@@ -55,7 +55,6 @@ class CompaniesRouter(BaseRouter):
 
     # ── GET /api/v1/companies/<id> ────────────────────────────────────────
     def handle_get(self, company_id: int):
-        from main_legacy import SessionLocal
         from app.models import Company
         from sqlalchemy.orm import joinedload
 
@@ -81,7 +80,6 @@ class CompaniesRouter(BaseRouter):
 
     # ── POST /api/v1/companies ────────────────────────────────────────────
     def handle_create(self):
-        from main_legacy import SessionLocal
         from app.models import Company
 
         db = SessionLocal()
@@ -132,7 +130,6 @@ class CompaniesRouter(BaseRouter):
 
     # ── PUT /api/v1/companies/<id> ────────────────────────────────────────
     def handle_update(self, company_id: int):
-        from main_legacy import SessionLocal
         from app.models import Company
 
         db = SessionLocal()
@@ -164,7 +161,6 @@ class CompaniesRouter(BaseRouter):
 
     # ── DELETE /api/v1/companies/<id> ─────────────────────────────────────
     def handle_delete(self, company_id: int):
-        from main_legacy import SessionLocal
         from app.models import Company
 
         db = SessionLocal()

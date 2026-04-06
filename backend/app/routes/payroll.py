@@ -32,6 +32,9 @@ class PayrollRouter(BaseRouter):
             self.handle_payroll_months()
         elif path == '/api/v1/payroll/periods' or path == '/api/v1/payrolls/periods':
             self.handle_list_payroll_periods()
+        elif path == '/api/v1/payroll/period-comparison':
+            # Ainda usa implementacao consolidada do legado
+            self.handler.handle_period_comparison()
         elif path == '/api/v1/payroll/processing-history':
             self.handle_payroll_processing_history()
         elif path.startswith('/api/v1/payroll/statistics-debug'):
