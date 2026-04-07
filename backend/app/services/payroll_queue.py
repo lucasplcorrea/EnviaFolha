@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import queue
 import random
+import shutil
 import threading
 import time
 from datetime import datetime
@@ -22,6 +24,45 @@ logger = logging.getLogger(__name__)
 
 _payroll_send_jobs: Dict[str, Dict] = {}
 _payroll_send_jobs_lock = threading.Lock()
+
+
+def _get_sent_base_dir() -> str:
+    candidates = [
+        os.getenv("SENT_DIR", "").strip(),
+        "sent",
+        os.path.join("backend", "sent"),
+        "/app/sent",
+    ]
+    for candidate in candidates:
+        if candidate:
+            abs_path = os.path.abspath(candidate)
+            if os.path.isdir(abs_path):
+                return abs_path
+
+    fallback = os.path.abspath("sent")
+    os.makedirs(fallback, exist_ok=True)
+    return fallback
+
+
+def _move_file_to_sent(file_path: str, month_year: str) -> str:
+    sent_base = _get_sent_base_dir()
+    period_label = (month_year or "desconhecido").replace("/", "_")
+    target_dir = os.path.join(sent_base, period_label)
+    os.makedirs(target_dir, exist_ok=True)
+
+    filename = os.path.basename(file_path)
+    target_path = os.path.join(target_dir, filename)
+
+    if os.path.abspath(file_path) == os.path.abspath(target_path):
+        return target_path
+
+    if os.path.exists(target_path):
+        base, ext = os.path.splitext(filename)
+        stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        target_path = os.path.join(target_dir, f"{base}_{stamp}{ext}")
+
+    shutil.move(file_path, target_path)
+    return target_path
 
 
 def _update_runtime_job(
@@ -189,6 +230,15 @@ def _run_send_loop(queue_id: str, items: List[Dict], templates: List[str]) -> No
                     instance_manager.register_send(instance_name)
 
                     if result.get("success"):
+                        try:
+                            new_path = _move_file_to_sent(file_path, month_year)
+                            if queue_item_id:
+                                queue_item_row = local_db.query(SendQueueItem).filter(SendQueueItem.id == queue_item_id).first()
+                                if queue_item_row:
+                                    queue_item_row.file_path = new_path
+                                    local_db.commit()
+                        except Exception as move_error:
+                            logger.warning("Falha ao mover arquivo enviado para 'sent': %s", move_error)
                         update_progress(queue_item_id, successful=True)
                     else:
                         update_progress(queue_item_id, successful=False, error_message=result.get("message", "Erro de envio"))
