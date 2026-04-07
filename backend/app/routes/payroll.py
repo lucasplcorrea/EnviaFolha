@@ -10,7 +10,7 @@ from typing import List, Optional
 
 from app.models.base import SessionLocal, engine
 from app.services.payroll_formatter import segment_pdf_by_employee
-from app.services.payroll_queue import get_payroll_send_job, start_payroll_send_job
+from app.services.payroll_queue import get_payroll_send_job, start_payroll_send_job, _move_file_to_sent
 from app.services.payroll_csv_processor import PayrollCSVProcessor
 from app.services.payroll_statistics import calculate_payroll_statistics
 from app.services.instance_manager import get_instance_manager
@@ -693,7 +693,7 @@ class PayrollRouter(BaseRouter):
         try:
             data = self.get_request_data()
             filename = str(data.get('filename') or '').strip()
-            phone = str(data.get('phone') or '').strip()
+            phone = str(data.get('phone') or data.get('phone_number') or '').strip()
             message = str(data.get('message') or '').strip()
 
             if not filename:
@@ -740,7 +740,14 @@ class PayrollRouter(BaseRouter):
                 loop.close()
 
             if result.get('success'):
-                self.send_json_response({'success': True, 'message': 'Holerite enviado com sucesso'})
+                try:
+                    original_path = target_file.get('filepath')
+                    moved_path = _move_file_to_sent(original_path, target_file.get('month_year') or 'desconhecido')
+                    self.send_json_response({'success': True, 'message': 'Holerite enviado com sucesso', 'sent_path': moved_path})
+                    return
+                except Exception as move_ex:
+                    self.send_json_response({'success': True, 'message': f'Holerite enviado, mas não foi possível mover arquivo: {str(move_ex)}'})
+                    return
             else:
                 self.send_json_response({'success': False, 'detail': result.get('message', 'Erro no envio')}, 500)
         except Exception as ex:

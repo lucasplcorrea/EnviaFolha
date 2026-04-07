@@ -122,8 +122,8 @@ const PayrollSender = () => {
       const status = response.data;
       setJobStatus(status);
 
-      // Se job completou ou falhou, parar polling
-      if (status.status === 'completed' || status.status === 'failed') {
+      // Se job completou, falhou ou foi cancelado, parar polling
+      if (status.status === 'completed' || status.status === 'failed' || status.status === 'cancelled') {
         if (pollingIntervalRef.current) {
           clearInterval(pollingIntervalRef.current);
           pollingIntervalRef.current = null;
@@ -157,6 +157,8 @@ const PayrollSender = () => {
             }
           } else if (status.status === 'failed') {
             toast.error(`Erro no envio: ${status.error_message}`);
+          } else if (status.status === 'cancelled') {
+            toast('Envio cancelado pelo usuário', { icon: '🛑' });
           }
         }
 
