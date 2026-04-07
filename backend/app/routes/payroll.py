@@ -1,12 +1,15 @@
 """Modular route handlers for payroll upload and statistics."""
 
+import os
 import urllib.parse
 from datetime import datetime
 from typing import List, Optional
 
 from app.models.base import SessionLocal, engine
+from app.services.payroll_formatter import segment_pdf_by_employee
 from app.services.payroll_csv_processor import PayrollCSVProcessor
 from app.services.payroll_statistics import calculate_payroll_statistics
+from app.services.runtime_compat import load_employees_data
 from app.routes.base import BaseRouter
 
 
@@ -14,8 +17,58 @@ class PayrollRouter(BaseRouter):
     """Router para endpoints de folha de pagamento."""
 
     def handle_process_payroll_file(self):
-        """Mantém compatibilidade com o fluxo legado de processamento de PDFs."""
-        return self.handler.handle_process_payroll_file()
+        """Processa PDF consolidado de holerites e segmenta por colaborador."""
+        try:
+            data = self.get_request_data()
+            uploaded_file = data.get('uploadedFile') or {}
+            payroll_type = str(data.get('payrollType') or '').strip()
+            month = data.get('month')
+            year = data.get('year')
+
+            if not uploaded_file:
+                self.send_json_response({'success': False, 'error': 'Arquivo enviado não informado'}, 400)
+                return
+
+            if not payroll_type or month is None or year is None:
+                self.send_json_response({'success': False, 'error': 'payrollType, month e year são obrigatórios'}, 400)
+                return
+
+            try:
+                month = int(month)
+                year = int(year)
+            except Exception:
+                self.send_json_response({'success': False, 'error': 'month/year inválidos'}, 400)
+                return
+
+            file_path = uploaded_file.get('file_path')
+            if not file_path:
+                filename = uploaded_file.get('filename')
+                if filename:
+                    candidate = os.path.join('uploads', filename)
+                    if os.path.exists(candidate):
+                        file_path = candidate
+
+            if not file_path or not os.path.exists(file_path):
+                self.send_json_response({'success': False, 'error': 'Arquivo de upload não encontrado no servidor'}, 400)
+                return
+
+            employees_payload = load_employees_data(include_inactive=True)
+            employees = employees_payload.get('employees', [])
+
+            result = segment_pdf_by_employee(
+                pdf_path=file_path,
+                employees_data=employees,
+                payroll_type=payroll_type,
+                month=month,
+                year=year,
+            )
+
+            if result.get('success'):
+                self.send_json_response(result, 200)
+            else:
+                self.send_json_response(result, 400)
+        except Exception as ex:
+            self.send_json_response({'success': False, 'error': f'Erro ao processar holerites: {str(ex)}'}, 500)
 
     def handle_get(self, path: str):
         if path == '/api/v1/payroll/statistics':

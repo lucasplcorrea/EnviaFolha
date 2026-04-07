@@ -23,6 +23,7 @@ from app.routes import (
 )
 from app.routes.benefits import BenefitsRouter
 from app.routes.endomarketing import EndomarketingRouter
+from app.routes.files import FilesRouter
 from app.routes.payroll import PayrollRouter
 from app.routes.queue import QueueRouter
 from app.routes.reports import ReportsRouter
@@ -242,6 +243,10 @@ class ModularEnviaFolhaHandler(BaseHTTPRequestHandler):
 
         if path == '/api/v1/benefits/upload-xlsx' or path == '/api/v1/benefits/periods':
             BenefitsRouter(self).handle_post(path)
+            return
+
+        if path == '/api/v1/files/upload':
+            FilesRouter(self).handle_post(path)
             return
 
         if path == '/api/v1/indicators/cache/invalidate':
