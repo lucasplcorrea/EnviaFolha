@@ -1,6 +1,7 @@
 """Modular route handlers for payroll upload and statistics."""
 
 import os
+import asyncio
 import urllib.parse
 import zipfile
 from io import BytesIO
@@ -9,8 +10,12 @@ from typing import List, Optional
 
 from app.models.base import SessionLocal, engine
 from app.services.payroll_formatter import segment_pdf_by_employee
+from app.services.payroll_queue import get_payroll_send_job, start_payroll_send_job
 from app.services.payroll_csv_processor import PayrollCSVProcessor
 from app.services.payroll_statistics import calculate_payroll_statistics
+from app.services.instance_manager import get_instance_manager
+from app.services.evolution_api import EvolutionAPIService
+from app.services.phone_validator import PhoneValidator
 from app.services.runtime_compat import load_employees_data
 from app.routes.base import BaseRouter
 
@@ -222,6 +227,9 @@ class PayrollRouter(BaseRouter):
             self.handle_payroll_statistics_filtered()
         elif path == '/api/v1/payrolls/processed':
             self.handle_payrolls_processed()
+        elif path.startswith('/api/v1/payrolls/bulk-send/') and path.endswith('/status'):
+            job_id = path.split('/')[-2]
+            self.handle_bulk_send_status(job_id)
         elif path == '/api/v1/payrolls/periods':
             self.handle_list_payroll_periods()
         else:
@@ -236,6 +244,8 @@ class PayrollRouter(BaseRouter):
             self.handle_export_payroll_batch()
         elif path == '/api/v1/payrolls/bulk-send':
             self.handle_bulk_send_payrolls()
+        elif path == '/api/v1/payrolls/send-individual':
+            self.handle_send_payroll_individual()
         elif path == '/api/v1/payrolls/delete-file':
             self.handle_delete_payroll_file()
         else:
@@ -641,7 +651,100 @@ class PayrollRouter(BaseRouter):
             self.send_json_response({'success': False, 'error': str(ex)}, 500)
 
     def handle_bulk_send_payrolls(self):
-        self.send_json_response({'success': False, 'error': 'Não implementado' }, 501)
+        try:
+            data = self.get_request_data()
+            selected_files = data.get('selected_files') or []
+            message_templates = data.get('message_templates') or []
+
+            if not selected_files:
+                self.send_json_response({'success': False, 'detail': 'Nenhum arquivo selecionado para envio'}, 400)
+                return
+
+            user = self.handler.get_authenticated_user()
+            user_id = user.id if user else 0
+
+            computer_name = self.handler.headers.get('X-Computer-Name')
+            ip_address = self.handler.client_address[0] if self.handler.client_address else None
+
+            job = start_payroll_send_job(
+                user_id=user_id,
+                selected_files=selected_files,
+                message_templates=message_templates,
+                computer_name=computer_name,
+                ip_address=ip_address,
+            )
+
+            self.send_json_response(job, 202)
+        except Exception as ex:
+            self.send_json_response({'success': False, 'detail': str(ex)}, 500)
+
+    def handle_bulk_send_status(self, job_id: str):
+        try:
+            job = get_payroll_send_job(job_id)
+            if not job:
+                self.send_json_response({'success': False, 'detail': 'Job não encontrado'}, 404)
+                return
+
+            self.send_json_response(job, 200)
+        except Exception as ex:
+            self.send_json_response({'success': False, 'detail': str(ex)}, 500)
+
+    def handle_send_payroll_individual(self):
+        try:
+            data = self.get_request_data()
+            filename = str(data.get('filename') or '').strip()
+            phone = str(data.get('phone') or '').strip()
+            message = str(data.get('message') or '').strip()
+
+            if not filename:
+                self.send_json_response({'success': False, 'detail': 'filename é obrigatório'}, 400)
+                return
+
+            if not phone:
+                self.send_json_response({'success': False, 'detail': 'phone é obrigatório'}, 400)
+                return
+
+            target_file = None
+            for file_info in self._collect_processed_files():
+                if file_info.get('filename') == filename:
+                    target_file = file_info
+                    break
+
+            if not target_file:
+                self.send_json_response({'success': False, 'detail': 'Arquivo não encontrado'}, 404)
+                return
+
+            phone_ok, formatted_phone, phone_error = PhoneValidator.validate_and_format(phone)
+            if not phone_ok or not formatted_phone:
+                self.send_json_response({'success': False, 'detail': f'Telefone inválido: {phone_error or "formato_invalido"}'}, 400)
+                return
+
+            manager = get_instance_manager()
+            loop = asyncio.new_event_loop()
+            try:
+                asyncio.set_event_loop(loop)
+                instance_name = loop.run_until_complete(manager.get_next_available_instance())
+                if not instance_name:
+                    self.send_json_response({'success': False, 'detail': 'Nenhuma instância WhatsApp online'}, 503)
+                    return
+
+                service = EvolutionAPIService(instance_name=instance_name)
+                result = loop.run_until_complete(
+                    service.send_communication_message(
+                        phone=formatted_phone,
+                        message_text=message or None,
+                        file_path=target_file.get('filepath'),
+                    )
+                )
+            finally:
+                loop.close()
+
+            if result.get('success'):
+                self.send_json_response({'success': True, 'message': 'Holerite enviado com sucesso'})
+            else:
+                self.send_json_response({'success': False, 'detail': result.get('message', 'Erro no envio')}, 500)
+        except Exception as ex:
+            self.send_json_response({'success': False, 'detail': str(ex)}, 500)
 
     def handle_delete_payroll_file(self):
         try:
