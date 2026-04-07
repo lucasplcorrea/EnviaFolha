@@ -3,11 +3,13 @@
 import os
 import re
 import tempfile
+import urllib.parse
 from decimal import Decimal
 from sqlalchemy import func
 
 from app.routes.base import BaseRouter
 from app.services.runtime_compat import SessionLocal
+from app.models.employee import Employee
 from app.models.timecard import TimecardData, TimecardPeriod, TimecardProcessingLog
 from app.services.timecard_xlsx_processor import TimecardXLSXProcessor
 
@@ -20,6 +22,10 @@ class TimecardRouter(BaseRouter):
 
         if path == '/api/v1/timecard/processing-logs':
             self.handle_timecard_processing_logs()
+            return
+
+        if path == '/api/v1/timecard/stats':
+            self.handle_timecard_stats()
             return
 
         self.send_error('Endpoint não encontrado', 404)
@@ -120,6 +126,196 @@ class TimecardRouter(BaseRouter):
         finally:
             db.close()
 
+    def handle_timecard_stats(self):
+        db = SessionLocal()
+        try:
+            query = urllib.parse.urlparse(self.handler.path).query
+            params = urllib.parse.parse_qs(query)
+
+            year = params.get('year', [None])[0]
+            month = params.get('month', [None])[0]
+            period_id = params.get('period_id', [None])[0]
+            employees = params.get('employees', [None])[0]
+            companies = params.get('companies', [None])[0]
+            departments = params.get('departments', [None])[0]
+
+            stats_query = db.query(TimecardData)
+
+            if period_id:
+                stats_query = stats_query.filter(TimecardData.period_id == int(period_id))
+            elif year and month:
+                period = db.query(TimecardPeriod).filter(
+                    TimecardPeriod.year == int(year),
+                    TimecardPeriod.month == int(month),
+                ).first()
+                if period:
+                    stats_query = stats_query.filter(TimecardData.period_id == period.id)
+                else:
+                    self.send_json_response({
+                        'total_employees': 0,
+                        'overtime_50': 0.0,
+                        'overtime_100': 0.0,
+                        'night_overtime_50': 0.0,
+                        'night_overtime_100': 0.0,
+                        'night_hours': 0.0,
+                        'intrajornada_hours': 0.0,
+                        'dsr_debit_hours': 0.0,
+                        'total_overtime_hours': 0.0,
+                        'total_night_hours': 0.0,
+                        'employees_with_overtime': 0,
+                        'employees_with_night_hours': 0,
+                        'employees_with_intrajornada': 0,
+                        'employees_with_dsr_debit': 0,
+                        'average_overtime': 0.0,
+                        'average_night_hours': 0.0,
+                        'average_intrajornada': 0.0,
+                        'average_dsr_debit': 0.0,
+                        'by_company': {},
+                    })
+                    return
+
+            if employees:
+                try:
+                    employee_ids = [int(item.strip()) for item in employees.split(',') if item.strip()]
+                    if employee_ids:
+                        stats_query = stats_query.filter(TimecardData.employee_id.in_(employee_ids))
+                except Exception:
+                    pass
+
+            if companies:
+                try:
+                    company_codes = [item.strip() for item in companies.split(',') if item.strip()]
+                    if company_codes:
+                        stats_query = stats_query.filter(TimecardData.company.in_(company_codes))
+                except Exception:
+                    pass
+
+            if departments:
+                try:
+                    department_names = [item.strip() for item in departments.split(',') if item.strip()]
+                    if department_names:
+                        normalized_departments = [item.lower() for item in department_names]
+                        stats_query = stats_query.join(Employee, Employee.id == TimecardData.employee_id).filter(
+                            func.lower(Employee.department).in_(normalized_departments)
+                        )
+                except Exception:
+                    pass
+
+            timecard_data = stats_query.all()
+
+            if not timecard_data:
+                self.send_json_response({
+                    'total_employees': 0,
+                    'overtime_50': 0.0,
+                    'overtime_100': 0.0,
+                    'night_overtime_50': 0.0,
+                    'night_overtime_100': 0.0,
+                    'night_hours': 0.0,
+                    'intrajornada_hours': 0.0,
+                    'dsr_debit_hours': 0.0,
+                    'total_overtime_hours': 0.0,
+                    'total_night_hours': 0.0,
+                    'employees_with_overtime': 0,
+                    'employees_with_night_hours': 0,
+                    'employees_with_intrajornada': 0,
+                    'employees_with_dsr_debit': 0,
+                    'average_overtime': 0.0,
+                    'average_night_hours': 0.0,
+                    'average_intrajornada': 0.0,
+                    'average_dsr_debit': 0.0,
+                    'by_company': {},
+                })
+                return
+
+            total_employees = len(timecard_data)
+            sum_overtime_50 = sum((d.overtime_50 or Decimal('0') for d in timecard_data), Decimal('0'))
+            sum_overtime_100 = sum((d.overtime_100 or Decimal('0') for d in timecard_data), Decimal('0'))
+            sum_night_overtime_50 = sum((d.night_overtime_50 or Decimal('0') for d in timecard_data), Decimal('0'))
+            sum_night_overtime_100 = sum((d.night_overtime_100 or Decimal('0') for d in timecard_data), Decimal('0'))
+            sum_night_hours = sum((d.night_hours or Decimal('0') for d in timecard_data), Decimal('0'))
+            sum_intrajornada = sum((d.absences or Decimal('0') for d in timecard_data), Decimal('0'))
+            sum_dsr_debit = sum((d.dsr_debit or Decimal('0') for d in timecard_data), Decimal('0'))
+
+            total_overtime = sum_overtime_50 + sum_overtime_100
+            total_night = sum_night_overtime_50 + sum_night_overtime_100 + sum_night_hours
+
+            employees_with_overtime = sum(1 for d in timecard_data if d.get_total_overtime() > 0)
+            employees_with_night = sum(1 for d in timecard_data if d.get_total_night_hours() > 0)
+            employees_with_intrajornada = sum(1 for d in timecard_data if (d.absences or Decimal('0')) > 0)
+            employees_with_dsr_debit = sum(1 for d in timecard_data if (d.dsr_debit or Decimal('0')) > 0)
+
+            avg_overtime = total_overtime / total_employees if total_employees > 0 else Decimal('0')
+            avg_night = total_night / total_employees if total_employees > 0 else Decimal('0')
+            avg_intrajornada = sum_intrajornada / total_employees if total_employees > 0 else Decimal('0')
+            avg_dsr_debit = sum_dsr_debit / total_employees if total_employees > 0 else Decimal('0')
+
+            by_company = {}
+            for company in ['0059', '0060']:
+                company_data = [d for d in timecard_data if d.company == company]
+                if company_data:
+                    company_intrajornada = sum((d.absences or Decimal('0') for d in company_data), Decimal('0'))
+                    company_dsr = sum((d.dsr_debit or Decimal('0') for d in company_data), Decimal('0'))
+                    by_company[company] = {
+                        'employees': len(company_data),
+                        'total_overtime': float(sum((d.get_total_overtime() for d in company_data), Decimal('0'))),
+                        'total_night_hours': float(sum((d.get_total_night_hours() for d in company_data), Decimal('0'))),
+                        'total_intrajornada': float(company_intrajornada),
+                        'total_dsr_debit': float(company_dsr),
+                        'average_overtime': float(sum((d.get_total_overtime() for d in company_data), Decimal('0')) / len(company_data)),
+                        'average_night_hours': float(sum((d.get_total_night_hours() for d in company_data), Decimal('0')) / len(company_data)),
+                        'average_intrajornada': float(company_intrajornada / len(company_data)),
+                        'average_dsr_debit': float(company_dsr / len(company_data)),
+                    }
+
+            self.send_json_response({
+                'total_employees': total_employees,
+                'overtime_50': float(sum_overtime_50),
+                'overtime_100': float(sum_overtime_100),
+                'night_overtime_50': float(sum_night_overtime_50),
+                'night_overtime_100': float(sum_night_overtime_100),
+                'night_hours': float(sum_night_hours),
+                'intrajornada_hours': float(sum_intrajornada),
+                'dsr_debit_hours': float(sum_dsr_debit),
+                'total_overtime_hours': float(total_overtime),
+                'total_night_hours': float(total_night),
+                'employees_with_overtime': employees_with_overtime,
+                'employees_with_night_hours': employees_with_night,
+                'employees_with_intrajornada': employees_with_intrajornada,
+                'employees_with_dsr_debit': employees_with_dsr_debit,
+                'average_overtime': float(avg_overtime),
+                'average_night_hours': float(avg_night),
+                'average_intrajornada': float(avg_intrajornada),
+                'average_dsr_debit': float(avg_dsr_debit),
+                'by_company': by_company,
+            })
+        except Exception as ex:
+            if 'does not exist' in str(ex) and 'timecard_' in str(ex):
+                self.send_json_response({
+                    'total_employees': 0,
+                    'overtime_50': 0.0,
+                    'overtime_100': 0.0,
+                    'night_overtime_50': 0.0,
+                    'night_overtime_100': 0.0,
+                    'night_hours': 0.0,
+                    'intrajornada_hours': 0.0,
+                    'dsr_debit_hours': 0.0,
+                    'total_overtime_hours': 0.0,
+                    'total_night_hours': 0.0,
+                    'employees_with_overtime': 0,
+                    'employees_with_night_hours': 0,
+                    'employees_with_intrajornada': 0,
+                    'employees_with_dsr_debit': 0,
+                    'average_overtime': 0.0,
+                    'average_night_hours': 0.0,
+                    'average_intrajornada': 0.0,
+                    'average_dsr_debit': 0.0,
+                    'by_company': {},
+                })
+                return
+            self.send_json_response({'error': str(ex)}, 500)
+        finally:
+            db.close()
+
     def handle_delete_timecard_period(self, period_id: str):
         db = SessionLocal()
         try:
@@ -172,6 +368,7 @@ class TimecardRouter(BaseRouter):
             original_filename = None
             year = None
             month = None
+            dry_run = False
 
             for part in parts:
                 if not part or part in (b'--\r\n', b'--'):
@@ -195,6 +392,11 @@ class TimecardRouter(BaseRouter):
                     split_point = part.find(b'\r\n\r\n')
                     if split_point != -1:
                         month = int(part[split_point + 4:].strip())
+                elif b'name="dry_run"' in part:
+                    split_point = part.find(b'\r\n\r\n')
+                    if split_point != -1:
+                        raw_value = part[split_point + 4:].strip().lower()
+                        dry_run = raw_value in (b'1', b'true', b'yes', b'on')
 
             if not file_data:
                 self.send_json_response({'error': 'Arquivo não enviado'}, 400)
@@ -208,8 +410,8 @@ class TimecardRouter(BaseRouter):
 
             _, original_ext = os.path.splitext(original_filename or '')
             normalized_ext = original_ext.lower()
-            if normalized_ext not in ['.xlsx', '.xls']:
-                self.send_json_response({'error': 'Arquivo deve ser XLSX ou XLS'}, 400)
+            if normalized_ext != '.xlsx':
+                self.send_json_response({'error': 'Arquivo deve ser XLSX (.xlsx)'}, 400)
                 return
 
             with tempfile.NamedTemporaryFile(delete=False, suffix=normalized_ext or '.xlsx') as tmp_file:
@@ -225,6 +427,7 @@ class TimecardRouter(BaseRouter):
                 file_path=tmp_filepath,
                 year=year,
                 month=month,
+                dry_run=dry_run,
             )
 
             if result.get('success'):

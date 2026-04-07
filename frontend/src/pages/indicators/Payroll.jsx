@@ -175,6 +175,8 @@ const PayrollV2 = () => {
         selectedPeriods,
         selectedYears,
         selectedMonths,
+        selectedCompanies,
+        selectedDepartments,
         selectedEmployees,
         allPeriods
       });
@@ -212,6 +214,18 @@ const PayrollV2 = () => {
         params.append('employees', selectedEmployees.join(','));
         console.log('✅ Filtrando por colaboradores:', selectedEmployees);
       }
+
+      // Filtrar por empresas
+      if (selectedCompanies.length > 0) {
+        params.append('companies', selectedCompanies.join(','));
+        console.log('✅ Filtrando por empresas:', selectedCompanies);
+      }
+
+      // Filtrar por setores
+      if (selectedDepartments.length > 0) {
+        params.append('departments', selectedDepartments.join(','));
+        console.log('✅ Filtrando por setores:', selectedDepartments);
+      }
       
       const url = `/timecard/stats?${params}`;
       console.log('📡 Chamando API:', url);
@@ -238,6 +252,705 @@ const PayrollV2 = () => {
     const hours = Math.floor(decimalHours);
     const minutes = Math.round((decimalHours - hours) * 60);
     return `${hours}:${minutes.toString().padStart(2, '0')}`;
+  };
+
+  const escapeHtml = (value) => {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  };
+
+  const formatReportCurrency = (value) => {
+    return new Intl.NumberFormat('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(Number(value || 0));
+  };
+
+  const formatReportHours = (value) => formatHoursMinutes(Number(value || 0));
+
+  const getSelectedFilterLabels = () => {
+    const monthLabelByNumber = {
+      1: 'Janeiro',
+      2: 'Fevereiro',
+      3: 'Março',
+      4: 'Abril',
+      5: 'Maio',
+      6: 'Junho',
+      7: 'Julho',
+      8: 'Agosto',
+      9: 'Setembro',
+      10: 'Outubro',
+      11: 'Novembro',
+      12: 'Dezembro',
+    };
+
+    const companyLabels = selectedCompanies.length > 0
+      ? selectedCompanies.map((companyCode) => {
+          const company = allCompanies.find((item) => item.code === companyCode);
+          return company?.full_name || company?.name || companyCode;
+        })
+      : ['Todas as empresas'];
+
+    const periodLabels = selectedPeriods.length > 0
+      ? selectedPeriods.map((periodId) => {
+          const period = allPeriods.find((item) => item.id === periodId);
+          return period?.period_name || `Período ${periodId}`;
+        })
+      : [];
+
+    const yearLabels = selectedYears.length > 0 ? selectedYears.map(String) : [];
+    const monthLabels = selectedMonths.length > 0
+      ? selectedMonths.map((monthNumber) => monthLabelByNumber[monthNumber] || String(monthNumber))
+      : [];
+
+    const departmentLabels = selectedDepartments.length > 0
+      ? selectedDepartments.slice(0, 6)
+      : [];
+
+    const employeeLabels = selectedEmployees.length > 0
+      ? selectedEmployees.slice(0, 6).map((employeeId) => {
+          const employee = allEmployees.find((item) => item.id === employeeId);
+          return employee?.name || String(employeeId);
+        })
+      : [];
+
+    return {
+      companyLabels,
+      periodLabels,
+      yearLabels,
+      monthLabels,
+      departmentLabels,
+      employeeLabels,
+    };
+  };
+
+  const buildExecutiveReportHtml = () => {
+    if (!data) return null;
+
+    const resumo = resumo_filtro || {};
+    const salarios = informacoes_salariais || {};
+    const beneficios = adicionais_beneficios || {};
+    const encargos = encargos_trabalhistas || {};
+    const horas = horas_extras || {};
+    const faltas = atestados_faltas || {};
+    const emprestimosData = emprestimos || {};
+    const timecard = timecardStats || {};
+    const filters = getSelectedFilterLabels();
+
+    const filterPills = [
+      ...filters.companyLabels.map((label) => `<span class="pill pill-company">${escapeHtml(label)}</span>`),
+      ...filters.yearLabels.map((label) => `<span class="pill pill-year">${escapeHtml(label)}</span>`),
+      ...filters.monthLabels.map((label) => `<span class="pill pill-month">${escapeHtml(label)}</span>`),
+      ...filters.periodLabels.map((label) => `<span class="pill pill-period">${escapeHtml(label)}</span>`),
+      ...filters.departmentLabels.map((label) => `<span class="pill pill-department">${escapeHtml(label)}</span>`),
+      ...filters.employeeLabels.map((label) => `<span class="pill pill-employee">${escapeHtml(label)}</span>`),
+    ].join('');
+
+    const timecardCards = [
+      { icon: '⏰', label: 'HE 50%', value: formatReportHours(timecard.overtime_50) },
+      { icon: '⏰⏰', label: 'HE 100%', value: formatReportHours(timecard.overtime_100) },
+      { icon: '📊', label: 'Total HE Diurnas', value: formatReportHours(timecard.total_overtime_hours) },
+      { icon: '🌙⏰', label: 'HE Noturna 50%', value: formatReportHours(timecard.night_overtime_50) },
+      { icon: '🌙⏰⏰', label: 'HE Noturna 100%', value: formatReportHours(timecard.night_overtime_100) },
+      { icon: '🌙', label: 'Adic. Noturno', value: formatReportHours(timecard.night_hours) },
+      { icon: '📊', label: 'Total Noturnas', value: formatReportHours(timecard.total_night_hours) },
+    ].map((item) => `
+      <div class="mini-card ${item.label.includes('Total') ? 'accent' : ''}">
+        <div class="mini-icon">${item.icon}</div>
+        <div class="mini-meta">
+          <div class="mini-label">${escapeHtml(item.label)}</div>
+          <div class="mini-value">${escapeHtml(item.value)}</div>
+        </div>
+      </div>
+    `).join('');
+
+    const benefitRows = [
+      ['Gratificações', beneficios.gratificacoes],
+      ['Periculosidade', beneficios.periculosidade],
+      ['Insalubridade', beneficios.insalubridade],
+      ['Vale Transporte', beneficios.vale_transporte],
+      ['Plano de Saúde', beneficios.plano_saude],
+      ['Vale Refeição', beneficios.vale_refeicao],
+    ].map(([label, value]) => `
+      <tr>
+        <td>${escapeHtml(label)}</td>
+        <td class="num">R$ ${escapeHtml(formatReportCurrency(value))}</td>
+      </tr>
+    `).join('');
+
+    const chargeRows = [
+      ['INSS', encargos.inss],
+      ['IRRF', encargos.irrf],
+      ['FGTS', encargos.fgts],
+    ].map(([label, value]) => `
+      <tr>
+        <td>${escapeHtml(label)}</td>
+        <td class="num">R$ ${escapeHtml(formatReportCurrency(value))}</td>
+      </tr>
+    `).join('');
+
+    const hoursRows = [
+      ['DSR Diurno', horas.dsr_diurno],
+      ['HE 50% Diurno', horas.he50_diurno],
+      ['HE 100% Diurno', horas.he100_diurno],
+      ['Adicional Noturno', horas.adicional_noturno],
+      ['DSR Noturno', horas.dsr_noturno],
+      ['HE 50% Noturno', horas.he50_noturno],
+      ['HE 100% Noturno', horas.he100_noturno],
+    ].map(([label, value]) => `
+      <tr>
+        <td>${escapeHtml(label)}</td>
+        <td class="num">${escapeHtml(formatReportHours(value))}</td>
+      </tr>
+    `).join('');
+
+    const timecardCompanyRows = timecard.by_company
+      ? Object.entries(timecard.by_company).map(([companyCode, companyData]) => `
+        <tr>
+          <td>${escapeHtml(companyCode === '0060' ? 'Empreendimentos' : companyCode === '0059' ? 'Infraestrutura' : companyCode)}</td>
+          <td class="num">${escapeHtml(String(companyData.employees || 0))}</td>
+          <td class="num">${escapeHtml(formatReportHours(companyData.total_overtime || 0))}</td>
+          <td class="num">${escapeHtml(formatReportHours(companyData.total_night_hours || 0))}</td>
+        </tr>
+      `).join('')
+      : '';
+
+    const html = `
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Relatório Executivo - Folha e Ponto</title>
+        <style>
+          @page {
+            size: A4 landscape;
+            margin: 12mm;
+          }
+
+          * { box-sizing: border-box; }
+          body {
+            margin: 0;
+            font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+            color: #0f172a;
+            background: linear-gradient(180deg, #eef2ff 0%, #f8fafc 24%, #ffffff 100%);
+          }
+
+          .page {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0;
+          }
+
+          .hero {
+            background: linear-gradient(135deg, #111827 0%, #4338ca 42%, #7c3aed 100%);
+            color: #fff;
+            border-radius: 28px;
+            padding: 28px 30px;
+            box-shadow: 0 30px 60px rgba(17, 24, 39, 0.18);
+            overflow: hidden;
+            position: relative;
+          }
+
+          .hero:after {
+            content: '';
+            position: absolute;
+            inset: auto -80px -80px auto;
+            width: 220px;
+            height: 220px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.12);
+            filter: blur(0px);
+          }
+
+          .hero-top {
+            display: flex;
+            justify-content: space-between;
+            gap: 20px;
+            align-items: flex-start;
+            position: relative;
+            z-index: 1;
+          }
+
+          .brand {
+            font-size: 13px;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            opacity: 0.8;
+            margin-bottom: 8px;
+          }
+
+          .title {
+            font-size: 34px;
+            line-height: 1.04;
+            font-weight: 800;
+            margin: 0 0 10px 0;
+          }
+
+          .subtitle {
+            font-size: 15px;
+            opacity: 0.9;
+            margin: 0;
+          }
+
+          .hero-side {
+            text-align: right;
+            min-width: 220px;
+          }
+
+          .hero-side .period {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 6px;
+          }
+
+          .hero-side .meta {
+            font-size: 12px;
+            opacity: 0.86;
+            line-height: 1.7;
+          }
+
+          .chip-row {
+            margin-top: 18px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            position: relative;
+            z-index: 1;
+          }
+
+          .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 12px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            background: rgba(255, 255, 255, 0.14);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            backdrop-filter: blur(10px);
+          }
+
+          .section {
+            margin-top: 18px;
+            background: rgba(255, 255, 255, 0.92);
+            border: 1px solid rgba(148, 163, 184, 0.22);
+            border-radius: 24px;
+            padding: 22px;
+            box-shadow: 0 14px 30px rgba(15, 23, 42, 0.06);
+            break-inside: avoid;
+          }
+
+          .section-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 16px;
+          }
+
+          .section-title h2 {
+            font-size: 18px;
+            margin: 0;
+            color: #111827;
+          }
+
+          .section-title p {
+            margin: 0;
+            font-size: 12px;
+            color: #64748b;
+          }
+
+          .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+          }
+
+          .summary-card {
+            border-radius: 18px;
+            padding: 16px;
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+          }
+
+          .summary-card .label {
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: #64748b;
+          }
+
+          .summary-card .value {
+            margin-top: 8px;
+            font-size: 22px;
+            line-height: 1.1;
+            font-weight: 800;
+            color: #0f172a;
+          }
+
+          .summary-card.primary { background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); }
+          .summary-card.primary .value { color: #1d4ed8; }
+          .summary-card.success { background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); }
+          .summary-card.success .value { color: #047857; }
+          .summary-card.warning { background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); }
+          .summary-card.warning .value { color: #b45309; }
+          .summary-card.danger { background: linear-gradient(135deg, #fef2f2 0%, #fecaca 100%); }
+          .summary-card.danger .value { color: #b91c1c; }
+          .summary-card.purple { background: linear-gradient(135deg, #f5f3ff 0%, #e9d5ff 100%); }
+          .summary-card.purple .value { color: #7c3aed; }
+
+          .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+          }
+
+          .mini-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+          }
+
+          .mini-card {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-radius: 16px;
+            padding: 14px;
+            background: #fff;
+            border: 1px solid #e5e7eb;
+          }
+
+          .mini-card.accent {
+            background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+            border-color: #bfdbfe;
+          }
+
+          .mini-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(79, 70, 229, 0.08);
+            font-size: 18px;
+            flex: 0 0 auto;
+          }
+
+          .mini-meta { min-width: 0; }
+          .mini-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #64748b;
+            font-weight: 800;
+          }
+          .mini-value {
+            margin-top: 4px;
+            font-size: 18px;
+            font-weight: 800;
+            color: #0f172a;
+          }
+
+          .dual-grid {
+            display: grid;
+            grid-template-columns: 1.2fr 0.8fr;
+            gap: 16px;
+          }
+
+          .card {
+            border-radius: 20px;
+            border: 1px solid #e5e7eb;
+            background: #fff;
+            padding: 16px;
+          }
+
+          .card h3 {
+            margin: 0 0 12px 0;
+            font-size: 15px;
+            color: #111827;
+          }
+
+          .table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+          }
+
+          .table th,
+          .table td {
+            padding: 10px 8px;
+            border-bottom: 1px solid #e5e7eb;
+            text-align: left;
+          }
+
+          .table th {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: #64748b;
+            background: #f8fafc;
+          }
+
+          .table td.num,
+          .table th.num { text-align: right; }
+
+          .note {
+            margin-top: 12px;
+            padding: 12px 14px;
+            border-radius: 16px;
+            background: #f8fafc;
+            color: #475569;
+            font-size: 12px;
+            line-height: 1.55;
+            border: 1px solid #e2e8f0;
+          }
+
+          .footer {
+            margin: 18px 0 4px;
+            color: #64748b;
+            font-size: 11px;
+            text-align: center;
+          }
+
+          @media print {
+            body { background: white; }
+            .page { max-width: none; }
+            .section, .hero { box-shadow: none; }
+            .no-print { display: none !important; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="page">
+          <div class="hero">
+            <div class="hero-top">
+              <div>
+                <div class="brand">EnviaFolha • Relatório Executivo</div>
+                <h1 class="title">Indicadores de Folha e Cartão Ponto</h1>
+                <p class="subtitle">Visão consolidada do período selecionado com foco em leitura rápida e apresentação executiva.</p>
+              </div>
+              <div class="hero-side">
+                <div class="period">${escapeHtml(selectedPeriods.length > 0 ? (allPeriods.find((item) => item.id === selectedPeriods[0])?.period_name || 'Período selecionado') : 'Período selecionado')}</div>
+                <div class="meta">
+                  Gerado em ${escapeHtml(new Date().toLocaleString('pt-BR'))}<br />
+                  Empresa: ${escapeHtml(filters.companyLabels.join(' · '))}<br />
+                  Filtros ativos: ${escapeHtml(String(totalActiveFilters))}
+                </div>
+              </div>
+            </div>
+            <div class="chip-row">
+              ${filterPills || '<span class="pill">Sem filtros adicionais</span>'}
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">
+              <div>
+                <h2>Resumo Executivo</h2>
+                <p>Os principais números da folha no recorte atual.</p>
+              </div>
+            </div>
+            <div class="summary-grid">
+              <div class="summary-card primary"><div class="label">Funcionários</div><div class="value">${escapeHtml(String(resumo.funcionarios || 0))}</div></div>
+              <div class="summary-card success"><div class="label">Total Líquido</div><div class="value">R$ ${escapeHtml(formatReportCurrency(resumo.total_liquido))}</div></div>
+              <div class="summary-card warning"><div class="label">Total Proventos</div><div class="value">R$ ${escapeHtml(formatReportCurrency(resumo.total_proventos))}</div></div>
+              <div class="summary-card danger"><div class="label">Total Descontos</div><div class="value">R$ ${escapeHtml(formatReportCurrency(resumo.total_descontos))}</div></div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">
+              <div>
+                <h2>Informações Salariais</h2>
+                <p>Base salarial e médias do período.</p>
+              </div>
+            </div>
+            <div class="kpi-grid">
+              <div class="summary-card purple"><div class="label">Total Salários Base</div><div class="value">R$ ${escapeHtml(formatReportCurrency(salarios.total_salarios_base))}</div></div>
+              <div class="summary-card primary"><div class="label">Salário Médio</div><div class="value">R$ ${escapeHtml(formatReportCurrency(salarios.salario_medio))}</div></div>
+              <div class="summary-card success"><div class="label">Líquido Médio</div><div class="value">R$ ${escapeHtml(formatReportCurrency(salarios.liquido_medio))}</div></div>
+            </div>
+          </div>
+
+          <div class="dual-grid">
+            <div class="section">
+              <div class="section-title">
+                <div>
+                  <h2>Adicionais e Benefícios</h2>
+                  <p>Itens de remuneração variável e benefícios principais.</p>
+                </div>
+              </div>
+              <div class="summary-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 12px;">
+                <div class="summary-card purple"><div class="label">Total Geral</div><div class="value">R$ ${escapeHtml(formatReportCurrency(beneficios.total))}</div></div>
+                <div class="summary-card primary"><div class="label">Adicionais / Benefícios</div><div class="value">${escapeHtml(String(beneficios.total ? 'Consolidados' : '0'))}</div></div>
+              </div>
+              <table class="table">
+                <thead><tr><th>Item</th><th class="num">Valor</th></tr></thead>
+                <tbody>${benefitRows}</tbody>
+              </table>
+            </div>
+
+            <div class="section">
+              <div class="section-title">
+                <div>
+                  <h2>Encargos</h2>
+                  <p>Custos trabalhistas consolidados.</p>
+                </div>
+              </div>
+              <div class="summary-grid" style="grid-template-columns: repeat(1, minmax(0, 1fr)); margin-bottom: 12px;">
+                <div class="summary-card danger"><div class="label">Total Encargos</div><div class="value">R$ ${escapeHtml(formatReportCurrency(encargos.total))}</div></div>
+              </div>
+              <table class="table">
+                <thead><tr><th>Encargo</th><th class="num">Valor</th></tr></thead>
+                <tbody>${chargeRows}</tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">
+              <div>
+                <h2>Cartão Ponto - Horas por Tipo</h2>
+                <p>Leitura executiva dos totais de horas importadas no período.</p>
+              </div>
+            </div>
+            <div class="mini-grid">${timecardCards}</div>
+            <div class="note">
+              <strong>Observação:</strong> este resumo enfatiza o consumo de horas extras e noturnas. Indicadores operacionais como DSR foram excluídos desta visualização para manter o foco executivo.
+            </div>
+            <div style="margin-top: 14px;">
+              <table class="table">
+                <thead><tr><th>Empresa</th><th class="num">Colaboradores</th><th class="num">HE Total</th><th class="num">Noturnas</th></tr></thead>
+                <tbody>${timecardCompanyRows || '<tr><td colspan="4">Sem detalhamento por empresa disponível.</td></tr>'}</tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">
+              <div>
+                <h2>Horas Extras Consolidadas</h2>
+                <p>Indicadores complementares da folha atual.</p>
+              </div>
+            </div>
+            <div class="mini-grid" style="grid-template-columns: repeat(4, minmax(0, 1fr));">
+              ${[
+                ['☀️', 'DSR Diurno', horas.dsr_diurno],
+                ['⏰', 'HE 50% Diurno', horas.he50_diurno],
+                ['⏰⏰', 'HE 100% Diurno', horas.he100_diurno],
+                ['🌙', 'Adic. Noturno', horas.adicional_noturno],
+                ['🌙', 'DSR Noturno', horas.dsr_noturno],
+                ['🌙⏰', 'HE 50% Noturno', horas.he50_noturno],
+                ['🌙⏰⏰', 'HE 100% Noturno', horas.he100_noturno],
+                ['💰', 'Total Horas Extras', horas.total],
+              ].map(([icon, label, value]) => `
+                <div class="mini-card">
+                  <div class="mini-icon">${icon}</div>
+                  <div class="mini-meta">
+                    <div class="mini-label">${escapeHtml(label)}</div>
+                    <div class="mini-value">${escapeHtml(formatReportHours(value))}</div>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+            <div style="margin-top: 14px;">
+              <table class="table">
+                <thead><tr><th>Indicador</th><th class="num">Total</th></tr></thead>
+                <tbody>${hoursRows}</tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">
+              <div>
+                <h2>Atestados, Faltas e Empréstimos</h2>
+                <p>Itens de desconto e ocorrências complementares.</p>
+              </div>
+            </div>
+            <div class="summary-grid" style="grid-template-columns: repeat(3, minmax(0, 1fr));">
+              <div class="summary-card warning"><div class="label">Total Atestados/Faltas</div><div class="value">R$ ${escapeHtml(formatReportCurrency(faltas.total))}</div></div>
+              <div class="summary-card danger"><div class="label">Total Empréstimos</div><div class="value">R$ ${escapeHtml(formatReportCurrency(emprestimosData.total))}</div></div>
+              <div class="summary-card primary"><div class="label">Líquido Estimado</div><div class="value">R$ ${escapeHtml(formatReportCurrency(resumo.total_liquido))}</div></div>
+            </div>
+          </div>
+
+          <div class="footer">
+            EnviaFolha • Relatório executivo gerado automaticamente em ${escapeHtml(new Date().toLocaleString('pt-BR'))}
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    return html;
+  };
+
+  const handleExportExecutivePdf = () => {
+    const html = buildExecutiveReportHtml();
+    if (!html) {
+      toast.error('Nenhum dado disponível para exportação');
+      return;
+    }
+
+    const reportWindow = window.open('', '_blank', 'width=1400,height=1000');
+    if (!reportWindow) {
+      const fallbackFrame = document.createElement('iframe');
+      fallbackFrame.style.position = 'fixed';
+      fallbackFrame.style.right = '0';
+      fallbackFrame.style.bottom = '0';
+      fallbackFrame.style.width = '0';
+      fallbackFrame.style.height = '0';
+      fallbackFrame.style.border = '0';
+      fallbackFrame.style.visibility = 'hidden';
+      fallbackFrame.srcdoc = html;
+      document.body.appendChild(fallbackFrame);
+
+      fallbackFrame.onload = () => {
+        try {
+          const fallbackWindow = fallbackFrame.contentWindow;
+          if (fallbackWindow) {
+            fallbackWindow.focus();
+            fallbackWindow.print();
+          }
+        } catch (error) {
+          console.error('Erro ao abrir relatório executivo no fallback:', error);
+          toast.error('Não foi possível abrir o relatório executivo');
+        }
+
+        setTimeout(() => {
+          if (fallbackFrame.parentNode) {
+            fallbackFrame.parentNode.removeChild(fallbackFrame);
+          }
+        }, 1000);
+      };
+
+      toast('Abrindo relatório executivo nesta página');
+      return;
+    }
+
+    reportWindow.document.open();
+    reportWindow.document.write(html);
+    reportWindow.document.close();
+    reportWindow.focus();
+    reportWindow.document.title = 'Relatorio_Executivo_Folha_Ponto';
+
+    setTimeout(() => {
+      try {
+        reportWindow.print();
+      } catch (error) {
+        console.error('Erro ao imprimir relatório executivo:', error);
+      }
+    }, 700);
   };
 
   // Contar total de filtros ativos (ordem: Empresa, Anos, Meses, Período, Setores, Colaboradores)
@@ -285,7 +998,12 @@ const PayrollV2 = () => {
             </h2>
             
             <div className="flex items-center gap-3">
-              <ExportPDFButton className="no-print" />
+              <ExportPDFButton
+                className="no-print"
+                onClick={handleExportExecutivePdf}
+                label="Exportar PDF Executivo"
+                title="Gerar PDF executivo da visão atual"
+              />
               {totalActiveFilters > 0 && (
                 <>
                   <span className="text-sm text-gray-600 dark:text-gray-400">
@@ -693,23 +1411,6 @@ const PayrollV2 = () => {
               />
             </div>
             
-            {/* Linha 3: Resumo */}
-            <div className="grid grid-cols-2 gap-3">
-              <CardStatMini 
-                icon="👤⏰" 
-                label="Colab. com HE" 
-                value={timecardStats.employees_with_overtime || 0} 
-                color="cyan" 
-                isNumber={true}
-              />
-              <CardStatMini 
-                icon="📈" 
-                label="Média HE/Colab." 
-                value={parseFloat(timecardStats.average_overtime || 0)} 
-                color="teal" 
-                isTime={true}
-              />
-            </div>
           </div>
         )}
         

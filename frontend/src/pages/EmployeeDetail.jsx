@@ -71,6 +71,9 @@ const EmployeeDetail = () => {
   const [benefitRecords, setBenefitRecords] = useState([]);
   const [benefitsSummary, setBenefitsSummary] = useState(null);
   const [loadingBenefits, setLoadingBenefits] = useState(false);
+  const [timecardRecords, setTimecardRecords] = useState([]);
+  const [timecardSummary, setTimecardSummary] = useState(null);
+  const [loadingTimecard, setLoadingTimecard] = useState(false);
   const [loadingEvolution, setLoadingEvolution] = useState(false);
   const [editingLeave, setEditingLeave] = useState(null);
   const [leaveForm, setLeaveForm] = useState({
@@ -169,6 +172,8 @@ const EmployeeDetail = () => {
       loadPayroll();
     } else if (activeTab === 'benefits') {
       loadBenefits();
+    } else if (activeTab === 'timesheet') {
+      loadTimecard();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
@@ -236,6 +241,24 @@ const EmployeeDetail = () => {
       setBenefitsSummary(null);
     } finally {
       setLoadingBenefits(false);
+    }
+  };
+
+  const loadTimecard = async () => {
+    setLoadingTimecard(true);
+    try {
+      const response = await api.get(`/employees/${id}/timecard?limit=24`);
+      setTimecardRecords(response.data.timecards || []);
+      setTimecardSummary(response.data.summary || null);
+    } catch (error) {
+      console.error('Erro ao carregar cartão ponto do colaborador:', error);
+      if (error.response?.status !== 404) {
+        toast.error('Erro ao carregar cartão ponto');
+      }
+      setTimecardRecords([]);
+      setTimecardSummary(null);
+    } finally {
+      setLoadingTimecard(false);
     }
   };
 
@@ -376,6 +399,64 @@ const EmployeeDetail = () => {
     ];
     return `${monthNames[month - 1] || month}/${year}`;
   };
+
+  const formatHours = (value) => {
+    const num = Number(value || 0);
+    return `${num.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}h`;
+  };
+
+  const timecardTimeline = useMemo(() => {
+    const grouped = new Map();
+
+    timecardRecords.forEach((item) => {
+      const periodKey = item.period?.id ?? `${item.period?.year || ''}-${item.period?.month || ''}`;
+      const current = grouped.get(periodKey) || {
+        period: item.period,
+        employee_number: item.employee_number || null,
+        company: item.company || null,
+        normal_hours: 0,
+        overtime_50: 0,
+        overtime_100: 0,
+        night_overtime_50: 0,
+        night_overtime_100: 0,
+        night_hours: 0,
+        absences: 0,
+        dsr_debit: 0,
+        bonus_hours: 0,
+        total_overtime: 0,
+        total_night: 0,
+        records: 0,
+        upload_filename: item.upload_filename,
+      };
+
+      current.normal_hours += Number(item.normal_hours || 0);
+      current.overtime_50 += Number(item.overtime_50 || 0);
+      current.overtime_100 += Number(item.overtime_100 || 0);
+      current.night_overtime_50 += Number(item.night_overtime_50 || 0);
+      current.night_overtime_100 += Number(item.night_overtime_100 || 0);
+      current.night_hours += Number(item.night_hours || 0);
+      current.absences += Number(item.absences || 0);
+      current.dsr_debit += Number(item.dsr_debit || 0);
+      current.bonus_hours += Number(item.bonus_hours || 0);
+      current.total_overtime += Number(item.total_overtime || 0);
+      current.total_night += Number(item.total_night || 0);
+      current.records += 1;
+      current.upload_filename = item.upload_filename || current.upload_filename;
+      current.employee_number = current.employee_number || item.employee_number || null;
+      current.company = current.company || item.company || null;
+
+      grouped.set(periodKey, current);
+    });
+
+    return Array.from(grouped.values()).sort((a, b) => {
+      const yearA = a.period?.year || 0;
+      const yearB = b.period?.year || 0;
+      if (yearA !== yearB) return yearB - yearA;
+      const monthA = a.period?.month || 0;
+      const monthB = b.period?.month || 0;
+      return monthB - monthA;
+    });
+  }, [timecardRecords]);
 
   const benefitTimeline = useMemo(() => {
     const grouped = new Map();
@@ -1815,66 +1896,75 @@ const EmployeeDetail = () => {
 
         {activeTab === 'timesheet' && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-             {/* Header Mock Timesheet */}
-             <div className="px-6 py-5 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center sm:justify-between bg-gray-50">
-                <div>
-                  <h3 className="text-lg font-bold text-gray-900 flex items-center">
-                    <ClipboardDocumentListIcon className="h-5 w-5 text-blue-600 mr-2" />
-                    Espelho de Ponto: Abril/2026
-                  </h3>
-                  <p className="text-sm text-gray-500 mt-1">Integração nativa com sistema de Ponto Eletrônico Mobile/Geo</p>
-                </div>
-                <div className="mt-4 sm:mt-0 opacity-50 cursor-not-allowed">
-                  <select className="bg-white border text-sm border-gray-300 rounded-md py-1.5 px-3">
-                    <option>Mês 04/2026</option>
-                  </select>
-                </div>
-             </div>
+            <div className="px-6 py-5 border-b border-gray-200 bg-gray-50">
+              <h3 className="text-lg font-bold text-gray-900 flex items-center">
+                <ClipboardDocumentListIcon className="h-5 w-5 text-blue-600 mr-2" />
+                Cartão Ponto do Colaborador
+              </h3>
+              <p className="text-sm text-gray-500 mt-1">Dados consolidados por período importado no módulo de cartão ponto</p>
+            </div>
 
-             {/* Tabela Mockada de Cartão Ponto */}
-             <div className="overflow-x-auto opacity-70">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-white">
-                    <tr>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Data</th>
-                      <th scope="col" className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Entrada 1</th>
-                      <th scope="col" className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Saída 1</th>
-                      <th scope="col" className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Entrada 2</th>
-                      <th scope="col" className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Saída 2</th>
-                      <th scope="col" className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Excedente</th>
-                      <th scope="col" className="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Localização</th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-100">
-                    {[1,2,3].map((day) => (
-                      <tr key={day} className="hover:bg-blue-50 transition-colors">
-                        <td className="px-6 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
-                          0{day}/04/2026
-                        </td>
-                        <td className="px-3 py-3 whitespace-nowrap text-sm text-center text-gray-600 font-mono bg-green-50">08:00</td>
-                        <td className="px-3 py-3 whitespace-nowrap text-sm text-center text-gray-600 font-mono">12:05</td>
-                        <td className="px-3 py-3 whitespace-nowrap text-sm text-center text-gray-600 font-mono bg-blue-50">13:00</td>
-                        <td className="px-3 py-3 whitespace-nowrap text-sm text-center text-gray-600 font-mono">18:10</td>
-                        <td className="px-3 py-3 whitespace-nowrap text-sm text-center font-medium text-orange-600">
-                          +00:15
-                        </td>
-                        <td className="px-6 py-3 whitespace-nowrap text-sm text-right align-middle">
-                          <button className="inline-flex items-center text-blue-600 hover:text-blue-800" title="Ver no Mapa">
-                            <MapPinIcon className="h-5 w-5" />
-                          </button>
-                        </td>
+            {loadingTimecard ? (
+              <div className="px-6 py-10 text-center text-sm text-gray-500">Carregando cartão ponto...</div>
+            ) : timecardTimeline.length === 0 ? (
+              <div className="px-6 py-10 text-center text-sm text-gray-500">Nenhum dado de cartão ponto encontrado para este colaborador.</div>
+            ) : (
+              <div className="p-6 space-y-6">
+                {timecardSummary && (
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                      <p className="text-xs font-semibold uppercase text-amber-700">Horas Extras (50% + 100%)</p>
+                      <p className="text-lg font-bold text-amber-900 mt-1">{formatHours(timecardSummary.total_overtime)}</p>
+                    </div>
+                    <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-4">
+                      <p className="text-xs font-semibold uppercase text-indigo-700">Horas Noturnas Totais</p>
+                      <p className="text-lg font-bold text-indigo-900 mt-1">{formatHours(timecardSummary.total_night)}</p>
+                    </div>
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                      <p className="text-xs font-semibold uppercase text-blue-700">Média HE por Registro</p>
+                      <p className="text-lg font-bold text-blue-900 mt-1">{formatHours(timecardSummary.avg_overtime)}</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                      <p className="text-xs font-semibold uppercase text-gray-600">Registros Importados</p>
+                      <p className="text-lg font-bold text-gray-900 mt-1">{timecardRecords.length}</p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Período</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Matrícula</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Empresa</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Normais</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">HE 50%</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">HE 100%</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Noturnas</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Total HE</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Total Noturno</th>
                       </tr>
-                    ))}
-                    <tr className="bg-blue-50">
-                      <td colSpan="7" className="px-6 py-8 text-center border-t border-dashed border-blue-200">
-                         <span className="inline-flex shadow-sm items-center px-4 py-2 bg-blue-100 border border-blue-200 text-blue-700 rounded-lg text-sm font-semibold">
-                            🚧 Demonstração visual do layout. Futura Tabela real integrará as leituras XLSX.
-                         </span>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-             </div>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-100">
+                      {timecardTimeline.map((item, index) => (
+                        <tr key={`${item.period?.id || index}-${item.upload_filename || ''}`} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 text-sm text-gray-900 font-medium">{item.period?.name || formatMonthYear(item.period?.year, item.period?.month)}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700">{item.employee_number || employee?.registration_number || employee?.unique_id || '-'}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{item.company || '-'}</td>
+                          <td className="px-4 py-3 text-sm text-right text-gray-700">{formatHours(item.normal_hours)}</td>
+                          <td className="px-4 py-3 text-sm text-right text-gray-700">{formatHours(item.overtime_50)}</td>
+                          <td className="px-4 py-3 text-sm text-right text-gray-700">{formatHours(item.overtime_100)}</td>
+                          <td className="px-4 py-3 text-sm text-right text-gray-700">{formatHours(item.night_hours)}</td>
+                          <td className="px-4 py-3 text-sm text-right font-semibold text-amber-700">{formatHours(item.total_overtime)}</td>
+                          <td className="px-4 py-3 text-sm text-right font-semibold text-indigo-700">{formatHours(item.total_night)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

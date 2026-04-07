@@ -10,6 +10,7 @@ from app.models.employee import Employee
 from app.models.leave import LeaveRecord
 from app.models.movement import MovementRecord
 from app.models.payroll import PayrollData, PayrollPeriod
+from app.models.timecard import TimecardData, TimecardPeriod
 from app.routes.base import BaseRouter
 from app.utils.parsers import generate_name_id, normalize_cpf
 from app.services.runtime_compat import employees_cache, invalidate_employees_cache, save_employee_to_db
@@ -44,6 +45,10 @@ class EmployeesRouter(BaseRouter):
 
         if len(parts) >= 6 and parts[5] == 'payroll':
             self.handle_get_employee_payroll(employee_id)
+            return
+
+        if len(parts) >= 6 and parts[5] == 'timecard':
+            self.handle_get_employee_timecard(employee_id)
             return
 
         if len(parts) >= 6 and parts[5] == 'leaves':
@@ -692,6 +697,144 @@ class EmployeesRouter(BaseRouter):
             self.send_json_response({'movements': results}, 200)
         except Exception as ex:
             self.send_json_response({'error': f'Erro ao buscar movimentos: {str(ex)}'}, 500)
+        finally:
+            if db is not None:
+                db.close()
+
+    def handle_get_employee_timecard(self, employee_id: str):
+        db = None
+        try:
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.handler.path).query)
+            year = query_params.get('year', [None])[0]
+            month = query_params.get('month', [None])[0]
+            limit = int(query_params.get('limit', ['24'])[0] or 24)
+
+            db = SessionLocal()
+            employee = self._resolve_employee(db, employee_id)
+            if not employee:
+                self.send_json_response({'error': 'Funcionário não encontrado'}, 404)
+                return
+
+            timecard_query = db.query(TimecardData, TimecardPeriod).outerjoin(
+                TimecardPeriod, TimecardPeriod.id == TimecardData.period_id
+            ).filter(TimecardData.employee_id == employee.id)
+
+            if year:
+                timecard_query = timecard_query.filter(TimecardPeriod.year == int(year))
+            if month:
+                timecard_query = timecard_query.filter(TimecardPeriod.month == int(month))
+
+            records = timecard_query.order_by(
+                TimecardPeriod.year.desc(),
+                TimecardPeriod.month.desc(),
+                TimecardData.id.desc(),
+            ).limit(max(1, min(limit, 120))).all()
+
+            timecards = []
+            total_overtime_50 = 0.0
+            total_overtime_100 = 0.0
+            total_night_overtime_50 = 0.0
+            total_night_overtime_100 = 0.0
+            total_night_hours = 0.0
+
+            for timecard, period in records:
+                overtime_50 = float(timecard.overtime_50 or 0)
+                overtime_100 = float(timecard.overtime_100 or 0)
+                night_overtime_50 = float(timecard.night_overtime_50 or 0)
+                night_overtime_100 = float(timecard.night_overtime_100 or 0)
+                night_hours = float(timecard.night_hours or 0)
+                normal_hours = float(timecard.normal_hours or 0)
+                absences = float(timecard.absences or 0)
+                dsr_debit = float(timecard.dsr_debit or 0)
+                bonus_hours = float(timecard.bonus_hours or 0)
+
+                total_overtime_50 += overtime_50
+                total_overtime_100 += overtime_100
+                total_night_overtime_50 += night_overtime_50
+                total_night_overtime_100 += night_overtime_100
+                total_night_hours += night_hours
+
+                period_name = period.period_name if period else f'Período {timecard.period_id}'
+
+                timecards.append({
+                    'id': timecard.id,
+                    'period': {
+                        'id': timecard.period_id,
+                        'year': period.year if period else None,
+                        'month': period.month if period else None,
+                        'name': period_name,
+                    },
+                    'employee_number': timecard.employee_number,
+                    'employee_name': timecard.employee_name,
+                    'company': timecard.company,
+                    'normal_hours': normal_hours,
+                    'overtime_50': overtime_50,
+                    'overtime_100': overtime_100,
+                    'night_overtime_50': night_overtime_50,
+                    'night_overtime_100': night_overtime_100,
+                    'night_hours': night_hours,
+                    'absences': absences,
+                    'dsr_debit': dsr_debit,
+                    'bonus_hours': bonus_hours,
+                    'total_overtime': overtime_50 + overtime_100,
+                    'total_night': night_overtime_50 + night_overtime_100 + night_hours,
+                    'upload_filename': timecard.upload_filename,
+                    'updated_at': timecard.updated_at.isoformat() if getattr(timecard, 'updated_at', None) else None,
+                    'created_at': timecard.created_at.isoformat() if getattr(timecard, 'created_at', None) else None,
+                })
+
+            total_records = len(timecards)
+            self.send_json_response({
+                'employee': {
+                    'id': employee.id,
+                    'unique_id': employee.unique_id,
+                    'name': employee.name,
+                },
+                'filters': {
+                    'year': int(year) if year else None,
+                    'month': int(month) if month else None,
+                    'limit': limit,
+                },
+                'total_records': total_records,
+                'summary': {
+                    'total_overtime_50': total_overtime_50,
+                    'total_overtime_100': total_overtime_100,
+                    'total_overtime': total_overtime_50 + total_overtime_100,
+                    'total_night_overtime_50': total_night_overtime_50,
+                    'total_night_overtime_100': total_night_overtime_100,
+                    'total_night_hours': total_night_hours,
+                    'total_night': total_night_overtime_50 + total_night_overtime_100 + total_night_hours,
+                    'avg_overtime': ((total_overtime_50 + total_overtime_100) / total_records) if total_records else 0.0,
+                },
+                'timecards': timecards,
+            }, 200)
+
+        except Exception as ex:
+            if 'timecard_' in str(ex) and 'does not exist' in str(ex):
+                self.send_json_response({
+                    'employee': {
+                        'id': int(employee_id) if str(employee_id).isdigit() else employee_id,
+                    },
+                    'filters': {
+                        'year': int(year) if year else None,
+                        'month': int(month) if month else None,
+                        'limit': limit,
+                    },
+                    'total_records': 0,
+                    'summary': {
+                        'total_overtime_50': 0.0,
+                        'total_overtime_100': 0.0,
+                        'total_overtime': 0.0,
+                        'total_night_overtime_50': 0.0,
+                        'total_night_overtime_100': 0.0,
+                        'total_night_hours': 0.0,
+                        'total_night': 0.0,
+                        'avg_overtime': 0.0,
+                    },
+                    'timecards': [],
+                }, 200)
+            else:
+                self.send_json_response({'error': f'Erro ao buscar cartão ponto do colaborador: {str(ex)}'}, 500)
         finally:
             if db is not None:
                 db.close()

@@ -2,13 +2,16 @@
 Serviço para processar arquivos XLSX de Cartão Ponto
 """
 import logging
+import unicodedata
 import openpyxl
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Dict, List, Optional, Tuple
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import ProgrammingError, SQLAlchemyError
 
+from app.core.database import Base, engine
 from app.models.employee import Employee
 from app.models.timecard import TimecardPeriod, TimecardData, TimecardProcessingLog
 
@@ -17,22 +20,26 @@ logger = logging.getLogger(__name__)
 
 class TimecardXLSXProcessor:
     """Processador de arquivos XLSX de cartão ponto"""
-    
-    REQUIRED_COLUMNS = ['Nº Folha', 'Nome']  # Colunas mínimas necessárias
-    
-    # Mapeamento de nomes de colunas
-    COLUMN_MAPPING = {
-        'Nº Folha': 'employee_number',
-        'Nome': 'employee_name',
-        'Normais': 'normal_hours',
-        'Ex50%': 'overtime_50',
-        'Ex100%': 'overtime_100',
-        'EN50%': 'night_overtime_50',
-        'EN100%': 'night_overtime_100',
-        'Not.': 'night_hours',
-        'Faltas': 'absences',
-        'DSR.Deb': 'dsr_debit',
-        'Abono2': 'bonus_hours'
+
+    HEADER_SCAN_LIMIT = 25
+
+    REQUIRED_COLUMNS = ['employee_number', 'employee_name']
+
+    COLUMN_ALIASES = {
+        'employee_number': ['Nº Folha', 'N° Folha', 'N Folha', 'Nro Folha', 'Matrícula', 'Matricula', 'Folha'],
+        'employee_name': ['Nome', 'Colaborador', 'Funcionário', 'Funcionario'],
+        'normal_hours': ['Normais', 'Horas Normais'],
+        'overtime_50': ['Ex50%', 'HE50%', 'HE 50%', 'Hora Extra 50%'],
+        'overtime_100': ['Ex100%', 'HE100%', 'HE 100%', 'Hora Extra 100%'],
+        'night_overtime_50': ['EN50%', 'EN 50%'],
+        'night_overtime_100': ['EN100%', 'EN 100%'],
+        # IMPORTANTE: night_hours é APENAS para "Adicional Noturno" / "Noturno" (não DSR)
+        'night_hours': ['Adic. Noturno', 'Adicional Noturno', 'Noturno', 'Not.', 'Adic Noturno', 'Adic. Not.'],
+        'absences': ['Faltas', 'Intrajornada', 'Intra Jornada', 'Horas Intrajornada', 'Interj.'],
+        # IMPORTANTE: dsr_debit - priorizar "DSR" (coluna que tem os valores reais ~29h/pessoa)
+        # depois "DSR.Deb" (específico de débito, frequentemente vazio)
+        'dsr_debit': ['DSR', 'DSR.Deb', 'DSR Deb', 'DSR Débito', 'DSR Déb', 'DSR.Débito'],
+        'bonus_hours': ['Abono2', 'Abono 2']
     }
     
     def __init__(self, db: Session, user_id: Optional[int] = None):
@@ -47,7 +54,8 @@ class TimecardXLSXProcessor:
         year: int,
         month: int,
         start_date: Optional[str] = None,
-        end_date: Optional[str] = None
+        end_date: Optional[str] = None,
+        dry_run: bool = False,
     ) -> Dict:
         """
         Processa arquivo XLSX de cartão ponto
@@ -81,35 +89,70 @@ class TimecardXLSXProcessor:
             
             # Ler e validar headers
             headers = self._read_headers(sheet, header_row)
-            validation_result = self._validate_headers(headers)
+            column_indices = self._resolve_column_indices(headers)
+            validation_result = self._validate_headers(column_indices)
             if not validation_result['valid']:
                 return {
                     'success': False,
                     'error': validation_result['error']
                 }
             
-            # Criar ou obter período
-            period = self._get_or_create_period(
-                year, month, start_date, end_date, file_path
-            )
+            period = None
+            if dry_run:
+                period = self._get_existing_period(year, month)
+            else:
+                # Criar ou obter período
+                period = self._get_or_create_period(
+                    year, month, start_date, end_date, file_path
+                )
             
             # Processar linhas de dados
             results = self._process_data_rows(
-                sheet, headers, header_row, period, file_path
+                sheet,
+                column_indices,
+                header_row,
+                period,
+                file_path,
+                year,
+                month,
+                dry_run=dry_run,
             )
             
-            # Criar log de processamento
             processing_time = (datetime.now() - start_time).total_seconds()
-            self._create_processing_log(
-                period, file_path, results, processing_time
-            )
-            
-            # Commit final
-            self.db.commit()
+
+            if not dry_run and period is not None:
+                # Criar log de processamento
+                self._create_processing_log(
+                    period, file_path, results, processing_time
+                )
+                
+                # Commit final
+                self.db.commit()
             
             wb.close()
             
             logger.info(f"Processamento concluído: {results['processed_rows']} linhas processadas")
+
+            if dry_run:
+                return {
+                    'success': True,
+                    'dry_run': True,
+                    'period_name': self._build_period_name(year, month),
+                    'would_create_period': results.get('would_create_period', False),
+                    'period_exists': results.get('period_exists', False),
+                    'total_rows': results['total_rows'],
+                    'processed_rows': results['processed_rows'],
+                    'error_rows': results['error_rows'],
+                    'matched_by_matricula': results.get('matched_by_matricula', 0),
+                    'matched_by_name': results.get('matched_by_name', 0),
+                    'unmatched_rows': results.get('unmatched_rows', 0),
+                    'would_create_records': results.get('would_create_records', 0),
+                    'would_update_records': results.get('would_update_records', 0),
+                    'headers_used': results.get('headers_used', []),
+                    'warnings': self.warnings,
+                    'errors': self.errors,
+                    'processing_time': processing_time,
+                }
             
             return {
                 'success': True,
@@ -132,9 +175,28 @@ class TimecardXLSXProcessor:
             }
     
     def _find_header_row(self, sheet) -> Optional[int]:
-        """Retorna linha 1 (arquivo tratado tem headers na primeira linha)"""
-        logger.info("Usando headers da linha 1 (arquivo tratado)")
-        return 1
+        """Localiza a linha de cabeçalho usando aliases conhecidos."""
+        best_row = None
+        best_score = 0
+
+        for row_idx in range(1, min(sheet.max_row, self.HEADER_SCAN_LIMIT) + 1):
+            headers = self._read_headers(sheet, row_idx)
+            column_indices = self._resolve_column_indices(headers)
+            score = len(column_indices)
+
+            if score >= 2 and all(required in column_indices for required in self.REQUIRED_COLUMNS):
+                logger.info(f"Headers encontrados na linha {row_idx}")
+                return row_idx
+
+            if score > best_score:
+                best_row = row_idx
+                best_score = score
+
+        if best_row is not None and best_score >= 2:
+            logger.info(f"Usando linha {best_row} como header por maior correspondência")
+            return best_row
+
+        return None
     
     def _read_headers(self, sheet, header_row: int) -> List[str]:
         """Lê os headers da linha especificada"""
@@ -144,15 +206,248 @@ class TimecardXLSXProcessor:
             headers.append(str(cell_value).strip() if cell_value else None)
         return headers
     
-    def _validate_headers(self, headers: List[str]) -> Dict:
-        """Valida se as colunas necessárias estão presentes"""
+    def _normalize_header_value(self, value: Optional[str]) -> str:
+        if value is None:
+            return ''
+
+        normalized = unicodedata.normalize('NFKD', str(value))
+        normalized = normalized.encode('ascii', 'ignore').decode('ascii')
+        normalized = normalized.lower()
+        normalized = ''.join(ch if ch.isalnum() else ' ' for ch in normalized)
+        normalized = ' '.join(normalized.split())
+        return normalized
+
+    def _resolve_column_indices(self, headers: List[str]) -> Dict[str, int]:
+        """Resolve os cabeçalhos reais do XLSX para nomes canônicos internos.
+
+        A resolução é conservadora:
+        1. match exato com o texto original do header
+        2. match case-insensitive
+        3. fallback por normalização apenas para acento/espaço
+
+        Isso preserva o nome real da coluna do XLSX e evita que campos sem
+        header correspondente usem posições fixas por engano.
+        """
+        column_indices: Dict[str, int] = {}
+        header_map = {header: index + 1 for index, header in enumerate(headers) if header}
+
+        normalized_headers: Dict[str, int] = {}
+        lowered_headers: Dict[str, int] = {}
+        for header, index in header_map.items():
+            lowered_headers[header.lower()] = index
+            normalized_headers[self._normalize_header_value(header)] = index
+
+        for canonical_name, aliases in self.COLUMN_ALIASES.items():
+            candidate_headers = [canonical_name, *aliases]
+
+            for candidate in candidate_headers:
+                if candidate in header_map:
+                    column_indices[canonical_name] = header_map[candidate]
+                    break
+
+                lowered_candidate = candidate.lower()
+                if lowered_candidate in lowered_headers:
+                    column_indices[canonical_name] = lowered_headers[lowered_candidate]
+                    break
+
+                normalized_candidate = self._normalize_header_value(candidate)
+                if normalized_candidate in normalized_headers:
+                    column_indices[canonical_name] = normalized_headers[normalized_candidate]
+                    break
+
+        return column_indices
+
+    def _validate_headers(self, column_indices: Dict[str, int]) -> Dict:
+        """Valida se as colunas necessárias estão presentes."""
         for required_col in self.REQUIRED_COLUMNS:
-            if required_col not in headers:
+            if required_col not in column_indices:
+                display_name = self.COLUMN_ALIASES.get(required_col, [required_col])[0]
                 return {
                     'valid': False,
-                    'error': f'Coluna obrigatória não encontrada: {required_col}'
+                    'error': f'Coluna obrigatória não encontrada: {display_name}'
                 }
         return {'valid': True}
+
+    def _build_period_name(self, year: int, month: int) -> str:
+        month_names = [
+            'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+            'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+        ]
+        return f"{month_names[month - 1]} {year}"
+
+    def _get_existing_period(self, year: int, month: int) -> Optional[TimecardPeriod]:
+        try:
+            return self.db.query(TimecardPeriod).filter(
+                TimecardPeriod.year == year,
+                TimecardPeriod.month == month,
+            ).first()
+        except ProgrammingError as exc:
+            if 'timecard_periods' in str(exc):
+                self.db.rollback()
+                return None
+            raise
+
+    def _ensure_timecard_tables(self) -> None:
+        """Cria as tabelas de cartão ponto se ainda não existirem."""
+        Base.metadata.create_all(
+            bind=engine,
+            tables=[
+                TimecardPeriod.__table__,
+                TimecardData.__table__,
+                TimecardProcessingLog.__table__,
+            ],
+            checkfirst=True,
+        )
+
+    def _normalize_person_name(self, value: Optional[str]) -> str:
+        """Normaliza nomes para comparação segura de identidade."""
+        if not value:
+            return ''
+        return self._normalize_header_value(value)
+
+    def _is_name_consistent(self, imported_name: Optional[str], employee_name: Optional[str]) -> bool:
+        """Valida se nome importado e nome do cadastro pertencem à mesma pessoa.
+
+        Regra principal: igualdade após normalização.
+        Fallback leve: contém (para casos com sufixos/apelidos no cadastro).
+        """
+        imported = self._normalize_person_name(imported_name)
+        stored = self._normalize_person_name(employee_name)
+
+        if not imported or not stored:
+            return False
+
+        if imported == stored:
+            return True
+
+        # Fallback conservador para pequenas variações semânticas.
+        return imported in stored or stored in imported
+
+    def _resolve_employee(self, employee_number: str, employee_name: str, company: str):
+        """Resolve colaborador com validação forte de matrícula + nome.
+
+        Prioridade:
+        1) Candidatos por matrícula/unique_id e validação de nome consistente
+        2) Fallback por nome somente quando não houver candidato por matrícula
+        """
+        employee_number_clean = ''.join(ch for ch in employee_number if ch.isdigit())
+        employee_number_nozeros = employee_number_clean.lstrip('0') or employee_number_clean
+
+        registration_candidates = {
+            employee_number_clean,
+            employee_number_nozeros,
+            employee_number_clean.zfill(5),
+        }
+
+        unique_candidates = {
+            employee_number_clean,
+            employee_number_nozeros,
+            f"{company}{employee_number_clean}",
+            f"{company}{employee_number_nozeros}",
+            f"{company}{employee_number_clean.zfill(5)}",
+        }
+
+        employees = self.db.query(Employee).filter(
+            or_(
+                Employee.registration_number.in_(list(registration_candidates)),
+                Employee.unique_id.in_(list(unique_candidates)),
+            )
+        ).all()
+
+        if employees:
+            # Se temos nome no arquivo, exige consistência nome + matrícula.
+            if employee_name:
+                name_consistent = [
+                    emp for emp in employees
+                    if self._is_name_consistent(employee_name, emp.name)
+                ]
+
+                if len(name_consistent) == 1:
+                    return name_consistent[0], 'matricula_nome'
+
+                # Ambíguo ou inconsistente: não vincula automaticamente.
+                return None, None
+
+            # Sem nome no arquivo: só vincula automaticamente se houver candidato único.
+            if len(employees) == 1:
+                return employees[0], 'matricula'
+
+            return None, None
+
+        if employee_name:
+            employee = self.db.query(Employee).filter(
+                Employee.name.ilike(f"%{employee_name}%")
+            ).first()
+            if employee:
+                return employee, 'nome'
+
+        return None, None
+
+    def _get_cell_value(self, sheet, row_idx: int, col_indices: Dict[str, int], field_name: str):
+        column_index = col_indices.get(field_name)
+        if not column_index:
+            return None
+        return sheet.cell(row_idx, column_index).value
+
+    def _extract_timecard_row_data(self, sheet, row_idx: int, col_indices: Dict[str, int]) -> Optional[Dict]:
+        employee_number_raw = self._get_cell_value(sheet, row_idx, col_indices, 'employee_number')
+        employee_number = str(employee_number_raw).strip().upper() if employee_number_raw is not None else ''
+        employee_number_clean = ''.join(ch for ch in employee_number if ch.isdigit())
+
+        if not employee_number_clean:
+            return None
+
+        company = '0060' if employee_number.endswith('E') else '0059'
+        employee_name_cell = self._get_cell_value(sheet, row_idx, col_indices, 'employee_name')
+        employee_name = str(employee_name_cell).strip() if employee_name_cell else ''
+
+        normal_hours_cell = self._get_cell_value(sheet, row_idx, col_indices, 'normal_hours')
+        overtime_50_cell = self._get_cell_value(sheet, row_idx, col_indices, 'overtime_50')
+        overtime_100_cell = self._get_cell_value(sheet, row_idx, col_indices, 'overtime_100')
+        night_overtime_50_cell = self._get_cell_value(sheet, row_idx, col_indices, 'night_overtime_50')
+        night_overtime_100_cell = self._get_cell_value(sheet, row_idx, col_indices, 'night_overtime_100')
+        night_hours_cell = self._get_cell_value(sheet, row_idx, col_indices, 'night_hours')
+        absences_cell = self._get_cell_value(sheet, row_idx, col_indices, 'absences')
+        dsr_debit_cell = self._get_cell_value(sheet, row_idx, col_indices, 'dsr_debit')
+        bonus_hours_cell = self._get_cell_value(sheet, row_idx, col_indices, 'bonus_hours')
+
+        return {
+            'employee_number': employee_number,
+            'employee_number_clean': employee_number_clean,
+            'company': company,
+            'employee_name': employee_name,
+            'normal_hours': self._convert_to_hours(normal_hours_cell),
+            'overtime_50': self._convert_to_hours(overtime_50_cell),
+            'overtime_100': self._convert_to_hours(overtime_100_cell),
+            'night_overtime_50': self._convert_to_hours(night_overtime_50_cell),
+            'night_overtime_100': self._convert_to_hours(night_overtime_100_cell),
+            'night_hours': self._convert_to_hours(night_hours_cell),
+            'absences': self._convert_to_hours(absences_cell),
+            'dsr_debit': self._convert_to_hours(dsr_debit_cell),
+            'bonus_hours': self._convert_to_hours(bonus_hours_cell),
+        }
+
+    def _preview_timecard_row(self, row_data: Dict, period: Optional[TimecardPeriod]) -> Dict:
+        employee, match_type = self._resolve_employee(
+            employee_number=row_data['employee_number'],
+            employee_name=row_data['employee_name'],
+            company=row_data['company'],
+        )
+
+        existing = None
+        if period is not None:
+            existing = self.db.query(TimecardData).filter(
+                TimecardData.period_id == period.id,
+                TimecardData.employee_number == row_data['employee_number']
+            ).first()
+
+        return {
+            'employee_found': bool(employee),
+            'employee_id': employee.id if employee else None,
+            'match_type': match_type,
+            'would_create': existing is None,
+            'would_update': existing is not None,
+        }
     
     def _get_or_create_period(
         self,
@@ -164,6 +459,8 @@ class TimecardXLSXProcessor:
     ) -> TimecardPeriod:
         """Cria ou retorna período existente"""
         try:
+            self._ensure_timecard_tables()
+
             # Buscar período existente
             period = self.db.query(TimecardPeriod).filter(
                 TimecardPeriod.year == year,
@@ -207,42 +504,68 @@ class TimecardXLSXProcessor:
     def _process_data_rows(
         self,
         sheet,
-        headers: List[str],
+        column_indices: Dict[str, int],
         header_row: int,
-        period: TimecardPeriod,
-        filename: str
+        period: Optional[TimecardPeriod],
+        filename: str,
+        year: int,
+        month: int,
+        dry_run: bool = False,
     ) -> Dict:
         """Processa todas as linhas de dados"""
         total_rows = 0
         processed_rows = 0
         error_rows = 0
-        
-        # Mapear índices das colunas
-        col_indices = {}
-        for i, header in enumerate(headers):
-            if header in self.COLUMN_MAPPING:
-                col_indices[self.COLUMN_MAPPING[header]] = i + 1
+        matched_by_matricula = 0
+        matched_by_name = 0
+        unmatched_rows = 0
+        would_create_records = 0
+        would_update_records = 0
         
         # Processar linhas (arquivo tratado não tem linha de totais)
         for row_idx in range(header_row + 1, sheet.max_row + 1):
             # Verificar se é linha de dados válida
-            employee_number = sheet.cell(row_idx, col_indices.get('employee_number', 1)).value
-            
-            if not employee_number or not str(employee_number).strip():
+            row_data = self._extract_timecard_row_data(sheet, row_idx, column_indices)
+
+            if not row_data:
                 continue  # Linha vazia
             
             total_rows += 1
             
             try:
-                # Processar linha
-                success = self._process_timecard_row(
-                    sheet, row_idx, col_indices, period, filename
-                )
-                
-                if success:
+                if dry_run:
+                    preview = self._preview_timecard_row(row_data, period)
+                    if preview['match_type'] in ('matricula', 'matricula_nome'):
+                        matched_by_matricula += 1
+                    elif preview['match_type'] == 'nome':
+                        matched_by_name += 1
+
+                    if not preview['employee_found']:
+                        unmatched_rows += 1
+
+                    if preview['would_create']:
+                        would_create_records += 1
+                    if preview['would_update']:
+                        would_update_records += 1
+
                     processed_rows += 1
                 else:
-                    error_rows += 1
+                    success, match_type = self._process_timecard_row(
+                        row_data=row_data,
+                        period=period,
+                        filename=filename,
+                    )
+
+                    if success:
+                        processed_rows += 1
+                        if match_type in ('matricula', 'matricula_nome'):
+                            matched_by_matricula += 1
+                        elif match_type == 'nome':
+                            matched_by_name += 1
+                        elif match_type is None:
+                            unmatched_rows += 1
+                    else:
+                        error_rows += 1
                     
             except Exception as e:
                 error_rows += 1
@@ -253,120 +576,90 @@ class TimecardXLSXProcessor:
         return {
             'total_rows': total_rows,
             'processed_rows': processed_rows,
-            'error_rows': error_rows
+            'error_rows': error_rows,
+            'matched_by_matricula': matched_by_matricula,
+            'matched_by_name': matched_by_name,
+            'unmatched_rows': unmatched_rows,
+            'would_create_records': would_create_records,
+            'would_update_records': would_update_records,
+            'period_exists': period is not None,
+            'would_create_period': dry_run and period is None,
+            'headers_used': list(column_indices.keys()),
         }
     
     def _process_timecard_row(
         self,
-        sheet,
-        row_idx: int,
-        col_indices: Dict,
+        row_data: Dict,
         period: TimecardPeriod,
         filename: str
-    ) -> bool:
+    ) -> Tuple[bool, Optional[str]]:
         """Processa uma linha de dados de cartão ponto"""
         try:
-            # Ler matrícula (arquivo tratado tem apenas matrículas válidas)
-            employee_number_raw = sheet.cell(row_idx, col_indices.get('employee_number', 1)).value
-            employee_number = str(employee_number_raw).strip().upper()
-            
-            # Validação básica de matrícula
-            employee_number_clean = employee_number.replace('E', '').strip()
-            if not employee_number_clean.isdigit():
-                logger.warning(f"Linha {row_idx}: Matrícula inválida ({employee_number})")
-                return False
-            
-            # Identificar empresa pela presença de "E" na matrícula
-            if employee_number.endswith('E'):
-                company = '0060'  # Empreendimentos
-            else:
-                company = '0059'  # Infraestrutura
-            
-            # Ler nome
-            employee_name_cell = sheet.cell(row_idx, col_indices.get('employee_name', 2)).value
-            employee_name = str(employee_name_cell).strip() if employee_name_cell else ""
-            
-            # Tentar encontrar employee no banco (apenas por unique_id, sem filtrar por empresa)
-            employee = self.db.query(Employee).filter(
-                Employee.unique_id == employee_number_clean
-            ).first()
-            
-            if not employee:
-                # Tentar por nome se não encontrou por matrícula
-                employee = self.db.query(Employee).filter(
-                    Employee.name.ilike(f"%{employee_name}%")
-                ).first()
-            
+            employee, match_type = self._resolve_employee(
+                employee_number=row_data['employee_number'],
+                employee_name=row_data['employee_name'],
+                company=row_data['company'],
+            )
+
             employee_id = employee.id if employee else None
-            
+
             if not employee:
-                warning = f"Linha {row_idx}: Colaborador '{employee_name}' (matrícula {employee_number}) não encontrado no sistema"
+                warning = f"Colaborador '{row_data['employee_name']}' (matrícula {row_data['employee_number']}) não encontrado no sistema"
                 self.warnings.append(warning)
                 logger.warning(warning)
-            
-            # Ler valores de horas (converter timedelta para horas decimais)
-            normal_hours = self._convert_to_hours(sheet.cell(row_idx, col_indices.get('normal_hours', 3)).value)
-            overtime_50 = self._convert_to_hours(sheet.cell(row_idx, col_indices.get('overtime_50', 4)).value)
-            overtime_100 = self._convert_to_hours(sheet.cell(row_idx, col_indices.get('overtime_100', 5)).value)
-            night_overtime_50 = self._convert_to_hours(sheet.cell(row_idx, col_indices.get('night_overtime_50', 6)).value)
-            night_overtime_100 = self._convert_to_hours(sheet.cell(row_idx, col_indices.get('night_overtime_100', 7)).value)
-            night_hours = self._convert_to_hours(sheet.cell(row_idx, col_indices.get('night_hours', 8)).value)
-            absences = self._convert_to_hours(sheet.cell(row_idx, col_indices.get('absences', 9)).value)
-            dsr_debit = self._convert_to_hours(sheet.cell(row_idx, col_indices.get('dsr_debit', 10)).value)
-            bonus_hours = self._convert_to_hours(sheet.cell(row_idx, col_indices.get('bonus_hours', 11)).value)
             
             # Verificar se já existe registro para este colaborador neste período
             existing = self.db.query(TimecardData).filter(
                 TimecardData.period_id == period.id,
-                TimecardData.employee_number == employee_number
+                TimecardData.employee_number == row_data['employee_number']
             ).first()
             
             if existing:
                 # Atualizar registro existente
                 existing.employee_id = employee_id
-                existing.employee_name = employee_name
-                existing.company = company
-                existing.normal_hours = normal_hours
-                existing.overtime_50 = overtime_50
-                existing.overtime_100 = overtime_100
-                existing.night_overtime_50 = night_overtime_50
-                existing.night_overtime_100 = night_overtime_100
-                existing.night_hours = night_hours
-                existing.absences = absences
-                existing.dsr_debit = dsr_debit
-                existing.bonus_hours = bonus_hours
+                existing.employee_name = row_data['employee_name']
+                existing.company = row_data['company']
+                existing.normal_hours = row_data['normal_hours']
+                existing.overtime_50 = row_data['overtime_50']
+                existing.overtime_100 = row_data['overtime_100']
+                existing.night_overtime_50 = row_data['night_overtime_50']
+                existing.night_overtime_100 = row_data['night_overtime_100']
+                existing.night_hours = row_data['night_hours']
+                existing.absences = row_data['absences']
+                existing.dsr_debit = row_data['dsr_debit']
+                existing.bonus_hours = row_data['bonus_hours']
                 existing.upload_filename = filename
                 existing.processed_by = self.user_id
                 
-                logger.debug(f"Registro atualizado: {employee_name}")
+                logger.debug(f"Registro atualizado: {row_data['employee_name']}")
             else:
                 # Criar novo registro
                 timecard_data = TimecardData(
                     period_id=period.id,
                     employee_id=employee_id,
-                    employee_number=employee_number,
-                    employee_name=employee_name,
-                    company=company,
-                    normal_hours=normal_hours,
-                    overtime_50=overtime_50,
-                    overtime_100=overtime_100,
-                    night_overtime_50=night_overtime_50,
-                    night_overtime_100=night_overtime_100,
-                    night_hours=night_hours,
-                    absences=absences,
-                    dsr_debit=dsr_debit,
-                    bonus_hours=bonus_hours,
+                    employee_number=row_data['employee_number'],
+                    employee_name=row_data['employee_name'],
+                    company=row_data['company'],
+                    normal_hours=row_data['normal_hours'],
+                    overtime_50=row_data['overtime_50'],
+                    overtime_100=row_data['overtime_100'],
+                    night_overtime_50=row_data['night_overtime_50'],
+                    night_overtime_100=row_data['night_overtime_100'],
+                    night_hours=row_data['night_hours'],
+                    absences=row_data['absences'],
+                    dsr_debit=row_data['dsr_debit'],
+                    bonus_hours=row_data['bonus_hours'],
                     upload_filename=filename,
                     processed_by=self.user_id
                 )
                 
                 self.db.add(timecard_data)
-                logger.debug(f"Novo registro criado: {employee_name}")
+                logger.debug(f"Novo registro criado: {row_data['employee_name']}")
             
-            return True
+            return True, match_type
             
         except Exception as e:
-            logger.error(f"Erro ao processar linha {row_idx}: {e}")
+            logger.error(f"Erro ao processar linha: {e}")
             raise
     
     def _convert_to_hours(self, value) -> Decimal:
