@@ -58,7 +58,7 @@ const QueueManagement = () => {
       loadQueues();
     } catch (error) {
       console.error('Erro ao cancelar fila:', error);
-      toast.error('Erro ao cancelar fila');
+      toast.error(error.response?.data?.error || 'Erro ao cancelar fila');
     }
   };
 

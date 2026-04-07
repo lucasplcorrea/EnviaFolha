@@ -167,8 +167,8 @@ class QueueManagerService:
         if not queue:
             return False
         
-        # Só pode cancelar filas ativas
-        if queue.status not in ['pending', 'processing']:
+        # Só pode cancelar filas ativas (inclui pausadas)
+        if queue.status not in ['pending', 'processing', 'paused']:
             return False
         
         queue.status = 'cancelled'
