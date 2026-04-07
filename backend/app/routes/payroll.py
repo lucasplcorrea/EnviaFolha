@@ -2,6 +2,8 @@
 
 import os
 import urllib.parse
+import zipfile
+from io import BytesIO
 from datetime import datetime
 from typing import List, Optional
 
@@ -15,6 +17,130 @@ from app.routes.base import BaseRouter
 
 class PayrollRouter(BaseRouter):
     """Router para endpoints de folha de pagamento."""
+
+    PAYROLL_TYPE_DIRS = {
+        '11': 'Mensal',
+        '31': 'Adiantamento_13',
+        '32': '13_Integral',
+        '91': 'Adiantamento_Salarial',
+    }
+
+    @staticmethod
+    def _normalize_unique_id(value: Optional[str]) -> str:
+        digits = ''.join(ch for ch in str(value or '') if ch.isdigit())
+        if not digits:
+            return ''
+        return digits.lstrip('0') or '0'
+
+    @staticmethod
+    def _extract_unique_id_from_filename(filename: str) -> str:
+        # Novo formato: EN_MATRICULA_TIPO_MES_ANO.pdf
+        if filename.startswith('EN_'):
+            parts = filename[:-4].split('_') if filename.lower().endswith('.pdf') else filename.split('_')
+            if len(parts) >= 5:
+                return PayrollRouter._normalize_unique_id(parts[1])
+
+        # Formato legado: MATRICULA_holerite_mes_ano.pdf
+        if '_holerite_' in filename.lower():
+            return PayrollRouter._normalize_unique_id(filename.split('_', 1)[0])
+
+        return ''
+
+    @staticmethod
+    def _build_month_year_label(folder_name: str) -> str:
+        # Ex.: Mensal_03_2026 -> 03/2026
+        parts = folder_name.rsplit('_', 2)
+        if len(parts) == 3:
+            month, year = parts[1], parts[2]
+            if month.isdigit() and year.isdigit() and len(year) == 4:
+                return f"{month.zfill(2)}/{year}"
+        return 'desconhecido'
+
+    @staticmethod
+    def _parse_period_from_folder(folder_name: str):
+        parts = folder_name.rsplit('_', 2)
+        if len(parts) != 3:
+            return None
+        payroll_name, month, year = parts
+        if not month.isdigit() or not year.isdigit():
+            return None
+
+        payroll_type = None
+        for type_code, type_name in PayrollRouter.PAYROLL_TYPE_DIRS.items():
+            if payroll_name == type_name:
+                payroll_type = type_code
+                break
+
+        if not payroll_type:
+            return None
+
+        return payroll_type, int(month), int(year)
+
+    def _get_processed_base_dirs(self) -> List[str]:
+        candidates = []
+
+        env_dir = os.getenv('PROCESSED_DIR', '').strip()
+        if env_dir:
+            candidates.append(env_dir)
+
+        candidates.extend([
+            'processed',
+            os.path.join('backend', 'processed'),
+            '/app/processed',
+        ])
+
+        base_dirs = []
+        for candidate in candidates:
+            abs_path = os.path.abspath(candidate)
+            if abs_path not in base_dirs and os.path.isdir(abs_path):
+                base_dirs.append(abs_path)
+
+        return base_dirs
+
+    def _collect_processed_files(self):
+        employees_payload = load_employees_data(include_inactive=True)
+        employees = employees_payload.get('employees', [])
+
+        employee_by_uid = {}
+        for emp in employees:
+            normalized_uid = self._normalize_unique_id(emp.get('unique_id'))
+            if normalized_uid:
+                employee_by_uid[normalized_uid] = emp
+
+        files = []
+        for base_dir in self._get_processed_base_dirs():
+            for root, _, filenames in os.walk(base_dir):
+                folder_name = os.path.basename(root)
+                month_year = self._build_month_year_label(folder_name)
+
+                for filename in filenames:
+                    if not filename.lower().endswith('.pdf'):
+                        continue
+
+                    full_path = os.path.join(root, filename)
+                    if not os.path.isfile(full_path):
+                        continue
+
+                    unique_id = self._extract_unique_id_from_filename(filename)
+                    associated_employee = employee_by_uid.get(unique_id)
+                    can_send = bool(associated_employee and associated_employee.get('phone_number'))
+                    is_orphan = associated_employee is None
+
+                    files.append({
+                        'filename': filename,
+                        'filepath': full_path,
+                        'size': os.path.getsize(full_path),
+                        'created_at': datetime.fromtimestamp(os.path.getctime(full_path)).isoformat(),
+                        'unique_id': unique_id or 'desconhecido',
+                        'month_year': month_year,
+                        'associated_employee': associated_employee,
+                        'can_send': can_send,
+                        'is_orphan': is_orphan,
+                        'source_dir': base_dir,
+                    })
+
+        files.sort(key=lambda item: item.get('created_at', ''), reverse=True)
+        return files
 
     def handle_process_payroll_file(self):
         """Processa PDF consolidado de holerites e segmenta por colaborador."""
@@ -395,41 +521,155 @@ class PayrollRouter(BaseRouter):
             self.send_json_response({'success': False, 'error': str(ex)}, 500)
 
     def handle_payrolls_processed(self):
-        from sqlalchemy import text
         try:
-            with engine.connect() as conn:
-                result = conn.execute(text('''
-                    SELECT p.id, p.filename, p.status, p.created_at
-                    FROM payroll_processing_logs p
-                    ORDER BY p.created_at DESC
-                    LIMIT 50
-                '''))
-                rows = [dict(row._mapping) for row in result]
-                self.send_json_response({'success': True, 'processed_files': rows})
+            parsed = urllib.parse.urlparse(self.handler.path)
+            params = urllib.parse.parse_qs(parsed.query)
+            month_filter = (params.get('month', [''])[0] or '').strip().lower()
+
+            files = self._collect_processed_files()
+            if month_filter:
+                files = [f for f in files if str(f.get('month_year', '')).lower() == month_filter]
+
+            total = len(files)
+            orphan = sum(1 for f in files if f.get('is_orphan'))
+            ready = sum(1 for f in files if f.get('can_send'))
+            associated = sum(1 for f in files if f.get('associated_employee'))
+
+            self.send_json_response({
+                'success': True,
+                'files': files,
+                'statistics': {
+                    'total': total,
+                    'orphan': orphan,
+                    'ready': ready,
+                    'associated': associated,
+                },
+            })
         except Exception as ex:
             self.send_json_response({'success': False, 'error': str(ex)}, 500)
 
     def handle_list_payroll_periods(self):
-        from sqlalchemy import text
         try:
-            with engine.connect() as conn:
-                result = conn.execute(text('''
-                    SELECT id, year, month, period_name, company, is_active, is_closed
-                    FROM payroll_periods
-                    ORDER BY year DESC, month DESC
-                    LIMIT 100
-                '''))
-                rows = [dict(row._mapping) for row in result]
-                self.send_json_response({'success': True, 'periods': rows})
+            periods = []
+            seen = set()
+
+            for base_dir in self._get_processed_base_dirs():
+                for folder in os.listdir(base_dir):
+                    folder_path = os.path.join(base_dir, folder)
+                    if not os.path.isdir(folder_path):
+                        continue
+
+                    parsed_period = self._parse_period_from_folder(folder)
+                    if not parsed_period:
+                        continue
+
+                    payroll_type, month, year = parsed_period
+                    key = (payroll_type, month, year)
+                    if key in seen:
+                        continue
+
+                    file_count = sum(
+                        1
+                        for item in os.listdir(folder_path)
+                        if item.lower().endswith('.pdf') and os.path.isfile(os.path.join(folder_path, item))
+                    )
+
+                    periods.append({
+                        'folder': folder,
+                        'file_count': file_count,
+                        'payroll_type': payroll_type,
+                        'month': month,
+                        'year': year,
+                    })
+                    seen.add(key)
+
+            periods.sort(key=lambda p: (p['year'], p['month']), reverse=True)
+            self.send_json_response({'success': True, 'periods': periods})
         except Exception as ex:
             self.send_json_response({'success': False, 'error': str(ex)}, 500)
 
     # Stand-in methods for exports/bulk-send/delete
     def handle_export_payroll_batch(self):
-        self.send_json_response({'success': False, 'error': 'Não implementado' }, 501)
+        try:
+            data = self.get_request_data()
+            payroll_type = str(data.get('payrollType') or '').strip()
+            month = data.get('month')
+            year = data.get('year')
+
+            if payroll_type not in self.PAYROLL_TYPE_DIRS:
+                self.send_json_response({'success': False, 'error': 'Tipo de holerite inválido'}, 400)
+                return
+
+            try:
+                month = int(month)
+                year = int(year)
+            except Exception:
+                self.send_json_response({'success': False, 'error': 'month/year inválidos'}, 400)
+                return
+
+            folder_name = f"{self.PAYROLL_TYPE_DIRS[payroll_type]}_{month:02d}_{year}"
+            source_dir = None
+            for base_dir in self._get_processed_base_dirs():
+                candidate = os.path.join(base_dir, folder_name)
+                if os.path.isdir(candidate):
+                    source_dir = candidate
+                    break
+
+            if not source_dir:
+                self.send_json_response({'success': False, 'error': f'Pasta de período não encontrada: {folder_name}'}, 404)
+                return
+
+            pdf_files = [
+                item
+                for item in os.listdir(source_dir)
+                if item.lower().endswith('.pdf') and os.path.isfile(os.path.join(source_dir, item))
+            ]
+            if not pdf_files:
+                self.send_json_response({'success': False, 'error': 'Nenhum PDF encontrado para o período informado'}, 404)
+                return
+
+            zip_buffer = BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                for pdf_name in sorted(pdf_files):
+                    full_path = os.path.join(source_dir, pdf_name)
+                    zip_file.write(full_path, arcname=pdf_name)
+
+            zip_bytes = zip_buffer.getvalue()
+            zip_name = f"Holerites_{payroll_type}_{month:02d}_{year}.zip"
+            self.send_binary_response(zip_bytes, 'application/zip', zip_name)
+        except Exception as ex:
+            self.send_json_response({'success': False, 'error': str(ex)}, 500)
 
     def handle_bulk_send_payrolls(self):
         self.send_json_response({'success': False, 'error': 'Não implementado' }, 501)
 
     def handle_delete_payroll_file(self):
-        self.send_json_response({'success': False, 'error': 'Não implementado' }, 501)
+        try:
+            data = self.get_request_data()
+            filename = str(data.get('filename') or '').strip()
+            if not filename:
+                self.send_json_response({'success': False, 'error': 'filename é obrigatório'}, 400)
+                return
+
+            if '/' in filename or '\\' in filename or filename in ('.', '..'):
+                self.send_json_response({'success': False, 'error': 'filename inválido'}, 400)
+                return
+
+            deleted = False
+            for base_dir in self._get_processed_base_dirs():
+                for root, _, files in os.walk(base_dir):
+                    if filename in files:
+                        file_path = os.path.join(root, filename)
+                        try:
+                            os.remove(file_path)
+                            deleted = True
+                        except Exception:
+                            pass
+
+            if not deleted:
+                self.send_json_response({'success': False, 'error': 'Arquivo não encontrado'}, 404)
+                return
+
+            self.send_json_response({'success': True, 'message': 'Arquivo removido com sucesso'})
+        except Exception as ex:
+            self.send_json_response({'success': False, 'error': str(ex)}, 500)
