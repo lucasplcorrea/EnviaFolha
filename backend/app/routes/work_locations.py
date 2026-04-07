@@ -2,6 +2,7 @@
 WorkLocations Router — CRUD completo para /api/v1/work-locations
 """
 from .base import BaseRouter
+from app.services.runtime_compat import SessionLocal
 
 
 def _location_to_dict(loc) -> dict:
@@ -33,7 +34,6 @@ class WorkLocationsRouter(BaseRouter):
 
     # ── GET /api/v1/work-locations ────────────────────────────────────────
     def handle_list(self):
-        from main_legacy import SessionLocal
         from app.models import WorkLocation
         from sqlalchemy.orm import joinedload
         import urllib.parse
@@ -69,7 +69,6 @@ class WorkLocationsRouter(BaseRouter):
 
     # ── GET /api/v1/work-locations/<id> ──────────────────────────────────
     def handle_get(self, location_id: int):
-        from main_legacy import SessionLocal
         from app.models import WorkLocation
         from sqlalchemy.orm import joinedload
 
@@ -95,7 +94,6 @@ class WorkLocationsRouter(BaseRouter):
 
     # ── POST /api/v1/work-locations ───────────────────────────────────────
     def handle_create(self):
-        from main_legacy import SessionLocal
         from app.models import WorkLocation
 
         db = SessionLocal()
@@ -138,7 +136,6 @@ class WorkLocationsRouter(BaseRouter):
 
     # ── PUT /api/v1/work-locations/<id> ──────────────────────────────────
     def handle_update(self, location_id: int):
-        from main_legacy import SessionLocal
         from app.models import WorkLocation
 
         db = SessionLocal()
@@ -174,7 +171,6 @@ class WorkLocationsRouter(BaseRouter):
 
     # ── DELETE /api/v1/work-locations/<id> ───────────────────────────────
     def handle_delete(self, location_id: int):
-        from main_legacy import SessionLocal
         from app.models import WorkLocation
 
         db = SessionLocal()

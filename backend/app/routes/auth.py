@@ -1,9 +1,8 @@
 """
 Authentication Routes - Rotas de autenticação
-Migrado de main_legacy.py para estrutura modular
 """
 from .base import BaseRouter
-from typing import Dict, Any
+from app.services.runtime_compat import SessionLocal
 
 
 class AuthRouter(BaseRouter):
@@ -24,13 +23,6 @@ class AuthRouter(BaseRouter):
                 return
             
             print(f"🔐 Tentativa de login - Username: '{username}'")
-            
-            # Importar dependências necessárias
-            import sys
-            import os
-            sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-            
-            from main_legacy import SessionLocal
             
             # Verificar no PostgreSQL se disponível
             if SessionLocal:
@@ -105,8 +97,6 @@ class AuthRouter(BaseRouter):
         Retornar dados do usuário autenticado
         """
         try:
-            from main_legacy import SessionLocal
-            
             if not SessionLocal:
                 self.send_error("Banco de dados não disponível", 503)
                 return

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { 
   UserCircleIcon, 
@@ -65,6 +65,16 @@ const EmployeeDetail = () => {
   // Estados para Movimentações
   const [movements, setMovements] = useState([]);
   const [loadingMovements, setLoadingMovements] = useState(false);
+  const [payrollRecords, setPayrollRecords] = useState([]);
+  const [payrollSummary, setPayrollSummary] = useState(null);
+  const [loadingPayroll, setLoadingPayroll] = useState(false);
+  const [benefitRecords, setBenefitRecords] = useState([]);
+  const [benefitsSummary, setBenefitsSummary] = useState(null);
+  const [loadingBenefits, setLoadingBenefits] = useState(false);
+  const [timecardRecords, setTimecardRecords] = useState([]);
+  const [timecardSummary, setTimecardSummary] = useState(null);
+  const [loadingTimecard, setLoadingTimecard] = useState(false);
+  const [loadingEvolution, setLoadingEvolution] = useState(false);
   const [editingLeave, setEditingLeave] = useState(null);
   const [leaveForm, setLeaveForm] = useState({
     leave_type: '',
@@ -156,6 +166,14 @@ const EmployeeDetail = () => {
       loadLeaves();
     } else if (activeTab === 'movements') {
       loadMovements();
+    } else if (activeTab === 'evolution') {
+      loadEvolution();
+    } else if (activeTab === 'payroll') {
+      loadPayroll();
+    } else if (activeTab === 'benefits') {
+      loadBenefits();
+    } else if (activeTab === 'timesheet') {
+      loadTimecard();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
@@ -187,6 +205,96 @@ const EmployeeDetail = () => {
       setLeaves([]);
     } finally {
       setLoadingLeaves(false);
+    }
+  };
+
+  const loadPayroll = async () => {
+    setLoadingPayroll(true);
+    try {
+      const response = await api.get(`/employees/${id}/payroll?limit=24`);
+      setPayrollRecords(response.data.payrolls || []);
+      setPayrollSummary(response.data.summary || null);
+    } catch (error) {
+      console.error('Erro ao carregar folha do colaborador:', error);
+      if (error.response?.status !== 404) {
+        toast.error('Erro ao carregar folha de pagamento');
+      }
+      setPayrollRecords([]);
+      setPayrollSummary(null);
+    } finally {
+      setLoadingPayroll(false);
+    }
+  };
+
+  const loadBenefits = async () => {
+    setLoadingBenefits(true);
+    try {
+      const response = await api.get(`/employees/${id}/benefits?limit=24`);
+      setBenefitRecords(response.data.benefits || []);
+      setBenefitsSummary(response.data.summary || null);
+    } catch (error) {
+      console.error('Erro ao carregar benefícios do colaborador:', error);
+      if (error.response?.status !== 404) {
+        toast.error('Erro ao carregar benefícios');
+      }
+      setBenefitRecords([]);
+      setBenefitsSummary(null);
+    } finally {
+      setLoadingBenefits(false);
+    }
+  };
+
+  const loadTimecard = async () => {
+    setLoadingTimecard(true);
+    try {
+      const response = await api.get(`/employees/${id}/timecard?limit=24`);
+      setTimecardRecords(response.data.timecards || []);
+      setTimecardSummary(response.data.summary || null);
+    } catch (error) {
+      console.error('Erro ao carregar cartão ponto do colaborador:', error);
+      if (error.response?.status !== 404) {
+        toast.error('Erro ao carregar cartão ponto');
+      }
+      setTimecardRecords([]);
+      setTimecardSummary(null);
+    } finally {
+      setLoadingTimecard(false);
+    }
+  };
+
+  const loadEvolution = async () => {
+    setLoadingEvolution(true);
+    try {
+      const [movementsRes, payrollRes, benefitsRes] = await Promise.allSettled([
+        api.get(`/employees/${id}/movements`),
+        api.get(`/employees/${id}/payroll?limit=24`),
+        api.get(`/employees/${id}/benefits?limit=24`)
+      ]);
+
+      if (movementsRes.status === 'fulfilled') {
+        setMovements(movementsRes.value.data.movements || []);
+      } else {
+        console.error('Erro ao carregar movimentos para evolução:', movementsRes.reason);
+      }
+
+      if (payrollRes.status === 'fulfilled') {
+        setPayrollRecords(payrollRes.value.data.payrolls || []);
+        setPayrollSummary(payrollRes.value.data.summary || null);
+      } else {
+        console.error('Erro ao carregar folha para evolução:', payrollRes.reason);
+      }
+
+      if (benefitsRes.status === 'fulfilled') {
+        setBenefitRecords(benefitsRes.value.data.benefits || []);
+        setBenefitsSummary(benefitsRes.value.data.summary || null);
+      } else {
+        console.error('Erro ao carregar benefícios para evolução:', benefitsRes.reason);
+      }
+    } catch (error) {
+      console.error('Erro ao carregar evolução profissional:', error);
+      toast.error('Erro ao carregar evolução profissional');
+    } finally {
+      setLoadingEvolution(false);
     }
   };
 
@@ -277,6 +385,264 @@ const EmployeeDetail = () => {
     if (!dateString) return '-';
     return new Date(dateString).toLocaleDateString('pt-BR');
   };
+
+  const formatCurrency = (value) => {
+    const num = Number(value || 0);
+    return num.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  };
+
+  const formatMonthYear = (year, month) => {
+    if (!year || !month) return '-';
+    const monthNames = [
+      'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+      'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+    ];
+    return `${monthNames[month - 1] || month}/${year}`;
+  };
+
+  const formatHours = (value) => {
+    const num = Number(value || 0);
+    return `${num.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}h`;
+  };
+
+  const timecardTimeline = useMemo(() => {
+    const grouped = new Map();
+
+    timecardRecords.forEach((item) => {
+      const periodKey = item.period?.id ?? `${item.period?.year || ''}-${item.period?.month || ''}`;
+      const current = grouped.get(periodKey) || {
+        period: item.period,
+        employee_number: item.employee_number || null,
+        company: item.company || null,
+        normal_hours: 0,
+        overtime_50: 0,
+        overtime_100: 0,
+        night_overtime_50: 0,
+        night_overtime_100: 0,
+        night_hours: 0,
+        absences: 0,
+        dsr_debit: 0,
+        bonus_hours: 0,
+        total_overtime: 0,
+        total_night: 0,
+        records: 0,
+        upload_filename: item.upload_filename,
+      };
+
+      current.normal_hours += Number(item.normal_hours || 0);
+      current.overtime_50 += Number(item.overtime_50 || 0);
+      current.overtime_100 += Number(item.overtime_100 || 0);
+      current.night_overtime_50 += Number(item.night_overtime_50 || 0);
+      current.night_overtime_100 += Number(item.night_overtime_100 || 0);
+      current.night_hours += Number(item.night_hours || 0);
+      current.absences += Number(item.absences || 0);
+      current.dsr_debit += Number(item.dsr_debit || 0);
+      current.bonus_hours += Number(item.bonus_hours || 0);
+      current.total_overtime += Number(item.total_overtime || 0);
+      current.total_night += Number(item.total_night || 0);
+      current.records += 1;
+      current.upload_filename = item.upload_filename || current.upload_filename;
+      current.employee_number = current.employee_number || item.employee_number || null;
+      current.company = current.company || item.company || null;
+
+      grouped.set(periodKey, current);
+    });
+
+    return Array.from(grouped.values()).sort((a, b) => {
+      const yearA = a.period?.year || 0;
+      const yearB = b.period?.year || 0;
+      if (yearA !== yearB) return yearB - yearA;
+      const monthA = a.period?.month || 0;
+      const monthB = b.period?.month || 0;
+      return monthB - monthA;
+    });
+  }, [timecardRecords]);
+
+  const benefitTimeline = useMemo(() => {
+    const grouped = new Map();
+
+    benefitRecords.forEach((item) => {
+      const periodKey = item.period?.id ?? `${item.period?.year || ''}-${item.period?.month || ''}-${item.period?.company || ''}`;
+      const current = grouped.get(periodKey) || {
+        period: item.period,
+        refeicao: 0,
+        alimentacao: 0,
+        mobilidade: 0,
+        livre: 0,
+        total: 0,
+      };
+
+      const refeicao = Number(item.refeicao || 0);
+      const alimentacao = Number(item.alimentacao || 0);
+      const mobilidade = Number(item.mobilidade || 0);
+      const livre = Number(item.livre || 0);
+      const total = refeicao + alimentacao + mobilidade + livre;
+
+      current.refeicao += refeicao;
+      current.alimentacao += alimentacao;
+      current.mobilidade += mobilidade;
+      current.livre += livre;
+      current.total += total;
+
+      grouped.set(periodKey, current);
+    });
+
+    return Array.from(grouped.values()).sort((a, b) => {
+      const yearA = a.period?.year || 0;
+      const yearB = b.period?.year || 0;
+      if (yearA !== yearB) return yearB - yearA;
+      const monthA = a.period?.month || 0;
+      const monthB = b.period?.month || 0;
+      if (monthA !== monthB) return monthB - monthA;
+      return String(a.period?.company || '').localeCompare(String(b.period?.company || ''));
+    });
+  }, [benefitRecords]);
+
+  const benefitsSnapshot = useMemo(() => {
+    const latest = benefitTimeline[0] || null;
+    const highest = benefitTimeline.reduce((acc, item) => {
+      if (!acc || item.total > acc.total) return item;
+      return acc;
+    }, null);
+
+    return {
+      latest,
+      highest,
+      totalPeriods: benefitTimeline.length,
+      totalValue: benefitTimeline.reduce((sum, item) => sum + item.total, 0),
+    };
+  }, [benefitTimeline]);
+
+  const payrollTimeline = useMemo(() => {
+    const grouped = new Map();
+
+    payrollRecords.forEach((item) => {
+      const periodKey = item.period?.id ?? `${item.period?.year || ''}-${item.period?.month || ''}-${item.period?.company || ''}`;
+      const current = grouped.get(periodKey);
+      const snapshot = {
+        period: item.period,
+        gross_salary: Number(item.gross_salary || 0),
+        net_salary: Number(item.net_salary || 0),
+        upload_date: item.upload_date || item.updated_at || null,
+        id: item.id,
+      };
+
+      if (!current || snapshot.id > current.id) {
+        grouped.set(periodKey, snapshot);
+      }
+    });
+
+    return Array.from(grouped.values()).sort((a, b) => {
+      const yearA = a.period?.year || 0;
+      const yearB = b.period?.year || 0;
+      if (yearA !== yearB) return yearB - yearA;
+      const monthA = a.period?.month || 0;
+      const monthB = b.period?.month || 0;
+      return monthB - monthA;
+    });
+  }, [payrollRecords]);
+
+  const evolutionEvents = useMemo(() => {
+    const events = [];
+
+    if (employee?.admission_date) {
+      events.push({
+        type: 'admission',
+        date: employee.admission_date,
+        title: 'Admissão',
+        subtitle: employee.position || 'Cargo inicial não informado',
+        description: `${employee.department || 'Sem departamento'} · ${employee.company_code || 'Empresa não informada'}`,
+      });
+    }
+
+    if (employee?.termination_date) {
+      events.push({
+        type: 'termination',
+        date: employee.termination_date,
+        title: 'Desligamento',
+        subtitle: employee.employment_status || 'Desligado',
+        description: employee.status_reason || 'Sem justificativa registrada',
+      });
+    }
+
+    movements.forEach((movement) => {
+      const changes = [];
+      if (movement.previous_department !== movement.new_department) {
+        changes.push(`Depto: ${movement.previous_department || '-'} → ${movement.new_department || '-'}`);
+      }
+      if (movement.previous_position !== movement.new_position) {
+        changes.push(`Cargo: ${movement.previous_position || '-'} → ${movement.new_position || '-'}`);
+      }
+      if (movement.previous_work_location_id !== movement.new_work_location_id) {
+        changes.push('Local de trabalho alterado');
+      }
+
+      events.push({
+        type: 'movement',
+        date: movement.date,
+        title: movement.movement_type || 'Movimentação',
+        subtitle: movement.reason || 'Atualização cadastral',
+        description: changes.length > 0 ? changes.join(' · ') : 'Sem detalhes adicionais',
+      });
+    });
+
+    payrollTimeline.forEach((snapshot) => {
+      events.push({
+        type: 'payroll',
+        date: snapshot.period ? `${snapshot.period.year}-${String(snapshot.period.month).padStart(2, '0')}-01` : snapshot.upload_date,
+        title: 'Folha de pagamento',
+        subtitle: `${formatMonthYear(snapshot.period?.year, snapshot.period?.month)} · ${snapshot.period?.company || '-'}`,
+        description: `Bruto ${formatCurrency(snapshot.gross_salary)} · Líquido ${formatCurrency(snapshot.net_salary)}`,
+      });
+    });
+
+    benefitTimeline.forEach((snapshot) => {
+      events.push({
+        type: 'benefits',
+        date: snapshot.period ? `${snapshot.period.year}-${String(snapshot.period.month).padStart(2, '0')}-01` : null,
+        title: 'Benefícios iFood',
+        subtitle: `${formatMonthYear(snapshot.period?.year, snapshot.period?.month)} · ${snapshot.period?.company || '-'}`,
+        description: `Refeição ${formatCurrency(snapshot.refeicao)} · Mobilidade ${formatCurrency(snapshot.mobilidade)} · Total ${formatCurrency(snapshot.total)}`,
+      });
+    });
+
+    return events
+      .filter(event => event.date)
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, [benefitTimeline, employee, movements, payrollTimeline]);
+
+  const evolutionStats = useMemo(() => {
+    const today = new Date();
+    const admission = employee?.admission_date ? new Date(employee.admission_date) : null;
+    const endDate = employee?.termination_date ? new Date(employee.termination_date) : today;
+    const tenureDays = admission ? Math.max(0, Math.ceil((endDate - admission) / (1000 * 60 * 60 * 24))) : 0;
+    const tenureYears = tenureDays / 365.25;
+
+    const distinctPositions = new Set([
+      employee?.position,
+      ...movements.flatMap((movement) => [movement.previous_position, movement.new_position])
+    ].filter(Boolean));
+
+    const distinctDepartments = new Set([
+      employee?.department,
+      ...movements.flatMap((movement) => [movement.previous_department, movement.new_department])
+    ].filter(Boolean));
+
+    const latestPayroll = payrollTimeline[0] || null;
+    const latestBenefit = benefitTimeline[0] || null;
+    const latestMovement = movements[0] || null;
+
+    return {
+      tenureDays,
+      tenureYears,
+      distinctPositions: distinctPositions.size,
+      distinctDepartments: distinctDepartments.size,
+      latestPayroll,
+      latestBenefit,
+      latestMovement,
+      totalMovements: movements.length,
+    };
+  }, [benefitTimeline, employee, movements, payrollTimeline]);
 
   const getStatusBadge = (status) => {
     const badges = {
@@ -1213,112 +1579,392 @@ const EmployeeDetail = () => {
         )}
 
         {activeTab === 'evolution' && (
-          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden text-center py-16">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-100 rounded-full mb-4">
-              <ArrowTrendingUpIcon className="h-8 w-8 text-indigo-600" />
+          <div className="space-y-6">
+            <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+              <div className="px-6 py-5 border-b border-gray-200 flex items-center justify-between bg-gray-50">
+                <h3 className="text-lg font-bold text-gray-900 flex items-center">
+                  <ArrowTrendingUpIcon className="h-5 w-5 text-indigo-600 mr-2" />
+                  Evolução Profissional
+                </h3>
+              </div>
+
+              {loadingEvolution ? (
+                <div className="p-8 text-center flex flex-col items-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mb-4"></div>
+                  <p className="text-gray-500">Carregando evolução profissional...</p>
+                </div>
+              ) : (
+                <div className="p-6 space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                    <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">Tempo de casa</p>
+                      <p className="mt-1 text-2xl font-bold text-gray-900">{evolutionStats.tenureYears.toFixed(1)} anos</p>
+                      <p className="text-xs text-gray-600 mt-1">{evolutionStats.tenureDays} dias desde a admissão</p>
+                    </div>
+                    <div className="rounded-lg border border-blue-100 bg-blue-50 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Cargo atual</p>
+                      <p className="mt-1 text-base font-bold text-gray-900">{employee.position || 'Não informado'}</p>
+                      <p className="text-xs text-gray-600 mt-1">{employee.department || 'Sem departamento'}</p>
+                    </div>
+                    <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Último salário líquido</p>
+                      <p className="mt-1 text-2xl font-bold text-gray-900">
+                        {formatCurrency(evolutionStats.latestPayroll?.net_salary || 0)}
+                      </p>
+                      <p className="text-xs text-gray-600 mt-1">{evolutionStats.latestPayroll?.period ? formatMonthYear(evolutionStats.latestPayroll.period.year, evolutionStats.latestPayroll.period.month) : '-'}</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-700">Movimentações</p>
+                      <p className="mt-1 text-2xl font-bold text-gray-900">{evolutionStats.totalMovements}</p>
+                      <p className="text-xs text-gray-600 mt-1">{evolutionStats.distinctPositions} cargos · {evolutionStats.distinctDepartments} lotações</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="rounded-lg border border-gray-200 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Última movimentação</p>
+                      <p className="mt-1 text-base font-bold text-gray-900">{evolutionStats.latestMovement?.movement_type || 'Sem histórico'}</p>
+                      <p className="text-sm text-gray-600 mt-1">{evolutionStats.latestMovement?.reason || 'Atualização cadastral'}</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Últimos benefícios</p>
+                      <p className="mt-1 text-base font-bold text-gray-900">
+                        {evolutionStats.latestBenefit?.period ? formatMonthYear(evolutionStats.latestBenefit.period.year, evolutionStats.latestBenefit.period.month) : '-'}
+                      </p>
+                      <p className="text-sm text-gray-600 mt-1">Total: {formatCurrency(evolutionStats.latestBenefit?.total || 0)}</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Status atual</p>
+                      <p className="mt-1 text-base font-bold text-gray-900">{employee.employment_status || 'Ativo'}</p>
+                      <p className="text-sm text-gray-600 mt-1">{employee.status_reason || 'Sem observações'}</p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-gray-200 overflow-hidden">
+                    <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
+                      <h4 className="text-sm font-semibold text-gray-900">Linha do tempo consolidada</h4>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-white">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Data</th>
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Marco</th>
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Detalhes</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-100">
+                          {evolutionEvents.slice(0, 18).map((event, index) => (
+                            <tr key={`${event.type}-${event.date}-${index}`} className="hover:bg-gray-50 align-top">
+                              <td className="px-4 py-3 text-sm font-medium text-gray-900 whitespace-nowrap">
+                                {formatDate(event.date)}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-900">
+                                <div className="font-semibold">{event.title}</div>
+                                <div className="text-xs text-gray-500 uppercase tracking-wide">{event.type}</div>
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-600">
+                                <div className="font-medium text-gray-800">{event.subtitle}</div>
+                                <div className="text-gray-500 mt-1 whitespace-pre-wrap">{event.description}</div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">Evolução Profissional e Salarial</h3>
-            <p className="text-sm text-gray-500 max-w-lg mx-auto mb-6">
-              Esta área centralizará o acompanhamento de promoções, dissídios, méritos e evolução do pacote de remuneração total do colaborador.
-            </p>
-            <span className="inline-flex shadow-sm items-center px-4 py-2 bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-lg text-sm font-semibold">
-              🚀 Funcionalidade na Implantação V2
-            </span>
           </div>
         )}
 
         {activeTab === 'payroll' && (
-          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden text-center py-16">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
-              <CurrencyDollarIcon className="h-8 w-8 text-green-600" />
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+            <div className="px-6 py-5 border-b border-gray-200 flex items-center justify-between bg-gray-50">
+              <h3 className="text-lg font-bold text-gray-900 flex items-center">
+                <CurrencyDollarIcon className="h-5 w-5 text-green-600 mr-2" />
+                Folha de Pagamento
+              </h3>
             </div>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">Folha de Pagamento Interna</h3>
-            <p className="text-sm text-gray-500 max-w-lg mx-auto mb-6">
-              Os holerites importados via ferramenta <strong>/payroll-data</strong> ficarão agregados e vinculados automaticamente aqui.
-            </p>
-            <span className="inline-flex shadow-sm items-center px-4 py-2 bg-green-50 border border-green-100 text-green-700 rounded-lg text-sm font-semibold">
-              ⏳ Aguardando integração de arquivo nativo (.XLSX)
-            </span>
+
+            {loadingPayroll ? (
+              <div className="p-8 text-center flex flex-col items-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600 mb-4"></div>
+                <p className="text-gray-500">Carregando dados de folha...</p>
+              </div>
+            ) : payrollRecords.length === 0 ? (
+              <div className="p-8 text-center bg-gray-50 rounded-lg border-2 border-dashed border-gray-200 m-6">
+                <CurrencyDollarIcon className="mx-auto h-12 w-12 text-gray-400 mb-3" />
+                <h3 className="text-sm font-medium text-gray-900 mb-1">Nenhum registro de folha</h3>
+                <p className="text-sm text-gray-500">Ainda não há registros de folha vinculados a este colaborador.</p>
+              </div>
+            ) : (
+              <div className="p-6 space-y-5">
+                {payrollSummary && (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-green-50 border border-green-100 rounded-lg p-4">
+                      <p className="text-xs text-green-800 font-medium uppercase">Total Bruto</p>
+                      <p className="text-lg font-bold text-green-900 mt-1">{formatCurrency(payrollSummary.total_gross_salary)}</p>
+                    </div>
+                    <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
+                      <p className="text-xs text-blue-800 font-medium uppercase">Total Líquido</p>
+                      <p className="text-lg font-bold text-blue-900 mt-1">{formatCurrency(payrollSummary.total_net_salary)}</p>
+                    </div>
+                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                      <p className="text-xs text-gray-700 font-medium uppercase">Média Líquida</p>
+                      <p className="text-lg font-bold text-gray-900 mt-1">{formatCurrency(payrollSummary.avg_net_salary)}</p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Período</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Empresa</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Bruto</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Líquido</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Arquivo</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-100">
+                      {payrollRecords.map((item) => (
+                        <tr key={item.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 text-sm text-gray-900 font-medium">{item.period?.name || '-'}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{item.period?.company || '-'}</td>
+                          <td className="px-4 py-3 text-sm text-right text-gray-700">{formatCurrency(item.gross_salary)}</td>
+                          <td className="px-4 py-3 text-sm text-right font-semibold text-gray-900">{formatCurrency(item.net_salary)}</td>
+                          <td className="px-4 py-3 text-sm text-gray-500">{item.upload_filename || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
         {activeTab === 'benefits' && (
-          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden text-center py-16">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-purple-100 rounded-full mb-4">
-              <HeartIcon className="h-8 w-8 text-purple-600" />
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+            <div className="px-6 py-5 border-b border-gray-200 flex items-center justify-between bg-gray-50">
+              <h3 className="text-lg font-bold text-gray-900 flex items-center">
+                <HeartIcon className="h-5 w-5 text-purple-600 mr-2" />
+                Visão individual de benefícios
+              </h3>
             </div>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">Gestão de Benefícios</h3>
-            <p className="text-sm text-gray-500 max-w-lg mx-auto mb-6">
-              Controle de Vale-Transporte, Vale-Alimentação, Planos de Saúde e Odontológico serão controlados diretamente por aqui.
-            </p>
-            <span className="inline-flex shadow-sm items-center px-4 py-2 bg-purple-50 border border-purple-100 text-purple-700 rounded-lg text-sm font-semibold">
-              ⏳ Aguardando implantação
-            </span>
+
+            {loadingBenefits ? (
+              <div className="p-8 text-center flex flex-col items-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mb-4"></div>
+                <p className="text-gray-500">Carregando benefícios...</p>
+              </div>
+            ) : benefitRecords.length === 0 ? (
+              <div className="p-8 text-center bg-gray-50 rounded-lg border-2 border-dashed border-gray-200 m-6">
+                <HeartIcon className="mx-auto h-12 w-12 text-gray-400 mb-3" />
+                <h3 className="text-sm font-medium text-gray-900 mb-1">Nenhum benefício encontrado</h3>
+                <p className="text-sm text-gray-500">Ainda não há valores de benefícios vinculados a este colaborador.</p>
+              </div>
+            ) : (
+              <div className="p-6 space-y-5">
+                {benefitsSummary && (
+                  <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                    <div className="bg-purple-50 border border-purple-100 rounded-lg p-3">
+                      <p className="text-xs text-purple-800 font-medium uppercase">Refeição</p>
+                      <p className="text-base font-bold text-purple-900 mt-1">{formatCurrency(benefitsSummary.total_refeicao)}</p>
+                    </div>
+                    <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3">
+                      <p className="text-xs text-indigo-800 font-medium uppercase">Alimentação</p>
+                      <p className="text-base font-bold text-indigo-900 mt-1">{formatCurrency(benefitsSummary.total_alimentacao)}</p>
+                    </div>
+                    <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+                      <p className="text-xs text-blue-800 font-medium uppercase">Mobilidade</p>
+                      <p className="text-base font-bold text-blue-900 mt-1">{formatCurrency(benefitsSummary.total_mobilidade)}</p>
+                    </div>
+                    <div className="bg-cyan-50 border border-cyan-100 rounded-lg p-3">
+                      <p className="text-xs text-cyan-800 font-medium uppercase">Livre</p>
+                      <p className="text-base font-bold text-cyan-900 mt-1">{formatCurrency(benefitsSummary.total_livre)}</p>
+                    </div>
+                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                      <p className="text-xs text-gray-700 font-medium uppercase">Total</p>
+                      <p className="text-base font-bold text-gray-900 mt-1">{formatCurrency(benefitsSummary.total_benefits)}</p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                  <div className="rounded-lg border border-purple-100 bg-purple-50 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-purple-700">Último período</p>
+                    <p className="mt-1 text-sm font-bold text-gray-900">
+                      {benefitsSnapshot.latest?.period?.name || '-'}
+                    </p>
+                    <p className="text-xs text-gray-600 mt-1">
+                      {benefitsSnapshot.latest?.period?.company || '-'}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-blue-100 bg-blue-50 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Períodos importados</p>
+                    <p className="mt-1 text-2xl font-bold text-gray-900">{benefitsSnapshot.totalPeriods}</p>
+                  </div>
+                  <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Maior total mensal</p>
+                    <p className="mt-1 text-sm font-bold text-gray-900">
+                      {benefitsSnapshot.highest?.period?.name || '-'}
+                    </p>
+                    <p className="text-xs text-gray-600 mt-1">
+                      {formatCurrency(benefitsSnapshot.highest?.total || 0)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-700">Acumulado exibido</p>
+                    <p className="mt-1 text-lg font-bold text-gray-900">
+                      {formatCurrency(benefitsSnapshot.totalValue)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-gray-200 overflow-hidden">
+                  <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                    <h4 className="text-sm font-semibold text-gray-900 flex items-center">
+                      <ArrowTrendingUpIcon className="h-4 w-4 text-blue-600 mr-2" />
+                      Linha do tempo resumida
+                    </h4>
+                    <span className="text-xs text-gray-500">período / empresa</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-white">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Período</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Empresa</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Refeição</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Mobilidade</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Livre</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-100">
+                        {benefitTimeline.map((item, index) => (
+                          <tr key={`${item.period?.id || index}`} className="hover:bg-gray-50">
+                            <td className="px-4 py-3 text-sm text-gray-900 font-medium">{item.period?.name || '-'}</td>
+                            <td className="px-4 py-3 text-sm text-gray-600">{item.period?.company || '-'}</td>
+                            <td className="px-4 py-3 text-sm text-right text-gray-700">{formatCurrency(item.refeicao)}</td>
+                            <td className="px-4 py-3 text-sm text-right text-gray-700">{formatCurrency(item.mobilidade)}</td>
+                            <td className="px-4 py-3 text-sm text-right text-gray-700">{formatCurrency(item.livre)}</td>
+                            <td className="px-4 py-3 text-sm text-right font-semibold text-gray-900">{formatCurrency(item.total)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Período</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Empresa</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Refeição</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Alimentação</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Mobilidade</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Livre</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-100">
+                      {benefitRecords.map((item) => (
+                        <tr key={item.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 text-sm text-gray-900 font-medium">{item.period?.name || '-'}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{item.period?.company || '-'}</td>
+                          <td className="px-4 py-3 text-sm text-right text-gray-700">{formatCurrency(item.refeicao)}</td>
+                          <td className="px-4 py-3 text-sm text-right text-gray-700">{formatCurrency(item.alimentacao)}</td>
+                          <td className="px-4 py-3 text-sm text-right text-gray-700">{formatCurrency(item.mobilidade)}</td>
+                          <td className="px-4 py-3 text-sm text-right text-gray-700">{formatCurrency(item.livre)}</td>
+                          <td className="px-4 py-3 text-sm text-right font-semibold text-gray-900">{formatCurrency(item.total)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
         {activeTab === 'timesheet' && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-             {/* Header Mock Timesheet */}
-             <div className="px-6 py-5 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center sm:justify-between bg-gray-50">
-                <div>
-                  <h3 className="text-lg font-bold text-gray-900 flex items-center">
-                    <ClipboardDocumentListIcon className="h-5 w-5 text-blue-600 mr-2" />
-                    Espelho de Ponto: Abril/2026
-                  </h3>
-                  <p className="text-sm text-gray-500 mt-1">Integração nativa com sistema de Ponto Eletrônico Mobile/Geo</p>
-                </div>
-                <div className="mt-4 sm:mt-0 opacity-50 cursor-not-allowed">
-                  <select className="bg-white border text-sm border-gray-300 rounded-md py-1.5 px-3">
-                    <option>Mês 04/2026</option>
-                  </select>
-                </div>
-             </div>
+            <div className="px-6 py-5 border-b border-gray-200 bg-gray-50">
+              <h3 className="text-lg font-bold text-gray-900 flex items-center">
+                <ClipboardDocumentListIcon className="h-5 w-5 text-blue-600 mr-2" />
+                Cartão Ponto do Colaborador
+              </h3>
+              <p className="text-sm text-gray-500 mt-1">Dados consolidados por período importado no módulo de cartão ponto</p>
+            </div>
 
-             {/* Tabela Mockada de Cartão Ponto */}
-             <div className="overflow-x-auto opacity-70">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-white">
-                    <tr>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Data</th>
-                      <th scope="col" className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Entrada 1</th>
-                      <th scope="col" className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Saída 1</th>
-                      <th scope="col" className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Entrada 2</th>
-                      <th scope="col" className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Saída 2</th>
-                      <th scope="col" className="px-3 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Excedente</th>
-                      <th scope="col" className="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Localização</th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-100">
-                    {[1,2,3].map((day) => (
-                      <tr key={day} className="hover:bg-blue-50 transition-colors">
-                        <td className="px-6 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
-                          0{day}/04/2026
-                        </td>
-                        <td className="px-3 py-3 whitespace-nowrap text-sm text-center text-gray-600 font-mono bg-green-50">08:00</td>
-                        <td className="px-3 py-3 whitespace-nowrap text-sm text-center text-gray-600 font-mono">12:05</td>
-                        <td className="px-3 py-3 whitespace-nowrap text-sm text-center text-gray-600 font-mono bg-blue-50">13:00</td>
-                        <td className="px-3 py-3 whitespace-nowrap text-sm text-center text-gray-600 font-mono">18:10</td>
-                        <td className="px-3 py-3 whitespace-nowrap text-sm text-center font-medium text-orange-600">
-                          +00:15
-                        </td>
-                        <td className="px-6 py-3 whitespace-nowrap text-sm text-right align-middle">
-                          <button className="inline-flex items-center text-blue-600 hover:text-blue-800" title="Ver no Mapa">
-                            <MapPinIcon className="h-5 w-5" />
-                          </button>
-                        </td>
+            {loadingTimecard ? (
+              <div className="px-6 py-10 text-center text-sm text-gray-500">Carregando cartão ponto...</div>
+            ) : timecardTimeline.length === 0 ? (
+              <div className="px-6 py-10 text-center text-sm text-gray-500">Nenhum dado de cartão ponto encontrado para este colaborador.</div>
+            ) : (
+              <div className="p-6 space-y-6">
+                {timecardSummary && (
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                      <p className="text-xs font-semibold uppercase text-amber-700">Horas Extras (50% + 100%)</p>
+                      <p className="text-lg font-bold text-amber-900 mt-1">{formatHours(timecardSummary.total_overtime)}</p>
+                    </div>
+                    <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-4">
+                      <p className="text-xs font-semibold uppercase text-indigo-700">Horas Noturnas Totais</p>
+                      <p className="text-lg font-bold text-indigo-900 mt-1">{formatHours(timecardSummary.total_night)}</p>
+                    </div>
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                      <p className="text-xs font-semibold uppercase text-blue-700">Média HE por Registro</p>
+                      <p className="text-lg font-bold text-blue-900 mt-1">{formatHours(timecardSummary.avg_overtime)}</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                      <p className="text-xs font-semibold uppercase text-gray-600">Registros Importados</p>
+                      <p className="text-lg font-bold text-gray-900 mt-1">{timecardRecords.length}</p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Período</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Matrícula</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Empresa</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Normais</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">HE 50%</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">HE 100%</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Noturnas</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Total HE</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Total Noturno</th>
                       </tr>
-                    ))}
-                    <tr className="bg-blue-50">
-                      <td colSpan="7" className="px-6 py-8 text-center border-t border-dashed border-blue-200">
-                         <span className="inline-flex shadow-sm items-center px-4 py-2 bg-blue-100 border border-blue-200 text-blue-700 rounded-lg text-sm font-semibold">
-                            🚧 Demonstração visual do layout. Futura Tabela real integrará as leituras XLSX.
-                         </span>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-             </div>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-100">
+                      {timecardTimeline.map((item, index) => (
+                        <tr key={`${item.period?.id || index}-${item.upload_filename || ''}`} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 text-sm text-gray-900 font-medium">{item.period?.name || formatMonthYear(item.period?.year, item.period?.month)}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700">{item.employee_number || employee?.registration_number || employee?.unique_id || '-'}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{item.company || '-'}</td>
+                          <td className="px-4 py-3 text-sm text-right text-gray-700">{formatHours(item.normal_hours)}</td>
+                          <td className="px-4 py-3 text-sm text-right text-gray-700">{formatHours(item.overtime_50)}</td>
+                          <td className="px-4 py-3 text-sm text-right text-gray-700">{formatHours(item.overtime_100)}</td>
+                          <td className="px-4 py-3 text-sm text-right text-gray-700">{formatHours(item.night_hours)}</td>
+                          <td className="px-4 py-3 text-sm text-right font-semibold text-amber-700">{formatHours(item.total_overtime)}</td>
+                          <td className="px-4 py-3 text-sm text-right font-semibold text-indigo-700">{formatHours(item.total_night)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

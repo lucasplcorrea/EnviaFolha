@@ -16,6 +16,7 @@ const TimecardUpload = () => {
   const [xlsxFile, setXlsxFile] = useState(null);
   const [xlsxYear, setXlsxYear] = useState(new Date().getFullYear());
   const [xlsxMonth, setXlsxMonth] = useState(new Date().getMonth() + 1);
+  const [xlsxDryRun, setXlsxDryRun] = useState(true);
   const [xlsxUploading, setXlsxUploading] = useState(false);
   const [xlsxResult, setXlsxResult] = useState(null);
   
@@ -77,6 +78,7 @@ const TimecardUpload = () => {
       formData.append('file', xlsxFile);
       formData.append('year', xlsxYear);
       formData.append('month', xlsxMonth);
+      formData.append('dry_run', xlsxDryRun ? 'true' : 'false');
 
       const response = await api.post('/timecard/upload-xlsx', formData, {
         headers: {
@@ -87,11 +89,16 @@ const TimecardUpload = () => {
       const result = response.data;
 
       if (result.success) {
-        toast.success('Cartão ponto processado com sucesso!', { id: 'xlsx-upload' });
+        toast.success(
+          xlsxDryRun ? 'Validação do cartão ponto concluída!' : 'Cartão ponto processado com sucesso!',
+          { id: 'xlsx-upload' }
+        );
         setXlsxResult(result);
-        loadTimecardPeriods();
-        loadProcessingHistory(); // Recarregar histórico
-        setXlsxFile(null);
+        if (!xlsxDryRun) {
+          loadTimecardPeriods();
+          loadProcessingHistory(); // Recarregar histórico
+          setXlsxFile(null);
+        }
       } else {
         toast.error(result.error || 'Erro ao processar cartão ponto', { id: 'xlsx-upload' });
         setXlsxResult(result);
@@ -225,6 +232,16 @@ const TimecardUpload = () => {
               )}
             </div>
 
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={xlsxDryRun}
+                onChange={(e) => setXlsxDryRun(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+              />
+              <span>Somente validar arquivo (dry run, não grava no banco)</span>
+            </label>
+
             {/* Upload Button */}
             <button
               onClick={handleXlsxUpload}
@@ -246,7 +263,7 @@ const TimecardUpload = () => {
               ) : (
                 <>
                   <DocumentArrowUpIcon className="h-5 w-5" />
-                  <span>Processar Cartão Ponto</span>
+                  <span>{xlsxDryRun ? 'Validar Cartão Ponto' : 'Processar Cartão Ponto'}</span>
                 </>
               )}
             </button>
@@ -266,8 +283,13 @@ const TimecardUpload = () => {
                   )}
                   <div className="flex-1">
                     <h4 className={`font-medium ${xlsxResult.success ? 'text-purple-900' : 'text-red-900'}`}>
-                      {xlsxResult.success ? 'Processamento Concluído!' : 'Erro no Processamento'}
+                      {xlsxResult.success ? (xlsxResult.dry_run ? 'Validação Concluída!' : 'Processamento Concluído!') : 'Erro no Processamento'}
                     </h4>
+                    {xlsxResult.success && xlsxResult.dry_run && (
+                      <p className="mt-1 text-sm text-purple-800">
+                        Nenhum dado foi gravado. O arquivo apenas foi validado.
+                      </p>
+                    )}
                     {xlsxResult.success && (
                       <div className="mt-2 text-sm text-purple-800 space-y-1">
                         <p>• Total de linhas: {xlsxResult.total_rows}</p>
@@ -275,6 +297,22 @@ const TimecardUpload = () => {
                         <p>• Erros: {xlsxResult.error_rows || 0}</p>
                         {xlsxResult.period_name && (
                           <p>• Período: {xlsxResult.period_name}</p>
+                        )}
+                        {typeof xlsxResult.matched_by_matricula === 'number' && (
+                          <p>• Match por matrícula: {xlsxResult.matched_by_matricula}</p>
+                        )}
+                        {typeof xlsxResult.matched_by_name === 'number' && (
+                          <p>• Match por nome: {xlsxResult.matched_by_name}</p>
+                        )}
+                        {typeof xlsxResult.unmatched_rows === 'number' && (
+                          <p>• Sem vínculo direto: {xlsxResult.unmatched_rows}</p>
+                        )}
+                        {xlsxResult.dry_run && (
+                          <>
+                            <p>• Criaria novos registros: {xlsxResult.would_create_records || 0}</p>
+                            <p>• Atualizaria registros: {xlsxResult.would_update_records || 0}</p>
+                            <p>• Período existente: {xlsxResult.period_exists ? 'sim' : 'não'}</p>
+                          </>
                         )}
                       </div>
                     )}

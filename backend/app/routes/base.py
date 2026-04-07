@@ -21,7 +21,7 @@ class BaseRouter:
             self.handler.send_response(status_code)
             self.handler.send_header('Content-type', 'application/json')
             self.handler.send_header('Access-Control-Allow-Origin', '*')
-            self.handler.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+            self.handler.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
             self.handler.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
             self.handler.end_headers()
             
@@ -44,7 +44,7 @@ class BaseRouter:
             self.handler.send_header('Content-Disposition', f'attachment; filename="{filename}"')
             self.handler.send_header('Content-Length', str(len(data)))
             self.handler.send_header('Access-Control-Allow-Origin', '*')
-            self.handler.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+            self.handler.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
             self.handler.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
             self.handler.send_header('Access-Control-Expose-Headers', 'Content-Disposition')
             self.handler.end_headers()
