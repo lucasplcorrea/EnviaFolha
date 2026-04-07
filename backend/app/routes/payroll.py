@@ -4,6 +4,8 @@ import os
 import asyncio
 import urllib.parse
 import zipfile
+import re
+import PyPDF2
 from io import BytesIO
 from datetime import datetime
 from typing import List, Optional
@@ -102,15 +104,71 @@ class PayrollRouter(BaseRouter):
 
         return base_dirs
 
+    @staticmethod
+    def _extract_cpf_from_pdf(file_path: str) -> str:
+        """Extrai CPF do primeiro conteúdo relevante do PDF para desempate de matrícula duplicada."""
+        try:
+            with open(file_path, 'rb') as file_obj:
+                pdf_reader = PyPDF2.PdfReader(file_obj)
+                all_text = []
+                for page in pdf_reader.pages[:2]:
+                    all_text.append(page.extract_text() or '')
+
+            text = '\n'.join(all_text)
+
+            # Priorizar CPF explicitamente rotulado
+            labeled = re.search(r'CPF\s*[:\-]?\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2})', text, re.IGNORECASE)
+            if labeled:
+                return re.sub(r'\D', '', labeled.group(1))
+
+            # Fallback: primeiro padrão de CPF válido encontrado
+            generic = re.search(r'\d{3}\.?\d{3}\.?\d{3}-?\d{2}', text)
+            if generic:
+                return re.sub(r'\D', '', generic.group(0))
+        except Exception:
+            pass
+
+        return ''
+
+    @staticmethod
+    def _employee_active_score(emp: dict) -> int:
+        score = 0
+        if emp.get('is_active'):
+            score += 100
+        if not str(emp.get('termination_date') or '').strip():
+            score += 30
+        status_reason = str(emp.get('status_reason') or '').lower()
+        if 'deslig' in status_reason or 'demit' in status_reason:
+            score -= 100
+        return score
+
+    def _resolve_employee_for_file(self, candidates: List[dict], full_path: str) -> Optional[dict]:
+        if not candidates:
+            return None
+
+        if len(candidates) == 1:
+            return candidates[0]
+
+        pdf_cpf = self._extract_cpf_from_pdf(full_path)
+        if pdf_cpf:
+            cpf_matches = [e for e in candidates if re.sub(r'\D', '', str(e.get('cpf') or '')) == pdf_cpf]
+            if len(cpf_matches) == 1:
+                return cpf_matches[0]
+            if cpf_matches:
+                return max(cpf_matches, key=self._employee_active_score)
+
+        # Se não há CPF confiável, ainda preferir o vínculo ativo para reduzir falso positivo.
+        return max(candidates, key=self._employee_active_score)
+
     def _collect_processed_files(self):
         employees_payload = load_employees_data(include_inactive=True)
         employees = employees_payload.get('employees', [])
 
-        employee_by_uid = {}
+        employees_by_uid = {}
         for emp in employees:
             normalized_uid = self._normalize_unique_id(emp.get('unique_id'))
             if normalized_uid:
-                employee_by_uid[normalized_uid] = emp
+                employees_by_uid.setdefault(normalized_uid, []).append(emp)
 
         files = []
         for base_dir in self._get_processed_base_dirs():
@@ -127,7 +185,10 @@ class PayrollRouter(BaseRouter):
                         continue
 
                     unique_id = self._extract_unique_id_from_filename(filename)
-                    associated_employee = employee_by_uid.get(unique_id)
+                    associated_employee = self._resolve_employee_for_file(
+                        employees_by_uid.get(unique_id, []),
+                        full_path,
+                    )
                     can_send = bool(associated_employee and associated_employee.get('phone_number'))
                     is_orphan = associated_employee is None
 
