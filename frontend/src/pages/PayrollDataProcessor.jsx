@@ -24,7 +24,9 @@ const PayrollDataProcessor = () => {
   const [csvFiles, setCsvFiles] = useState([]);
   const [csvDivision, setCsvDivision] = useState('0060');
   const [csvAutoCreate, setCsvAutoCreate] = useState(true);
-  const [selectedPeriod, setSelectedPeriod] = useState('');
+  const [csvMonth, setCsvMonth] = useState(new Date().getMonth() + 1);
+  const [csvYear, setCsvYear] = useState(new Date().getFullYear());
+  const [csvPayrollType, setCsvPayrollType] = useState('mensal');
   const [csvUploading, setCsvUploading] = useState(false);
   const [csvResult, setCsvResult] = useState(null);
   const [processingHistory, setProcessingHistory] = useState([]);
@@ -182,7 +184,9 @@ const PayrollDataProcessor = () => {
             file_path: filePath,
             division_code: csvDivision,
             auto_create_employees: csvAutoCreate,
-            period_id: selectedPeriod || null,
+            month: Number(csvMonth),
+            year: Number(csvYear),
+            payroll_type: csvPayrollType,
           });
 
           const result = processResponse.data;
@@ -452,26 +456,53 @@ const PayrollDataProcessor = () => {
               )}
             </div>
 
-            {/* Period Selection (Optional) */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Período (Opcional)
-              </label>
-              <select
-                value={selectedPeriod}
-                onChange={(e) => setSelectedPeriod(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                <option value="">Detectar automaticamente pelo nome do arquivo</option>
-                {periods.map((period) => (
-                  <option key={period.id} value={period.id}>
-                    {period.period_name} ({period.year})
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-xs text-gray-500">
-                Se não especificado, o período será criado/detectado pelo nome do arquivo
-              </p>
+            {/* Competência manual */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Tipo de Folha
+                </label>
+                <select
+                  value={csvPayrollType}
+                  onChange={(e) => setCsvPayrollType(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="mensal">Mensal</option>
+                  <option value="13_adiantamento">13º - 1ª Parcela</option>
+                  <option value="13_integral">13º - 2ª Parcela</option>
+                  <option value="complementar">Folha Complementar</option>
+                  <option value="adiantamento_salario">Adiantamento Salarial</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Mês
+                </label>
+                <select
+                  value={csvMonth}
+                  onChange={(e) => setCsvMonth(Number(e.target.value))}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  {[...Array(12)].map((_, i) => (
+                    <option key={i + 1} value={i + 1}>
+                      {new Date(2000, i).toLocaleDateString('pt-BR', { month: 'long' })}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Ano
+                </label>
+                <input
+                  type="number"
+                  value={csvYear}
+                  onChange={(e) => setCsvYear(Number(e.target.value))}
+                  min="2000"
+                  max="2100"
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
             </div>
 
             {/* Division/Company Code */}

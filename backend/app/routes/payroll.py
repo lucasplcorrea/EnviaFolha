@@ -332,6 +332,9 @@ class PayrollRouter(BaseRouter):
             file_path = data.get('file_path')
             division_code = data.get('division_code', '0060')
             auto_create_employees = data.get('auto_create_employees', False)
+            forced_year = data.get('year')
+            forced_month = data.get('month')
+            forced_payroll_type = data.get('payroll_type')
 
             if not file_path:
                 self.send_json_response({'success': False, 'error': "Parâmetro 'file_path' obrigatório"}, 400)
@@ -341,6 +344,31 @@ class PayrollRouter(BaseRouter):
                 self.send_json_response({'success': False, 'error': "division_code deve ser '0060' (Empreendimentos) ou '0059' (Infraestrutura)"}, 400)
                 return
 
+            allowed_types = {'mensal', '13_adiantamento', '13_integral', 'complementar', 'adiantamento_salario'}
+            if forced_payroll_type and forced_payroll_type not in allowed_types:
+                self.send_json_response({'success': False, 'error': 'payroll_type inválido'}, 400)
+                return
+
+            if forced_month is not None:
+                try:
+                    forced_month = int(forced_month)
+                except Exception:
+                    self.send_json_response({'success': False, 'error': 'month inválido'}, 400)
+                    return
+                if forced_month < 1 or forced_month > 12:
+                    self.send_json_response({'success': False, 'error': 'month deve estar entre 1 e 12'}, 400)
+                    return
+
+            if forced_year is not None:
+                try:
+                    forced_year = int(forced_year)
+                except Exception:
+                    self.send_json_response({'success': False, 'error': 'year inválido'}, 400)
+                    return
+                if forced_year < 2000 or forced_year > 2100:
+                    self.send_json_response({'success': False, 'error': 'year fora da faixa esperada'}, 400)
+                    return
+
             db = SessionLocal()
             user_id = None
             processor = PayrollCSVProcessor(db, user_id=user_id)
@@ -348,7 +376,10 @@ class PayrollRouter(BaseRouter):
             result = processor.process_csv_file(
                 file_path=file_path,
                 division_code=division_code,
-                auto_create_employees=auto_create_employees
+                auto_create_employees=auto_create_employees,
+                forced_year=forced_year,
+                forced_month=forced_month,
+                forced_payroll_type=forced_payroll_type,
             )
 
             if result.get('success'):

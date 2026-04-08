@@ -189,7 +189,10 @@ class PayrollCSVProcessor:
         self, 
         file_path: str, 
         division_code: str = '0060',
-        auto_create_employees: bool = False
+        auto_create_employees: bool = False,
+        forced_year: Optional[int] = None,
+        forced_month: Optional[int] = None,
+        forced_payroll_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Processa arquivo CSV de folha de pagamento"""
         start_time = time.time()
@@ -202,12 +205,23 @@ class PayrollCSVProcessor:
             if not os.path.exists(file_path):
                 return self._error_response(f"Arquivo não encontrado: {file_path}")
             
-            # 2. Detectar tipo de arquivo
+            # 2. Resolver tipo/período (preferência para formulário manual)
             filename = os.path.basename(file_path)
-            file_info = detect_payroll_type(filename)
-            
-            if not file_info['matched']:
-                return self._error_response(f"Tipo de arquivo não reconhecido: {filename}")
+
+            if forced_year and forced_month and forced_payroll_type:
+                file_info = {
+                    'tipo': forced_payroll_type,
+                    'mes': str(int(forced_month)).zfill(2),
+                    'ano': str(int(forced_year)),
+                    'matched': True,
+                    'filename': filename,
+                }
+            else:
+                file_info = detect_payroll_type(filename)
+                if not file_info['matched']:
+                    return self._error_response(
+                        f"Tipo de arquivo não reconhecido: {filename}. Informe mês/ano/tipo no formulário."
+                    )
             
             print(f"📄 Processando {file_info['tipo']} - {file_info['mes']}/{file_info['ano']} (empresa {division_code})")
             
