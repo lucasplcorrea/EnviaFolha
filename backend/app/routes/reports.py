@@ -250,15 +250,29 @@ class ReportsRouter(BaseRouter):
         - year (default: 2025)
         - month (default: 12)
         - company (default: 0059)
+        - payroll_type (default: mensal)
         """
         try:
             query_params = self.parse_query_params()
             year = int(query_params.get('year', ['2025'])[0])
             month = int(query_params.get('month', ['12'])[0])
             company = str(query_params.get('company', ['0059'])[0]).strip() or '0059'
+            payroll_type = str(query_params.get('payroll_type', ['mensal'])[0]).strip() or 'mensal'
 
             if month < 1 or month > 12:
                 self.send_error_response(400, 'Parâmetro month deve estar entre 1 e 12')
+                return
+
+            allowed_payroll_types = {
+                'mensal',
+                '13_adiantamento',
+                '13_integral',
+                'complementar',
+                'adiantamento_salario',
+                'all',
+            }
+            if payroll_type not in allowed_payroll_types:
+                self.send_error_response(400, 'Parâmetro payroll_type inválido')
                 return
 
             db = next(get_db())
@@ -268,10 +282,11 @@ class ReportsRouter(BaseRouter):
                     year=year,
                     month=month,
                     company=company,
+                    payroll_type=payroll_type,
                 )
 
                 print(
-                    f"📊 Relatório exportável gerado: company={company}, year={year}, month={month}, rows={total_rows}"
+                    f"📊 Relatório exportável gerado: company={company}, year={year}, month={month}, payroll_type={payroll_type}, rows={total_rows}"
                 )
                 self.send_binary_response(
                     data=xlsx_bytes,

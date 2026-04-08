@@ -49,6 +49,27 @@ def _get_first_number(payload: Optional[Dict[str, Any]], keys: Iterable[str]) ->
     return 0.0
 
 
+def _normalize_key(value: Any) -> str:
+    import unicodedata
+
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = text.lower()
+    text = "".join(ch if ch.isalnum() else " " for ch in text)
+    return " ".join(text.split())
+
+
+def _get_first_number_fuzzy(payload: Optional[Dict[str, Any]], aliases: Iterable[str]) -> float:
+    if not isinstance(payload, dict):
+        return 0.0
+
+    normalized_aliases = {_normalize_key(alias) for alias in aliases}
+    for key, value in payload.items():
+        if _normalize_key(key) in normalized_aliases and value not in (None, ""):
+            return _as_float(value)
+    return 0.0
+
+
 def _sum_numeric_payload(payload: Any) -> float:
     if payload is None:
         return 0.0
@@ -86,10 +107,28 @@ def _active_employees_for_month(session: Session, company: str, year: int, month
         .all()
     )
 
+def _classify_payroll_period_type(period_name: Optional[str]) -> str:
+    name = _normalize_key(period_name)
+    if "13" in name and "adiant" in name:
+        return "13_adiantamento"
+    if "13" in name:
+        return "13_integral"
+    if "complement" in name:
+        return "complementar"
+    if "adiant" in name:
+        return "adiantamento_salario"
+    return "mensal"
 
-def _latest_payroll_by_employee(session: Session, company: str, year: int, month: int) -> Dict[int, PayrollData]:
+
+def _latest_payroll_by_employee(
+    session: Session,
+    company: str,
+    year: int,
+    month: int,
+    payroll_type: str = "mensal",
+) -> Dict[int, PayrollData]:
     rows = (
-        session.query(PayrollData)
+        session.query(PayrollData, PayrollPeriod)
         .join(PayrollPeriod, PayrollPeriod.id == PayrollData.period_id)
         .filter(
             PayrollPeriod.company == company,
@@ -103,7 +142,15 @@ def _latest_payroll_by_employee(session: Session, company: str, year: int, month
         )
         .all()
     )
-    return _latest_by_employee(rows)
+
+    filtered_rows: List[PayrollData] = []
+    for payroll_data, period in rows:
+        detected_type = _classify_payroll_period_type(period.period_name)
+        if payroll_type != "all" and detected_type != payroll_type:
+            continue
+        filtered_rows.append(payroll_data)
+
+    return _latest_by_employee(filtered_rows)
 
 
 def _latest_benefits_by_employee(session: Session, company: str, year: int, month: int) -> Dict[int, BenefitsData]:
@@ -140,10 +187,15 @@ def _build_export_rows(
         payroll_additional = payroll.additional_data if payroll and isinstance(payroll.additional_data, dict) else {}
         payroll_earnings = payroll.earnings_data if payroll and isinstance(payroll.earnings_data, dict) else {}
 
-        salario_base = _get_first_number(
+        salario_base = _get_first_number_fuzzy(
             payroll_additional,
-            ["Salario Mensal", "Salario Mensal", "Valor Salario", "Valor Salario"],
+            ["Salário Mensal", "Salario Mensal", "Valor Salário", "Valor Salario", "Salário Base", "Salario Base"],
         )
+        if not salario_base:
+            salario_base = _get_first_number_fuzzy(
+                payroll_earnings,
+                ["SALARIO_BASE", "Salário Base", "Salario Base", "SALARIO MENSAL", "Salário Mensal"],
+            )
         if not salario_base and payroll is not None:
             salario_base = _as_float(payroll.gross_salary)
 
@@ -299,13 +351,21 @@ def build_infra_analytics_xlsx(
     year: int,
     month: int,
     company: str = "0059",
+    payroll_type: str = "mensal",
 ) -> Tuple[bytes, int, str]:
     """Gera o xlsx de relatorio estrategico de infraestrutura e retorna bytes, total de linhas e nome sugerido."""
     employees = _active_employees_for_month(session, company=company, year=year, month=month)
-    payroll = _latest_payroll_by_employee(session, company=company, year=year, month=month)
+    payroll = _latest_payroll_by_employee(
+        session,
+        company=company,
+        year=year,
+        month=month,
+        payroll_type=payroll_type,
+    )
     benefits = _latest_benefits_by_employee(session, company=company, year=year, month=month)
 
     rows = _build_export_rows(employees, payroll, benefits, company=company)
     xlsx_bytes = _write_xlsx(rows, company=company, year=year, month=month)
-    filename = f"relatorio_estrategico_{company}_{year}-{month:02d}.xlsx"
+    suffix = "" if payroll_type == "mensal" else f"_{payroll_type}"
+    filename = f"relatorio_estrategico_{company}_{year}-{month:02d}{suffix}.xlsx"
     return xlsx_bytes, len(rows), filename
