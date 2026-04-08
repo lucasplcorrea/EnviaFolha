@@ -4,13 +4,15 @@ import os
 import re
 import tempfile
 import urllib.parse
+import unicodedata
 from decimal import Decimal
 from sqlalchemy import func
 
+from app.core.database import Base, engine
 from app.routes.base import BaseRouter
 from app.services.runtime_compat import SessionLocal
 from app.models.employee import Employee
-from app.models.timecard import TimecardData, TimecardPeriod, TimecardProcessingLog
+from app.models.timecard import TimecardData, TimecardPeriod, TimecardProcessingLog, TimecardEmployeeAlias
 from app.services.timecard_xlsx_processor import TimecardXLSXProcessor
 
 
@@ -33,6 +35,10 @@ class TimecardRouter(BaseRouter):
     def handle_post(self, path: str):
         if path == '/api/v1/timecard/upload-xlsx':
             self.handle_upload_timecard_xlsx()
+            return
+
+        if path == '/api/v1/timecard/manual-approvals':
+            self.handle_timecard_manual_approvals()
             return
 
         self.send_error('Endpoint não encontrado', 404)
@@ -448,3 +454,101 @@ class TimecardRouter(BaseRouter):
                     os.unlink(tmp_filepath)
                 except Exception:
                     pass
+
+    def _normalize_name(self, value: str) -> str:
+        if not value:
+            return ''
+        text = unicodedata.normalize('NFKD', str(value))
+        text = text.encode('ascii', 'ignore').decode('ascii')
+        text = text.lower()
+        text = ''.join(ch if ch.isalnum() else ' ' for ch in text)
+        return ' '.join(text.split())
+
+    def _extract_digits(self, value: str) -> str:
+        return ''.join(ch for ch in str(value or '') if ch.isdigit())
+
+    def handle_timecard_manual_approvals(self):
+        db = SessionLocal()
+        try:
+            data = self.get_request_data()
+            approvals = data.get('approvals') or []
+            if not isinstance(approvals, list) or not approvals:
+                self.send_json_response({'success': False, 'error': 'Lista approvals obrigatória'}, 400)
+                return
+
+            Base.metadata.create_all(bind=engine, tables=[TimecardEmployeeAlias.__table__], checkfirst=True)
+
+            applied = 0
+            ignored = 0
+            invalid = []
+
+            for index, item in enumerate(approvals, start=1):
+                company_code = str(item.get('company_code', '')).strip()
+                employee_number_file = str(item.get('employee_number_file', '')).strip().upper()
+                employee_name_file = str(item.get('employee_name_file', '')).strip()
+                source = str(item.get('source', 'manual_ui')).strip() or 'manual_ui'
+
+                candidate_employee_id = item.get('candidate_employee_id')
+                if candidate_employee_id in (None, ''):
+                    ignored += 1
+                    continue
+
+                try:
+                    candidate_employee_id = int(candidate_employee_id)
+                except Exception:
+                    invalid.append({'index': index, 'error': 'candidate_employee_id inválido'})
+                    continue
+
+                if not company_code or not employee_number_file or not employee_name_file:
+                    invalid.append({'index': index, 'error': 'company_code, employee_number_file e employee_name_file são obrigatórios'})
+                    continue
+
+                employee = db.query(Employee).filter(Employee.id == candidate_employee_id).first()
+                if not employee:
+                    invalid.append({'index': index, 'error': f'Colaborador {candidate_employee_id} não encontrado'})
+                    continue
+
+                normalized_name_file = self._normalize_name(employee_name_file)
+                if not normalized_name_file:
+                    invalid.append({'index': index, 'error': 'employee_name_file inválido'})
+                    continue
+
+                existing = db.query(TimecardEmployeeAlias).filter(
+                    TimecardEmployeeAlias.company_code == company_code,
+                    TimecardEmployeeAlias.employee_number_file == employee_number_file,
+                    TimecardEmployeeAlias.normalized_name_file == normalized_name_file,
+                ).first()
+
+                if existing:
+                    existing.employee_id = candidate_employee_id
+                    existing.employee_name_file = employee_name_file
+                    existing.employee_number_digits = self._extract_digits(employee_number_file)
+                    existing.source = source
+                    existing.is_active = True
+                else:
+                    db.add(TimecardEmployeeAlias(
+                        company_code=company_code,
+                        employee_number_file=employee_number_file,
+                        employee_number_digits=self._extract_digits(employee_number_file),
+                        employee_name_file=employee_name_file,
+                        normalized_name_file=normalized_name_file,
+                        source=source,
+                        is_active=True,
+                        employee_id=candidate_employee_id,
+                    ))
+
+                applied += 1
+
+            db.commit()
+            self.send_json_response({
+                'success': True,
+                'applied': applied,
+                'ignored': ignored,
+                'invalid_count': len(invalid),
+                'invalid': invalid,
+            }, 200)
+        except Exception as ex:
+            db.rollback()
+            self.send_json_response({'success': False, 'error': f'Erro interno: {str(ex)}'}, 500)
+        finally:
+            db.close()

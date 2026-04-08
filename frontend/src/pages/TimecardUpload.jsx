@@ -19,6 +19,8 @@ const TimecardUpload = () => {
   const [xlsxDryRun, setXlsxDryRun] = useState(true);
   const [xlsxUploading, setXlsxUploading] = useState(false);
   const [xlsxResult, setXlsxResult] = useState(null);
+  const [manualSelections, setManualSelections] = useState({});
+  const [applyingManual, setApplyingManual] = useState(false);
   
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [periodToDelete, setPeriodToDelete] = useState(null);
@@ -70,6 +72,7 @@ const TimecardUpload = () => {
 
     setXlsxUploading(true);
     setXlsxResult(null);
+    setManualSelections({});
 
     try {
       toast.loading('Processando cartão ponto...', { id: 'xlsx-upload' });
@@ -155,6 +158,62 @@ const TimecardUpload = () => {
     const hours = Math.floor(num);
     const minutes = Math.round((num - hours) * 60);
     return `${hours}:${minutes.toString().padStart(2, '0')}`;
+  };
+
+  const buildSelectionKey = (row) => {
+    return `${row.company_code}|${row.employee_number_file}|${(row.employee_name_file || '').toLowerCase()}`;
+  };
+
+  const handleSelectManualCandidate = (row, value) => {
+    const key = buildSelectionKey(row);
+    setManualSelections((prev) => ({
+      ...prev,
+      [key]: value ? Number(value) : null,
+    }));
+  };
+
+  const handleApplyManualApprovals = async () => {
+    if (!xlsxResult?.unmatched_details?.length) {
+      toast.error('Não há pendências para aprovar');
+      return;
+    }
+
+    const approvals = xlsxResult.unmatched_details
+      .map((row) => {
+        const selected = manualSelections[buildSelectionKey(row)];
+        if (!selected) {
+          return null;
+        }
+        return {
+          company_code: row.company_code,
+          employee_number_file: row.employee_number_file,
+          employee_name_file: row.employee_name_file,
+          candidate_employee_id: selected,
+          source: 'manual_ui',
+        };
+      })
+      .filter(Boolean);
+
+    if (approvals.length === 0) {
+      toast.error('Selecione ao menos um candidato para aprovar');
+      return;
+    }
+
+    try {
+      setApplyingManual(true);
+      toast.loading('Aplicando aprovações manuais...', { id: 'manual-approvals' });
+      const response = await api.post('/timecard/manual-approvals', { approvals });
+      const result = response.data;
+      if (result.success) {
+        toast.success(`Aprovações aplicadas: ${result.applied}`, { id: 'manual-approvals' });
+      } else {
+        toast.error(result.error || 'Falha ao aplicar aprovações', { id: 'manual-approvals' });
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Falha ao aplicar aprovações', { id: 'manual-approvals' });
+    } finally {
+      setApplyingManual(false);
+    }
   };
 
   return (
@@ -325,6 +384,63 @@ const TimecardUpload = () => {
                         {xlsxResult.warnings.map((warn, idx) => (
                           <p key={idx}>• {warn}</p>
                         ))}
+                      </div>
+                    )}
+
+                    {xlsxResult.dry_run && xlsxResult.unmatched_details && xlsxResult.unmatched_details.length > 0 && (
+                      <div className="mt-4 border border-orange-200 rounded-lg p-3 bg-orange-50">
+                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-3">
+                          <div>
+                            <p className="text-sm font-semibold text-orange-900">Pendências para aprovação manual</p>
+                            <p className="text-xs text-orange-800">
+                              Selecione um candidato para os colaboradores que ainda estão ativos.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleApplyManualApprovals}
+                            disabled={applyingManual}
+                            className={`px-3 py-2 rounded-md text-sm font-medium ${
+                              applyingManual
+                                ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                                : 'bg-orange-600 text-white hover:bg-orange-700'
+                            }`}
+                          >
+                            {applyingManual ? 'Aplicando...' : 'Salvar Aprovações Selecionadas'}
+                          </button>
+                        </div>
+
+                        <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                          {xlsxResult.unmatched_details.map((row, index) => {
+                            const key = buildSelectionKey(row);
+                            const selectedValue = manualSelections[key] || '';
+                            const activeCandidates = (row.candidates || []).filter((c) => c.is_active);
+                            const fallbackCandidates = row.candidates || [];
+                            const options = activeCandidates.length > 0 ? activeCandidates : fallbackCandidates;
+
+                            return (
+                              <div key={key} className="bg-white border border-orange-100 rounded-md p-2">
+                                <div className="text-xs text-gray-700 mb-2">
+                                  <p>
+                                    <strong>{index + 1}.</strong> {row.employee_name_file} | Matrícula: {row.employee_number_file} | Empresa: {row.company_code}
+                                  </p>
+                                </div>
+                                <select
+                                  value={selectedValue}
+                                  onChange={(e) => handleSelectManualCandidate(row, e.target.value)}
+                                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                >
+                                  <option value="">Não aprovar agora</option>
+                                  {options.map((candidate) => (
+                                    <option key={candidate.employee_id} value={candidate.employee_id}>
+                                      {candidate.name} ({candidate.company_code}) | score {candidate.score} | {candidate.is_active ? 'ativo' : 'inativo'}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                   </div>

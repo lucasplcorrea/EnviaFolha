@@ -2,7 +2,7 @@
 Modelos de banco de dados para o sistema de Cartão Ponto
 """
 from decimal import Decimal
-from sqlalchemy import Column, Integer, String, Boolean, Text, ForeignKey, DECIMAL, JSON, Date
+from sqlalchemy import Column, Integer, String, Boolean, Text, ForeignKey, DECIMAL, JSON, Date, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -122,3 +122,36 @@ class TimecardProcessingLog(Base, TimestampMixin):
     
     def __repr__(self):
         return f"<TimecardProcessingLog(filename='{self.filename}', status='{self.status}')>"
+
+
+class TimecardEmployeeAlias(Base, TimestampMixin):
+    """Mapeamento persistente entre registro do arquivo de ponto e colaborador."""
+    __tablename__ = "timecard_employee_aliases"
+    __table_args__ = (
+        UniqueConstraint(
+            'company_code',
+            'employee_number_file',
+            'normalized_name_file',
+            name='uq_timecard_alias_company_number_name',
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    company_code = Column(String(4), nullable=False, index=True)
+    employee_number_file = Column(String(20), nullable=False, index=True)
+    employee_number_digits = Column(String(20), nullable=True, index=True)
+    employee_name_file = Column(String(255), nullable=True)
+    normalized_name_file = Column(String(255), nullable=False, index=True)
+    source = Column(String(50), nullable=False, default='manual')
+    is_active = Column(Boolean, nullable=False, default=True)
+
+    employee_id = Column(Integer, ForeignKey('employees.id'), nullable=False, index=True)
+
+    employee = relationship("Employee")
+
+    def __repr__(self):
+        return (
+            "<TimecardEmployeeAlias("
+            f"company='{self.company_code}', number='{self.employee_number_file}', "
+            f"employee_id={self.employee_id})>"
+        )

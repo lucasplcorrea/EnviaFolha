@@ -20,8 +20,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List
 
+from app.core.database import Base, engine
 from app.models.employee import Employee
-from app.models.timecard import TimecardData, TimecardPeriod
+from app.models.timecard import TimecardData, TimecardPeriod, TimecardEmployeeAlias
 from app.services.runtime_compat import SessionLocal
 
 
@@ -72,6 +73,22 @@ def _write_csv(path: Path, rows: List[Dict], fieldnames: List[str]) -> None:
             writer.writerow(row)
 
 
+def _normalize_name(value: str) -> str:
+    import unicodedata
+
+    if not value:
+        return ""
+    text = unicodedata.normalize("NFKD", str(value))
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = text.lower()
+    text = "".join(ch if ch.isalnum() else " " for ch in text)
+    return " ".join(text.split())
+
+
+def _extract_digits(value: str) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Apply manual timecard matches")
     parser.add_argument("--input-csv", type=Path, default=_default_input_csv())
@@ -95,10 +112,13 @@ def main() -> int:
     db = SessionLocal()
     started = datetime.now()
 
+    Base.metadata.create_all(bind=engine, tables=[TimecardEmployeeAlias.__table__], checkfirst=True)
+
     results: List[Dict] = []
     total_rows_found = 0
     total_rows_would_update = 0
     total_rows_updated = 0
+    total_aliases_upserted = 0
     total_overtime_hours = 0.0
     total_night_hours = 0.0
 
@@ -192,6 +212,38 @@ def main() -> int:
                 }
             )
 
+            normalized_name_file = _normalize_name(req.employee_name_file)
+            if normalized_name_file and candidate:
+                existing_alias = db.query(TimecardEmployeeAlias).filter(
+                    TimecardEmployeeAlias.company_code == req.company_inferred,
+                    TimecardEmployeeAlias.employee_number_file == req.employee_number_file,
+                    TimecardEmployeeAlias.normalized_name_file == normalized_name_file,
+                ).first()
+
+                if existing_alias:
+                    if apply_mode:
+                        existing_alias.employee_id = candidate.id
+                        existing_alias.employee_name_file = req.employee_name_file
+                        existing_alias.employee_number_digits = _extract_digits(req.employee_number_file)
+                        existing_alias.source = 'manual_csv'
+                        existing_alias.is_active = True
+                    total_aliases_upserted += 1
+                else:
+                    if apply_mode:
+                        db.add(
+                            TimecardEmployeeAlias(
+                                company_code=req.company_inferred,
+                                employee_number_file=req.employee_number_file,
+                                employee_number_digits=_extract_digits(req.employee_number_file),
+                                employee_name_file=req.employee_name_file,
+                                normalized_name_file=normalized_name_file,
+                                source='manual_csv',
+                                is_active=True,
+                                employee_id=candidate.id,
+                            )
+                        )
+                    total_aliases_upserted += 1
+
         if apply_mode:
             db.commit()
         else:
@@ -235,6 +287,7 @@ def main() -> int:
         "timecard_rows_found": total_rows_found,
         "timecard_rows_would_update": total_rows_would_update,
         "timecard_rows_updated": total_rows_updated,
+        "aliases_upserted": total_aliases_upserted,
         "overtime_hours_total": round(total_overtime_hours, 2),
         "night_hours_total": round(total_night_hours, 2),
         "duration_seconds": round((datetime.now() - started).total_seconds(), 3),
@@ -251,6 +304,7 @@ def main() -> int:
     print(f"Timecard rows found: {total_rows_found}")
     print(f"Rows to update: {total_rows_would_update}")
     print(f"Rows updated: {total_rows_updated}")
+    print(f"Aliases upserted: {total_aliases_upserted}")
     print(f"Overtime total (hours): {total_overtime_hours:.2f}")
     print(f"Night total (hours): {total_night_hours:.2f}")
     print(f"Result CSV: {result_csv}")

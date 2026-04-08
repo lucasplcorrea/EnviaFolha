@@ -4,6 +4,7 @@ Serviço para processar arquivos XLSX de Cartão Ponto
 import logging
 import unicodedata
 import openpyxl
+from difflib import SequenceMatcher
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Dict, List, Optional, Tuple
@@ -13,7 +14,7 @@ from sqlalchemy.exc import ProgrammingError, SQLAlchemyError
 
 from app.core.database import Base, engine
 from app.models.employee import Employee
-from app.models.timecard import TimecardPeriod, TimecardData, TimecardProcessingLog
+from app.models.timecard import TimecardPeriod, TimecardData, TimecardProcessingLog, TimecardEmployeeAlias
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ class TimecardXLSXProcessor:
         self.user_id = user_id
         self.warnings = []
         self.errors = []
+        self.unmatched_details = []
     
     def process_xlsx_file(
         self,
@@ -148,6 +150,7 @@ class TimecardXLSXProcessor:
                     'unmatched_rows': results.get('unmatched_rows', 0),
                     'would_create_records': results.get('would_create_records', 0),
                     'would_update_records': results.get('would_update_records', 0),
+                    'unmatched_details': results.get('unmatched_details', []),
                     'headers_used': results.get('headers_used', []),
                     'warnings': self.warnings,
                     'errors': self.errors,
@@ -295,15 +298,177 @@ class TimecardXLSXProcessor:
                 TimecardPeriod.__table__,
                 TimecardData.__table__,
                 TimecardProcessingLog.__table__,
+                TimecardEmployeeAlias.__table__,
             ],
             checkfirst=True,
         )
+
+    def _extract_employee_number_digits(self, employee_number: str) -> str:
+        return ''.join(ch for ch in str(employee_number or '') if ch.isdigit())
+
+    def _resolve_employee_by_alias(self, employee_number: str, employee_name: str, company: str):
+        employee_number_file = str(employee_number or '').strip().upper()
+        employee_number_digits = self._extract_employee_number_digits(employee_number_file)
+        normalized_name = self._normalize_person_name(employee_name)
+
+        if not employee_number_file:
+            return None
+
+        try:
+            aliases = self.db.query(TimecardEmployeeAlias).filter(
+                TimecardEmployeeAlias.company_code == company,
+                TimecardEmployeeAlias.is_active.is_(True),
+                or_(
+                    TimecardEmployeeAlias.employee_number_file == employee_number_file,
+                    TimecardEmployeeAlias.employee_number_digits == employee_number_digits,
+                )
+            ).all()
+        except ProgrammingError as exc:
+            if 'timecard_employee_aliases' in str(exc):
+                self.db.rollback()
+                self._ensure_timecard_tables()
+                aliases = self.db.query(TimecardEmployeeAlias).filter(
+                    TimecardEmployeeAlias.company_code == company,
+                    TimecardEmployeeAlias.is_active.is_(True),
+                    or_(
+                        TimecardEmployeeAlias.employee_number_file == employee_number_file,
+                        TimecardEmployeeAlias.employee_number_digits == employee_number_digits,
+                    )
+                ).all()
+            else:
+                raise
+
+        if not aliases:
+            return None
+
+        if normalized_name:
+            name_filtered = [
+                alias for alias in aliases
+                if alias.normalized_name_file == normalized_name
+            ]
+            if len(name_filtered) == 1 and name_filtered[0].employee:
+                return name_filtered[0].employee
+
+            if len(name_filtered) > 1:
+                return None
+
+        employee_ids = {alias.employee_id for alias in aliases if alias.employee_id}
+        if len(employee_ids) == 1:
+            chosen = aliases[0]
+            if chosen.employee:
+                return chosen.employee
+
+        return None
+
+    def _upsert_employee_alias(self, row_data: Dict, employee_id: Optional[int], source: str = 'import_match') -> None:
+        if not employee_id:
+            return
+
+        employee_number_file = str(row_data.get('employee_number', '') or '').strip().upper()
+        if not employee_number_file:
+            return
+
+        company_code = str(row_data.get('company', '') or '').strip()
+        employee_name_file = str(row_data.get('employee_name', '') or '').strip()
+        normalized_name_file = self._normalize_person_name(employee_name_file)
+        if not normalized_name_file:
+            return
+
+        employee_number_digits = self._extract_employee_number_digits(employee_number_file)
+
+        existing = self.db.query(TimecardEmployeeAlias).filter(
+            TimecardEmployeeAlias.company_code == company_code,
+            TimecardEmployeeAlias.employee_number_file == employee_number_file,
+            TimecardEmployeeAlias.normalized_name_file == normalized_name_file,
+        ).first()
+
+        if existing:
+            existing.employee_id = employee_id
+            existing.employee_name_file = employee_name_file
+            existing.employee_number_digits = employee_number_digits
+            existing.source = source
+            existing.is_active = True
+            return
+
+        alias = TimecardEmployeeAlias(
+            company_code=company_code,
+            employee_number_file=employee_number_file,
+            employee_number_digits=employee_number_digits,
+            employee_name_file=employee_name_file,
+            normalized_name_file=normalized_name_file,
+            source=source,
+            is_active=True,
+            employee_id=employee_id,
+        )
+        self.db.add(alias)
 
     def _normalize_person_name(self, value: Optional[str]) -> str:
         """Normaliza nomes para comparação segura de identidade."""
         if not value:
             return ''
         return self._normalize_header_value(value)
+
+    def _token_sort(self, text: str) -> str:
+        return ' '.join(sorted(text.split()))
+
+    def _name_similarity(self, imported_name: str, candidate_name: str) -> float:
+        imported = self._normalize_person_name(imported_name)
+        candidate = self._normalize_person_name(candidate_name)
+        if not imported or not candidate:
+            return 0.0
+
+        ratio_raw = SequenceMatcher(None, imported, candidate).ratio()
+        ratio_sorted = SequenceMatcher(None, self._token_sort(imported), self._token_sort(candidate)).ratio()
+        imported_tokens = set(imported.split())
+        candidate_tokens = set(candidate.split())
+        overlap = len(imported_tokens & candidate_tokens)
+        token_score = overlap / max(1, len(imported_tokens))
+        return round(((ratio_raw * 0.45) + (ratio_sorted * 0.45) + (token_score * 0.10)) * 100, 2)
+
+    def _build_unmatched_candidates(self, row_data: Dict, limit: int = 5) -> List[Dict]:
+        company_code = str(row_data.get('company', '') or '').strip()
+        employee_name = str(row_data.get('employee_name', '') or '').strip()
+        employee_number_digits = self._extract_employee_number_digits(row_data.get('employee_number', ''))
+
+        if not employee_name:
+            return []
+
+        employees = self.db.query(Employee).filter(Employee.name.isnot(None)).all()
+        scored: List[Tuple[float, Employee]] = []
+        for emp in employees:
+            score = self._name_similarity(employee_name, str(emp.name or ''))
+            if score < 50:
+                continue
+
+            if str(emp.company_code or '') == company_code:
+                score += 3.0
+
+            emp_registration_digits = self._extract_employee_number_digits(str(emp.registration_number or ''))
+            emp_unique_digits = self._extract_employee_number_digits(str(emp.unique_id or ''))
+            if employee_number_digits and (
+                employee_number_digits == emp_registration_digits
+                or employee_number_digits == emp_unique_digits
+            ):
+                score += 25.0
+
+            scored.append((min(score, 100.0), emp))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        payload = []
+        for score, emp in scored[: max(1, limit)]:
+            payload.append({
+                'employee_id': int(emp.id),
+                'name': str(emp.name or ''),
+                'unique_id': str(emp.unique_id or ''),
+                'registration_number': str(emp.registration_number or ''),
+                'company_code': str(emp.company_code or ''),
+                'is_active': bool(emp.is_active),
+                'employment_status': str(emp.employment_status or ''),
+                'termination_date': emp.termination_date.isoformat() if emp.termination_date else None,
+                'score': round(float(score), 2),
+            })
+
+        return payload
 
     def _is_name_consistent(self, imported_name: Optional[str], employee_name: Optional[str]) -> bool:
         """Valida se nome importado e nome do cadastro pertencem à mesma pessoa.
@@ -330,6 +495,10 @@ class TimecardXLSXProcessor:
         1) Candidatos por matrícula/unique_id e validação de nome consistente
         2) Fallback por nome somente quando não houver candidato por matrícula
         """
+        employee = self._resolve_employee_by_alias(employee_number, employee_name, company)
+        if employee:
+            return employee, 'alias'
+
         employee_number_clean = ''.join(ch for ch in employee_number if ch.isdigit())
         employee_number_nozeros = employee_number_clean.lstrip('0') or employee_number_clean
 
@@ -347,10 +516,20 @@ class TimecardXLSXProcessor:
             f"{company}{employee_number_clean.zfill(5)}",
         }
 
+        absolute_candidates = {
+            employee_number_clean,
+            employee_number_nozeros,
+            employee_number_clean.zfill(5),
+            f"{company}{employee_number_clean}",
+            f"{company}{employee_number_nozeros}",
+            f"{company}{employee_number_clean.zfill(5)}",
+        }
+
         employees = self.db.query(Employee).filter(
             or_(
                 Employee.registration_number.in_(list(registration_candidates)),
                 Employee.unique_id.in_(list(unique_candidates)),
+                Employee.absolute_id.in_(list(absolute_candidates)),
             )
         ).all()
 
@@ -373,13 +552,6 @@ class TimecardXLSXProcessor:
                 return employees[0], 'matricula'
 
             return None, None
-
-        if employee_name:
-            employee = self.db.query(Employee).filter(
-                Employee.name.ilike(f"%{employee_name}%")
-            ).first()
-            if employee:
-                return employee, 'nome'
 
         return None, None
 
@@ -521,6 +693,7 @@ class TimecardXLSXProcessor:
         unmatched_rows = 0
         would_create_records = 0
         would_update_records = 0
+        unmatched_details: List[Dict] = []
         
         # Processar linhas (arquivo tratado não tem linha de totais)
         for row_idx in range(header_row + 1, sheet.max_row + 1):
@@ -542,6 +715,14 @@ class TimecardXLSXProcessor:
 
                     if not preview['employee_found']:
                         unmatched_rows += 1
+                        unmatched_details.append({
+                            'row_number': row_idx,
+                            'company_code': row_data['company'],
+                            'employee_number_file': row_data['employee_number'],
+                            'employee_number_digits': row_data['employee_number_clean'],
+                            'employee_name_file': row_data['employee_name'],
+                            'candidates': self._build_unmatched_candidates(row_data, limit=5),
+                        })
 
                     if preview['would_create']:
                         would_create_records += 1
@@ -582,6 +763,7 @@ class TimecardXLSXProcessor:
             'unmatched_rows': unmatched_rows,
             'would_create_records': would_create_records,
             'would_update_records': would_update_records,
+            'unmatched_details': unmatched_details,
             'period_exists': period is not None,
             'would_create_period': dry_run and period is None,
             'headers_used': list(column_indices.keys()),
@@ -602,6 +784,9 @@ class TimecardXLSXProcessor:
             )
 
             employee_id = employee.id if employee else None
+
+            if employee_id:
+                self._upsert_employee_alias(row_data, employee_id, source='import_match')
 
             if not employee:
                 warning = f"Colaborador '{row_data['employee_name']}' (matrícula {row_data['employee_number']}) não encontrado no sistema"
