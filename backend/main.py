@@ -248,7 +248,7 @@ class ModularEnviaFolhaHandler(BaseHTTPRequestHandler):
             BenefitsRouter(self).handle_post(path)
             return
 
-        if path == '/api/v1/files/upload':
+        if path == '/api/v1/files/upload' or path == '/api/v1/uploads/csv':
             FilesRouter(self).handle_post(path)
             return
 
@@ -344,6 +344,10 @@ class ModularEnviaFolhaHandler(BaseHTTPRequestHandler):
 
         if path.startswith('/api/v1/timecard/periods/'):
             TimecardRouter(self).handle_delete(path)
+            return
+
+        if path.startswith('/api/v1/payroll/periods/'):
+            PayrollRouter(self).handle_delete(path)
             return
 
         if path.startswith('/api/v1/users/'):

@@ -16,7 +16,7 @@ class FilesRouter(BaseRouter):
     MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024
 
     def handle_post(self, path: str):
-        if path == '/api/v1/files/upload':
+        if path == '/api/v1/files/upload' or path == '/api/v1/uploads/csv':
             self.handle_upload_file()
             return
 

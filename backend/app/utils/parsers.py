@@ -119,6 +119,21 @@ def detect_payroll_type(filename: str) -> Dict[str, Any]:
         'adiantamento_salario': r'Adiantamento.*?(\d{2})-(\d{4})',
         'mensal': r'(\d{2})-(\d{4})\.CSV',  # Padrão simples: 01-2024.CSV
     }
+
+    month_aliases = {
+        '01': 1, '1': 1, 'jan': 1, 'jane': 1, 'janeiro': 1,
+        '02': 2, '2': 2, 'fev': 2, 'feve': 2, 'fevereiro': 2,
+        '03': 3, '3': 3, 'mar': 3, 'marco': 3, 'março': 3,
+        '04': 4, '4': 4, 'abr': 4, 'abril': 4,
+        '05': 5, '5': 5, 'mai': 5, 'maio': 5,
+        '06': 6, '6': 6, 'jun': 6, 'junho': 6,
+        '07': 7, '7': 7, 'jul': 7, 'julho': 7,
+        '08': 8, '8': 8, 'ago': 8, 'agosto': 8,
+        '09': 9, '9': 9, 'set': 9, 'setembro': 9,
+        '10': 10, 'out': 10, 'outubro': 10,
+        '11': 11, 'nov': 11, 'novembro': 11,
+        '12': 12, 'dez': 12, 'dezembro': 12,
+    }
     
     for tipo, pattern in patterns.items():
         match = re.search(pattern, filename, re.IGNORECASE)
@@ -129,6 +144,21 @@ def detect_payroll_type(filename: str) -> Dict[str, Any]:
                 'tipo': tipo,
                 'mes': mes,
                 'ano': ano,
+                'matched': True,
+                'filename': filename
+            }
+
+    # Padrões alternativos: emp-jane-2026.csv, folha_jan_2026.csv, etc.
+    alt_match = re.search(r'([a-zçãé]{3,10}|\d{1,2})[-_](\d{4})(?:\.csv)?$', filename, re.IGNORECASE)
+    if alt_match:
+        month_token = (alt_match.group(1) or '').strip().lower()
+        year_token = alt_match.group(2)
+        month_number = month_aliases.get(month_token)
+        if month_number:
+            return {
+                'tipo': 'mensal',
+                'mes': str(month_number).zfill(2),
+                'ano': year_token,
                 'matched': True,
                 'filename': filename
             }

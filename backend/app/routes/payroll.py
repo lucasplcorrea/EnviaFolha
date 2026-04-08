@@ -20,6 +20,7 @@ from app.services.evolution_api import EvolutionAPIService
 from app.services.phone_validator import PhoneValidator
 from app.services.runtime_compat import load_employees_data
 from app.routes.base import BaseRouter
+from app.models.payroll import PayrollPeriod, PayrollData, PayrollProcessingLog
 
 
 class PayrollRouter(BaseRouter):
@@ -275,7 +276,9 @@ class PayrollRouter(BaseRouter):
             self.handle_payroll_years()
         elif path == '/api/v1/payroll/months':
             self.handle_payroll_months()
-        elif path == '/api/v1/payroll/periods' or path == '/api/v1/payrolls/periods':
+        elif path == '/api/v1/payroll/periods':
+            self.handle_list_payroll_data_periods()
+        elif path == '/api/v1/payrolls/periods':
             self.handle_list_payroll_periods()
         elif path == '/api/v1/payroll/period-comparison':
             # Ainda usa implementacao consolidada do legado
@@ -291,13 +294,11 @@ class PayrollRouter(BaseRouter):
         elif path.startswith('/api/v1/payrolls/bulk-send/') and path.endswith('/status'):
             job_id = path.split('/')[-2]
             self.handle_bulk_send_status(job_id)
-        elif path == '/api/v1/payrolls/periods':
-            self.handle_list_payroll_periods()
         else:
             self.send_error('Endpoint não encontrado', 404)
 
     def handle_post(self, path: str):
-        if path == '/api/v1/payroll/upload-csv':
+        if path == '/api/v1/payroll/upload-csv' or path == '/api/v1/payroll-data/upload-csv':
             self.handle_upload_payroll_csv()
         elif path == '/api/v1/payroll/process' or path == '/api/v1/payrolls/process':
             self.handle_process_payroll_file()
@@ -311,6 +312,17 @@ class PayrollRouter(BaseRouter):
             self.handle_delete_payroll_file()
         else:
             self.send_error('Endpoint não encontrado', 404)
+
+    def handle_delete(self, path: str):
+        if path.startswith('/api/v1/payroll/periods/'):
+            period_id = path.rsplit('/', 1)[-1]
+            try:
+                self.handle_delete_payroll_period(int(period_id))
+            except ValueError:
+                self.send_json_response({'success': False, 'error': 'ID de período inválido'}, 400)
+            return
+
+        self.send_error('Endpoint não encontrado', 404)
 
     def handle_upload_payroll_csv(self):
         """POST /api/v1/payroll/upload-csv"""
@@ -658,6 +670,69 @@ class PayrollRouter(BaseRouter):
             self.send_json_response({'success': True, 'periods': periods})
         except Exception as ex:
             self.send_json_response({'success': False, 'error': str(ex)}, 500)
+
+    def handle_list_payroll_data_periods(self):
+        db = None
+        try:
+            db = SessionLocal()
+            periods = (
+                db.query(PayrollPeriod)
+                .order_by(PayrollPeriod.year.desc(), PayrollPeriod.month.desc(), PayrollPeriod.id.desc())
+                .all()
+            )
+
+            data = []
+            for period in periods:
+                total_records = db.query(PayrollData).filter(PayrollData.period_id == period.id).count()
+                company_label = 'Empreendimentos' if period.company == '0060' else 'Infraestrutura' if period.company == '0059' else period.company
+                data.append(
+                    {
+                        'id': period.id,
+                        'period_name': period.period_name,
+                        'year': period.year,
+                        'month': period.month,
+                        'company': period.company,
+                        'company_name': company_label,
+                        'is_closed': bool(period.is_closed),
+                        'total_records': total_records,
+                    }
+                )
+
+            self.send_json_response({'success': True, 'periods': data})
+        except Exception as ex:
+            self.send_json_response({'success': False, 'error': str(ex)}, 500)
+        finally:
+            try:
+                if db is not None:
+                    db.close()
+            except Exception:
+                pass
+
+    def handle_delete_payroll_period(self, period_id: int):
+        db = None
+        try:
+            db = SessionLocal()
+            period = db.query(PayrollPeriod).filter(PayrollPeriod.id == period_id).first()
+            if not period:
+                self.send_json_response({'success': False, 'error': 'Período não encontrado'}, 404)
+                return
+
+            db.query(PayrollData).filter(PayrollData.period_id == period_id).delete(synchronize_session=False)
+            db.query(PayrollProcessingLog).filter(PayrollProcessingLog.period_id == period_id).delete(synchronize_session=False)
+            db.delete(period)
+            db.commit()
+
+            self.send_json_response({'success': True, 'message': f'Período "{period.period_name}" removido com sucesso'})
+        except Exception as ex:
+            if db is not None:
+                db.rollback()
+            self.send_json_response({'success': False, 'error': str(ex)}, 500)
+        finally:
+            try:
+                if db is not None:
+                    db.close()
+            except Exception:
+                pass
 
     # Stand-in methods for exports/bulk-send/delete
     def handle_export_payroll_batch(self):

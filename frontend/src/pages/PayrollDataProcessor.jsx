@@ -169,7 +169,7 @@ const PayrollDataProcessor = () => {
           const formData = new FormData();
           formData.append('file', file);
 
-          const uploadResponse = await api.post('/uploads/csv', formData, {
+          const uploadResponse = await api.post('/files/upload', formData, {
             headers: {
               'Content-Type': 'multipart/form-data',
             },
