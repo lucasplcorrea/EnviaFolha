@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowDownTrayIcon,
   ArrowTopRightOnSquareIcon,
@@ -20,8 +20,12 @@ const Reports = () => {
     company: '0059',
     year: '2025',
     month: '12',
-    payrollType: 'mensal'
+    payrollType: 'mensal',
+    department: '',
+    employeeId: ''
   });
+  const [employees, setEmployees] = useState([]);
+  const [loadingEmployees, setLoadingEmployees] = useState(false);
 
   const handleExportParamChange = (field, value) => {
     setExportParams(prev => ({
@@ -40,7 +44,9 @@ const Reports = () => {
           company: exportParams.company,
           year: exportParams.year,
           month: exportParams.month,
-          payroll_type: exportParams.payrollType
+          payroll_type: exportParams.payrollType,
+          department: exportParams.department || undefined,
+          employee_id: exportParams.employeeId || undefined,
         },
         responseType: 'blob'
       });
@@ -137,6 +143,59 @@ const Reports = () => {
     }
   };
 
+  useEffect(() => {
+    const loadEmployees = async () => {
+      try {
+        setLoadingEmployees(true);
+        const response = await api.get('/employees');
+        const list = Array.isArray(response?.data?.employees) ? response.data.employees : [];
+        setEmployees(list);
+      } catch (error) {
+        console.error('Erro ao carregar colaboradores para filtros do relatório:', error);
+        toast.error('Não foi possível carregar lista de colaboradores para filtros');
+      } finally {
+        setLoadingEmployees(false);
+      }
+    };
+
+    loadEmployees();
+  }, []);
+
+  const employeesByCompany = useMemo(() => {
+    return employees.filter((employee) => {
+      const companyCode = String(employee?.company_code || '');
+      const uniqueId = String(employee?.unique_id || '');
+      const absoluteId = String(employee?.absolute_id || '');
+      return (
+        companyCode === exportParams.company ||
+        uniqueId.startsWith(exportParams.company) ||
+        absoluteId.startsWith(exportParams.company)
+      );
+    });
+  }, [employees, exportParams.company]);
+
+  const departments = useMemo(() => {
+    const values = new Set();
+    employeesByCompany.forEach((employee) => {
+      const dept = (employee?.department || '').trim();
+      if (dept) values.add(dept);
+    });
+    return Array.from(values).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [employeesByCompany]);
+
+  const filteredEmployees = useMemo(() => {
+    if (!exportParams.department) return employeesByCompany;
+    return employeesByCompany.filter((employee) => (employee?.department || '').trim() === exportParams.department);
+  }, [employeesByCompany, exportParams.department]);
+
+  useEffect(() => {
+    if (!exportParams.employeeId) return;
+    const exists = filteredEmployees.some((employee) => String(employee.id) === String(exportParams.employeeId));
+    if (!exists) {
+      setExportParams((prev) => ({ ...prev, employeeId: '' }));
+    }
+  }, [filteredEmployees, exportParams.employeeId]);
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center mb-6">
@@ -182,7 +241,7 @@ const Reports = () => {
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
           <div>
             <label className={`block text-sm font-medium ${config.classes.text} mb-1`}>Empresa</label>
             <select
@@ -232,6 +291,40 @@ const Reports = () => {
               <option value="complementar">Complementar</option>
               <option value="adiantamento_salario">Adiantamento Salarial</option>
               <option value="all">Todos os tipos</option>
+            </select>
+          </div>
+          <div>
+            <label className={`block text-sm font-medium ${config.classes.text} mb-1`}>Setor</label>
+            <select
+              value={exportParams.department}
+              onChange={(e) => {
+                handleExportParamChange('department', e.target.value);
+                handleExportParamChange('employeeId', '');
+              }}
+              className={`w-full rounded-md px-3 py-2 text-sm ${config.classes.select}`}
+            >
+              <option value="">Todos os setores</option>
+              {departments.map((department) => (
+                <option key={department} value={department}>
+                  {department}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className={`block text-sm font-medium ${config.classes.text} mb-1`}>Colaborador</label>
+            <select
+              value={exportParams.employeeId}
+              onChange={(e) => handleExportParamChange('employeeId', e.target.value)}
+              className={`w-full rounded-md px-3 py-2 text-sm ${config.classes.select}`}
+              disabled={loadingEmployees}
+            >
+              <option value="">Todos os colaboradores</option>
+              {filteredEmployees.map((employee) => (
+                <option key={employee.id} value={employee.id}>
+                  {employee.full_name || employee.name}
+                </option>
+              ))}
             </select>
           </div>
           <div className="flex items-end">

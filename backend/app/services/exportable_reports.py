@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import calendar
+import ast
+import json
 from datetime import date
 from decimal import Decimal
 from io import BytesIO
@@ -22,6 +24,7 @@ from app.utils.parsers import normalize_cpf, parse_br_number
 CURRENCY_COLUMNS = {
     "Salario Base",
     "Proventos",
+    "Descontos",
     "Liquido",
     "Mobilidade",
     "Vale Alimentacao",
@@ -40,19 +43,48 @@ def _as_float(value: Any) -> float:
     return float(parse_br_number(value))
 
 
+def _parse_json_like(value: Any) -> Any:
+    if isinstance(value, (dict, list, tuple, set)):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("{") or text.startswith("["):
+            try:
+                return json.loads(text)
+            except Exception:
+                try:
+                    return ast.literal_eval(text)
+                except Exception:
+                    return value
+    return value
+
+
+def _as_dict_payload(payload: Any) -> Dict[str, Any]:
+    parsed = _parse_json_like(payload)
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def _get_first_number(payload: Optional[Dict[str, Any]], keys: Iterable[str]) -> float:
-    if not isinstance(payload, dict):
+    payload_dict = _as_dict_payload(payload)
+    if not payload_dict:
         return 0.0
     for key in keys:
-        if key in payload and payload[key] not in (None, ""):
-            return _as_float(payload[key])
+        if key in payload_dict and payload_dict[key] not in (None, ""):
+            return _as_float(payload_dict[key])
     return 0.0
 
 
 def _normalize_key(value: Any) -> str:
     import unicodedata
 
-    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = str(value or "")
+    if "\\u" in text:
+        try:
+            text = bytes(text, "utf-8").decode("unicode_escape")
+        except Exception:
+            pass
+
+    text = unicodedata.normalize("NFKD", text)
     text = text.encode("ascii", "ignore").decode("ascii")
     text = text.lower()
     text = "".join(ch if ch.isalnum() else " " for ch in text)
@@ -60,17 +92,19 @@ def _normalize_key(value: Any) -> str:
 
 
 def _get_first_number_fuzzy(payload: Optional[Dict[str, Any]], aliases: Iterable[str]) -> float:
-    if not isinstance(payload, dict):
+    payload_dict = _as_dict_payload(payload)
+    if not payload_dict:
         return 0.0
 
     normalized_aliases = {_normalize_key(alias) for alias in aliases}
-    for key, value in payload.items():
+    for key, value in payload_dict.items():
         if _normalize_key(key) in normalized_aliases and value not in (None, ""):
             return _as_float(value)
     return 0.0
 
 
 def _sum_numeric_payload(payload: Any) -> float:
+    payload = _parse_json_like(payload)
     if payload is None:
         return 0.0
     if isinstance(payload, dict):
@@ -88,11 +122,18 @@ def _latest_by_employee(rows: List[Any]) -> Dict[int, Any]:
     return latest
 
 
-def _active_employees_for_month(session: Session, company: str, year: int, month: int) -> List[Employee]:
+def _active_employees_for_month(
+    session: Session,
+    company: str,
+    year: int,
+    month: int,
+    department: Optional[str] = None,
+    employee_id: Optional[int] = None,
+) -> List[Employee]:
     month_start = date(year, month, 1)
     month_end = date(year, month, calendar.monthrange(year, month)[1])
 
-    return (
+    query = (
         session.query(Employee)
         .filter(
             or_(
@@ -103,9 +144,15 @@ def _active_employees_for_month(session: Session, company: str, year: int, month
         )
         .filter(or_(Employee.admission_date.is_(None), Employee.admission_date <= month_end))
         .filter(or_(Employee.termination_date.is_(None), Employee.termination_date >= month_start))
-        .order_by(Employee.name.asc())
-        .all()
     )
+
+    if department:
+        query = query.filter(Employee.department == department)
+
+    if employee_id is not None:
+        query = query.filter(Employee.id == employee_id)
+
+    return query.order_by(Employee.name.asc()).all()
 
 def _classify_payroll_period_type(period_name: Optional[str]) -> str:
     name = _normalize_key(period_name)
@@ -184,8 +231,9 @@ def _build_export_rows(
         payroll = payroll_by_employee.get(employee.id)
         benefits = benefits_by_employee.get(employee.id)
 
-        payroll_additional = payroll.additional_data if payroll and isinstance(payroll.additional_data, dict) else {}
-        payroll_earnings = payroll.earnings_data if payroll and isinstance(payroll.earnings_data, dict) else {}
+        payroll_additional = _as_dict_payload(payroll.additional_data) if payroll else {}
+        payroll_earnings = _as_dict_payload(payroll.earnings_data) if payroll else {}
+        payroll_deductions = _as_dict_payload(payroll.deductions_data) if payroll else {}
 
         salario_base = _get_first_number_fuzzy(
             payroll_additional,
@@ -199,18 +247,38 @@ def _build_export_rows(
         if not salario_base and payroll is not None:
             salario_base = _as_float(payroll.gross_salary)
 
-        proventos = _get_first_number(
+        proventos = _get_first_number_fuzzy(
             payroll_additional,
-            ["Total de Proventos", "TOTAL_PROVENTOS", "Total Proventos"],
+            [
+                "Total de Proventos",
+                "TOTAL_PROVENTOS",
+                "Total Proventos",
+                "Total Provento",
+                "Proventos",
+                "Total Vencimentos",
+            ],
         )
         if not proventos and payroll is not None:
             proventos = _as_float(payroll.gross_salary)
         if not proventos:
             proventos = _sum_numeric_payload(payroll_earnings)
 
-        liquido = _get_first_number(
+        descontos = _get_first_number_fuzzy(
             payroll_additional,
-            ["Liquido de Calculo", "LIQ_A_RECEBER", "Liquido"],
+            [
+                "Total de Descontos",
+                "TOTAL_DESCONTOS",
+                "Total Descontos",
+                "Descontos",
+                "Total de Deducoes",
+            ],
+        )
+        if not descontos:
+            descontos = _sum_numeric_payload(payroll_deductions)
+
+        liquido = _get_first_number_fuzzy(
+            payroll_additional,
+            ["Liquido de Calculo", "Líquido de Cálculo", "LIQ_A_RECEBER", "Liquido", "Liquido a Receber"],
         )
         if not liquido and payroll is not None:
             liquido = _as_float(payroll.net_salary)
@@ -229,6 +297,7 @@ def _build_export_rows(
                 "Demissao": employee.termination_date,
                 "Salario Base": salario_base,
                 "Proventos": proventos,
+                "Descontos": descontos,
                 "Liquido": liquido,
                 "Mobilidade": _as_float(benefits.mobilidade) if benefits else 0.0,
                 "Vale Alimentacao": _as_float(benefits.alimentacao) if benefits else 0.0,
@@ -267,6 +336,7 @@ def _write_xlsx(rows: List[Dict[str, Any]], company: str, year: int, month: int)
         "Demissao",
         "Salario Base",
         "Proventos",
+        "Descontos",
         "Liquido",
         "Mobilidade",
         "Vale Alimentacao",
@@ -319,9 +389,10 @@ def _write_xlsx(rows: List[Dict[str, Any]], company: str, year: int, month: int)
         "L": 14,
         "M": 14,
         "N": 14,
-        "O": 16,
+        "O": 14,
         "P": 16,
-        "Q": 14,
+        "Q": 16,
+        "R": 14,
     }
     for letter, width in widths.items():
         sheet.column_dimensions[letter].width = width
@@ -352,9 +423,18 @@ def build_infra_analytics_xlsx(
     month: int,
     company: str = "0059",
     payroll_type: str = "mensal",
+    department: Optional[str] = None,
+    employee_id: Optional[int] = None,
 ) -> Tuple[bytes, int, str]:
     """Gera o xlsx de relatorio estrategico de infraestrutura e retorna bytes, total de linhas e nome sugerido."""
-    employees = _active_employees_for_month(session, company=company, year=year, month=month)
+    employees = _active_employees_for_month(
+        session,
+        company=company,
+        year=year,
+        month=month,
+        department=department,
+        employee_id=employee_id,
+    )
     payroll = _latest_payroll_by_employee(
         session,
         company=company,

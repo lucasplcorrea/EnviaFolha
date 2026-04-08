@@ -251,6 +251,8 @@ class ReportsRouter(BaseRouter):
         - month (default: 12)
         - company (default: 0059)
         - payroll_type (default: mensal)
+        - department (default: sem filtro)
+        - employee_id (default: sem filtro)
         """
         try:
             query_params = self.parse_query_params()
@@ -258,6 +260,10 @@ class ReportsRouter(BaseRouter):
             month = int(query_params.get('month', ['12'])[0])
             company = str(query_params.get('company', ['0059'])[0]).strip() or '0059'
             payroll_type = str(query_params.get('payroll_type', ['mensal'])[0]).strip() or 'mensal'
+            department = str(query_params.get('department', [''])[0]).strip() or None
+
+            employee_id_raw = str(query_params.get('employee_id', [''])[0]).strip()
+            employee_id = int(employee_id_raw) if employee_id_raw else None
 
             if month < 1 or month > 12:
                 self.send_error_response(400, 'Parâmetro month deve estar entre 1 e 12')
@@ -283,10 +289,12 @@ class ReportsRouter(BaseRouter):
                     month=month,
                     company=company,
                     payroll_type=payroll_type,
+                    department=department,
+                    employee_id=employee_id,
                 )
 
                 print(
-                    f"📊 Relatório exportável gerado: company={company}, year={year}, month={month}, payroll_type={payroll_type}, rows={total_rows}"
+                    f"📊 Relatório exportável gerado: company={company}, year={year}, month={month}, payroll_type={payroll_type}, department={department}, employee_id={employee_id}, rows={total_rows}"
                 )
                 self.send_binary_response(
                     data=xlsx_bytes,
