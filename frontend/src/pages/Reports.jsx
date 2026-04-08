@@ -41,6 +41,12 @@ const Reports = () => {
   });
 
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [exportParams, setExportParams] = useState({
+    company: '0059',
+    year: '2025',
+    month: '12'
+  });
 
   useEffect(() => {
     loadReports();
@@ -159,8 +165,52 @@ const Reports = () => {
     setPagination(prev => ({ ...prev, page: newPage }));
   };
 
-  const exportReports = () => {
-    toast.success('Funcionalidade de exportação será implementada em breve');
+  const handleExportParamChange = (field, value) => {
+    setExportParams(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
+  const exportReports = async () => {
+    try {
+      setExporting(true);
+      const toastId = toast.loading('Gerando relatório estratégico...');
+
+      const response = await api.get('/reports/exports/infra-analytics', {
+        params: {
+          company: exportParams.company,
+          year: exportParams.year,
+          month: exportParams.month
+        },
+        responseType: 'blob'
+      });
+
+      const contentDisposition = response.headers['content-disposition'] || '';
+      const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+      const filename = filenameMatch?.[1] || `relatorio_estrategico_${exportParams.company}_${exportParams.year}-${String(exportParams.month).padStart(2, '0')}.xlsx`;
+
+      const blob = new Blob([
+        response.data
+      ], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+
+      toast.success('Relatório exportado com sucesso', { id: toastId });
+    } catch (error) {
+      console.error('Erro ao exportar relatório:', error);
+      const detail = error?.response?.data?.error;
+      toast.error(detail || 'Erro ao exportar relatório estratégico');
+    } finally {
+      setExporting(false);
+    }
   };
 
   if (loading) {
@@ -178,11 +228,70 @@ const Reports = () => {
         <h1 className={`text-2xl font-semibold ${config.classes.text}`}>Relatórios</h1>
         <button
           onClick={exportReports}
+          disabled={exporting}
           className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
         >
           <ArrowDownTrayIcon className="h-4 w-4 mr-2" />
-          Exportar
+          {exporting ? 'Exportando...' : 'Exportar XLSX'}
         </button>
+      </div>
+
+      <div className={`${config.classes.card} shadow rounded-lg p-6 mb-6 ${config.classes.border}`}>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className={`text-lg font-semibold ${config.classes.text}`}>Relatório Estratégico Exportável</h2>
+            <p className={`mt-1 text-sm ${config.classes.textSecondary}`}>
+              Infraestrutura ativa no período com folha e benefícios (XLSX).
+            </p>
+          </div>
+          <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
+            Produção
+          </span>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div>
+            <label className={`block text-sm font-medium ${config.classes.text} mb-1`}>Empresa</label>
+            <input
+              value={exportParams.company}
+              onChange={(e) => handleExportParamChange('company', e.target.value)}
+              className={`w-full rounded-md px-3 py-2 text-sm ${config.classes.input}`}
+              placeholder="0059"
+            />
+          </div>
+          <div>
+            <label className={`block text-sm font-medium ${config.classes.text} mb-1`}>Ano</label>
+            <input
+              type="number"
+              value={exportParams.year}
+              onChange={(e) => handleExportParamChange('year', e.target.value)}
+              className={`w-full rounded-md px-3 py-2 text-sm ${config.classes.input}`}
+              min="2000"
+              max="2100"
+            />
+          </div>
+          <div>
+            <label className={`block text-sm font-medium ${config.classes.text} mb-1`}>Mês</label>
+            <input
+              type="number"
+              value={exportParams.month}
+              onChange={(e) => handleExportParamChange('month', e.target.value)}
+              className={`w-full rounded-md px-3 py-2 text-sm ${config.classes.input}`}
+              min="1"
+              max="12"
+            />
+          </div>
+          <div className="flex items-end">
+            <button
+              onClick={exportReports}
+              disabled={exporting}
+              className="w-full inline-flex items-center justify-center px-4 py-2 rounded-md text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60"
+            >
+              <ArrowDownTrayIcon className="h-4 w-4 mr-2" />
+              {exporting ? 'Gerando...' : 'Baixar Relatório'}
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Filtros */}
@@ -455,7 +564,7 @@ const Reports = () => {
         )}
       </div>
 
-      {/* Nota sobre implementação futura */}
+      {/* Roadmap curto */}
       <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
         <div className="flex">
           <div className="flex-shrink-0">

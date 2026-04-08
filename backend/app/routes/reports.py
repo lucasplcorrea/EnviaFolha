@@ -15,6 +15,7 @@ from ..models.communication_send import CommunicationSend
 from ..models.communication_recipient import CommunicationRecipient
 from ..models.user import User
 from ..models.base import get_db
+from ..services.exportable_reports import build_infra_analytics_xlsx
 
 
 class ReportsRouter(BaseRouter):
@@ -240,6 +241,53 @@ class ReportsRouter(BaseRouter):
             import traceback
             traceback.print_exc()
             self.send_error_response(500, "Erro ao buscar estatísticas")
+
+    def handle_export_infra_analytics(self):
+        """
+        GET /api/v1/reports/exports/infra-analytics
+        Exporta XLSX estrategico com colaboradores ativos e dados de folha/beneficios.
+        Query params opcionais:
+        - year (default: 2025)
+        - month (default: 12)
+        - company (default: 0059)
+        """
+        try:
+            query_params = self.parse_query_params()
+            year = int(query_params.get('year', ['2025'])[0])
+            month = int(query_params.get('month', ['12'])[0])
+            company = str(query_params.get('company', ['0059'])[0]).strip() or '0059'
+
+            if month < 1 or month > 12:
+                self.send_error_response(400, 'Parâmetro month deve estar entre 1 e 12')
+                return
+
+            db = next(get_db())
+            try:
+                xlsx_bytes, total_rows, filename = build_infra_analytics_xlsx(
+                    session=db,
+                    year=year,
+                    month=month,
+                    company=company,
+                )
+
+                print(
+                    f"📊 Relatório exportável gerado: company={company}, year={year}, month={month}, rows={total_rows}"
+                )
+                self.send_binary_response(
+                    data=xlsx_bytes,
+                    content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    filename=filename,
+                )
+            finally:
+                db.close()
+
+        except ValueError:
+            self.send_error_response(400, 'Parâmetros inválidos para geração do relatório')
+        except Exception as e:
+            print(f"❌ Erro ao exportar relatório estratégico: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            self.send_error_response(500, 'Erro ao exportar relatório estratégico')
     
     def send_error_response(self, status_code: int, message: str):
         """Enviar resposta de erro"""
