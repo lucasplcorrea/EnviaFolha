@@ -160,14 +160,35 @@ def _run_send_loop(queue_id: str, items: List[Dict], templates: List[str]) -> No
                     paused_last_log[0] = now
                 time.sleep(2)
 
-        def worker(worker_name: str) -> None:
+        def worker(worker_name: str, instance_name: str) -> None:
             local_db = SessionLocal()
             worker_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(worker_loop)
-            processed_local = 0
+            sends_local = 0
+            service = EvolutionAPIService(instance_name=instance_name)
 
             try:
                 while not stop_event.is_set():
+                    if not wait_if_paused_or_cancelled(local_db):
+                        return
+
+                    # Cooldown por instância: só busca próximo item quando estiver pronta.
+                    if sends_local > 0:
+                        delay_seconds = random.uniform(120, 180)
+                        _update_runtime_job(
+                            queue_id,
+                            current_item=f"Aguardando {delay_seconds:.1f}s ({worker_name}:{instance_name})",
+                        )
+                        time.sleep(delay_seconds)
+
+                        if sends_local % 20 == 0:
+                            long_pause = random.uniform(600, 900)
+                            _update_runtime_job(
+                                queue_id,
+                                current_item=f"Pausa longa {long_pause:.1f}s ({worker_name}:{instance_name})",
+                            )
+                            time.sleep(long_pause)
+
                     if not wait_if_paused_or_cancelled(local_db):
                         return
 
@@ -183,38 +204,21 @@ def _run_send_loop(queue_id: str, items: List[Dict], templates: List[str]) -> No
                     phone = item.get("phone_number")
                     label = item.get("filename") or file_path or "arquivo"
 
-                    if processed_local > 0:
-                        delay_seconds = random.uniform(120, 180)
-                        _update_runtime_job(queue_id, current_item=f"Aguardando {delay_seconds:.1f}s ({worker_name})")
-                        time.sleep(delay_seconds)
-
-                        if processed_local % 20 == 0:
-                            long_pause = random.uniform(600, 900)
-                            time.sleep(long_pause)
-
-                    _update_runtime_job(queue_id, current_item=label)
+                    _update_runtime_job(queue_id, current_item=f"{label} ({worker_name}:{instance_name})")
 
                     phone_ok, formatted_phone, phone_error = PhoneValidator.validate_and_format(phone)
                     if not phone_ok or not formatted_phone:
                         update_progress(queue_item_id, successful=False, error_message=f"Telefone inválido: {phone_error or 'formato_invalido'}")
                         work_queue.task_done()
-                        processed_local += 1
+                        sends_local += 1
                         continue
 
                     if not file_path:
                         update_progress(queue_item_id, successful=False, error_message="Arquivo não informado")
                         work_queue.task_done()
-                        processed_local += 1
+                        sends_local += 1
                         continue
 
-                    instance_name = worker_loop.run_until_complete(instance_manager.get_next_available_instance())
-                    if not instance_name:
-                        update_progress(queue_item_id, successful=False, error_message="Nenhuma instância online")
-                        work_queue.task_done()
-                        processed_local += 1
-                        continue
-
-                    service = EvolutionAPIService(instance_name=instance_name)
                     selected_template = random.choice(templates) if templates else None
 
                     result = worker_loop.run_until_complete(
@@ -244,16 +248,20 @@ def _run_send_loop(queue_id: str, items: List[Dict], templates: List[str]) -> No
                         update_progress(queue_item_id, successful=False, error_message=result.get("message", "Erro de envio"))
 
                     work_queue.task_done()
-                    processed_local += 1
+                    sends_local += 1
             finally:
                 worker_loop.close()
                 local_db.close()
 
         workers: List[threading.Thread] = []
-        worker_count = max(1, min(len(online_instances), len(items)))
+        worker_instances = online_instances[: max(1, min(len(online_instances), len(items)))]
 
-        for i in range(worker_count):
-            thread = threading.Thread(target=worker, args=(f"worker-{i + 1}",), daemon=True)
+        for i, instance_name in enumerate(worker_instances):
+            thread = threading.Thread(
+                target=worker,
+                args=(f"worker-{i + 1}", instance_name),
+                daemon=True,
+            )
             workers.append(thread)
             thread.start()
 
