@@ -9,7 +9,7 @@ from sqlalchemy import func
 
 from app.models.employee import Employee
 from app.models.leave import LeaveRecord
-from app.models.payroll import PayrollData, PayrollPeriod
+from app.models.payroll import PayrollData, PayrollPeriod, BenefitsData, BenefitsPeriod
 from app.routes.base import BaseRouter
 from app.services.hr_indicators import HRIndicatorsService
 from app.services.runtime_compat import SessionLocal, invalidate_employees_cache
@@ -702,12 +702,48 @@ class IndicatorsRouter(BaseRouter):
                 total_net = sum(float(record.net_salary or 0) for record in records)
                 total_deductions = total_earnings - total_net
 
+                benefits_period_query = db.query(BenefitsPeriod.id).filter(
+                    BenefitsPeriod.year == year,
+                    BenefitsPeriod.month == month,
+                )
+                if company != 'all':
+                    benefits_period_query = benefits_period_query.filter(BenefitsPeriod.company == company)
+                benefits_period_ids = [row[0] for row in benefits_period_query.all()]
+
+                benefits_query = db.query(BenefitsData)
+                if benefits_period_ids:
+                    benefits_query = benefits_query.filter(BenefitsData.period_id.in_(benefits_period_ids))
+                else:
+                    benefits_query = benefits_query.filter(BenefitsData.id == -1)
+
+                if division != 'all':
+                    employee_ids_for_division = [row[0] for row in db.query(Employee.id).filter(Employee.department == division).all()]
+                    if employee_ids_for_division:
+                        benefits_query = benefits_query.filter(BenefitsData.employee_id.in_(employee_ids_for_division))
+                    else:
+                        benefits_query = benefits_query.filter(BenefitsData.id == -1)
+
+                benefits_records = benefits_query.all()
+                total_refeicao = sum(float(record.refeicao or 0) for record in benefits_records)
+                total_alimentacao = sum(float(record.alimentacao or 0) for record in benefits_records)
+                total_mobilidade = sum(float(record.mobilidade or 0) for record in benefits_records)
+                total_livre = sum(float(record.livre or 0) for record in benefits_records)
+                total_benefits = total_refeicao + total_alimentacao + total_mobilidade + total_livre
+
                 self.send_json_response({
                     'periods': [{'id': period.id, 'year': period.year, 'month': period.month, 'company': period.company} for period in periods],
                     'financial_stats': {
                         'total_earnings': total_earnings,
                         'total_deductions': total_deductions,
                         'total_net': total_net,
+                    },
+                    'benefits_stats': {
+                        'total_refeicao': total_refeicao,
+                        'total_alimentacao': total_alimentacao,
+                        'total_mobilidade': total_mobilidade,
+                        'total_livre': total_livre,
+                        'total_benefits': total_benefits,
+                        'records': len(benefits_records),
                     },
                     'totals': {
                         'employees': len({record.employee_id for record in records}),

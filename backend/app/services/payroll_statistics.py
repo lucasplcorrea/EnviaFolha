@@ -85,7 +85,21 @@ def calculate_payroll_statistics(
             COALESCE(SUM((pd.earnings_data->>'GRATIFICACAO_FUNCAO_20')::numeric), 0) as total_gratificacoes,
             COALESCE(SUM((pd.earnings_data->>'PERICULOSIDADE')::numeric), 0) as total_periculosidade,
             COALESCE(SUM((pd.earnings_data->>'INSALUBRIDADE')::numeric), 0) as total_insalubridade,
-            COALESCE(SUM((pd.earnings_data->>'PLANO_SAUDE')::numeric), 0) as total_plano_saude,
+            (
+                COALESCE(SUM((pd.earnings_data->>'PLANO_SAUDE')::numeric), 0)
+                + COALESCE(SUM((pd.earnings_data->>'PLANO_ODONTOLOGICO')::numeric), 0)
+                + COALESCE(SUM((pd.earnings_data->>'ODONTOLOGICO')::numeric), 0)
+                + COALESCE(SUM((pd.earnings_data->>'PLANO_ODONTO')::numeric), 0)
+                + COALESCE(SUM((pd.earnings_data->>'SERVICOS_ODONTOLOGICOS')::numeric), 0)
+                + COALESCE(SUM((pd.earnings_data->>'BRADESCO_ODONTO')::numeric), 0)
+                + COALESCE(SUM((pd.earnings_data->>'BRADESCO ODONTO')::numeric), 0)
+                + COALESCE(SUM((pd.deductions_data->>'PLANO_ODONTOLOGICO')::numeric), 0)
+                + COALESCE(SUM((pd.deductions_data->>'ODONTOLOGICO')::numeric), 0)
+                + COALESCE(SUM((pd.deductions_data->>'PLANO_ODONTO')::numeric), 0)
+                + COALESCE(SUM((pd.deductions_data->>'SERVICOS_ODONTOLOGICOS')::numeric), 0)
+                + COALESCE(SUM((pd.deductions_data->>'BRADESCO_ODONTO')::numeric), 0)
+                + COALESCE(SUM((pd.deductions_data->>'BRADESCO ODONTO')::numeric), 0)
+            ) as total_plano_saude,
             COALESCE(SUM((pd.earnings_data->>'TRANSFERENCIA_FILIAL')::numeric), 0) as total_transferencia_filial,
             COALESCE(SUM((pd.earnings_data->>'AJUDA_CUSTO')::numeric), 0) as total_ajuda_custo,
             COALESCE(SUM((pd.earnings_data->>'LICENCA_PATERNIDADE')::numeric), 0) as total_licenca_paternidade,

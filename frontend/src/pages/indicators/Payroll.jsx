@@ -1297,7 +1297,7 @@ const PayrollV2 = () => {
           <CardStatMini icon="⚠️" label="Periculosidade" value={adicionais_beneficios.periculosidade} color="orange" />
           <CardStatMini icon="🏥" label="Insalubridade" value={adicionais_beneficios.insalubridade} color="yellow" />
           <CardStatMini icon="🚌" label="Vale Transporte" value={adicionais_beneficios.vale_transporte} color="gray" />
-          <CardStatMini icon="🏥" label="Plano de Saúde" value={adicionais_beneficios.plano_saude} color="blue" />
+          <CardStatMini icon="🏥" label="Plano de Saúde + Odonto" value={adicionais_beneficios.plano_saude} color="blue" />
           <CardStatMini icon="🚗" label="Vale Mobilidade" value={adicionais_beneficios.vale_mobilidade} color="gray" />
           <CardStatMini icon="🍽️" label="Vale Refeição" value={adicionais_beneficios.vale_refeicao} color="gray" />
           <CardStatMini icon="🛒" label="Vale Alimentação" value={adicionais_beneficios.vale_alimentacao} color="gray" />

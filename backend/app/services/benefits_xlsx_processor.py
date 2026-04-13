@@ -5,13 +5,16 @@ import csv
 import io
 import logging
 import calendar
+import re
 import openpyxl
 from datetime import datetime, date
+from collections import defaultdict
 from decimal import Decimal
 from typing import Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.models.company import Company
 from app.models.employee import Employee
 from app.models.payroll import BenefitsPeriod, BenefitsData, BenefitsProcessingLog, PayrollData, PayrollPeriod
 
@@ -21,13 +24,25 @@ logger = logging.getLogger(__name__)
 class BenefitsXLSXProcessor:
     """Processador de arquivos XLSX de benefícios"""
 
-    COLUMN_ALIASES = {
-        'cpf': ['cpf'],
-        'nome': ['nome', 'colaborador', 'funcionario', 'funcionário'],
-        'refeicao': ['refeicao', 'refeição', 'vr', 'vale refeicao', 'vale refeição'],
-        'alimentacao': ['alimentacao', 'alimentação', 'va', 'vale alimentacao', 'vale alimentação'],
-        'mobilidade': ['mobilidade', 'vale mobilidade', 'vt'],
-        'livre': ['livre', 'saldo livre']
+    STRICT_SCHEMA_HEADERS = {
+        'company_name': 'nome da empresa',
+        'cnpj': 'cnpj',
+        'recharge_id': 'id da recarga',
+        'recharge_context': 'contexto da recarga',
+        'recharge_month': 'mes da recarga',
+        'cpf': 'cpf',
+        'nome': 'nome do colaborador',
+        'refeicao_pat': 'refeicao pat',
+        'alimentacao_pat': 'alimentacao pat',
+        'alimentacao_refeicao_nao_pat': 'alimentacao refeicao nao pat',
+        'comer_ifood': 'comer no ifood',
+        'mobilidade': 'mobilidade',
+        'cultura': 'cultura',
+        'home_office': 'home office',
+        'educacao': 'educacao',
+        'saude_bem_estar': 'saude bem estar',
+        'farmacia': 'farmacia',
+        'livre': 'livre',
     }
     
     def __init__(self, db_session: Session, user_id: Optional[int] = None):
@@ -54,21 +69,91 @@ class BenefitsXLSXProcessor:
         return header
 
     def _map_columns(self, headers: List[str]) -> Dict[str, int]:
-        """Mapeia colunas encontradas no arquivo para os campos esperados."""
+        """Mapeia colunas do schema consolidado estrito."""
         normalized_index = {
             self._normalize_header(header): idx
             for idx, header in enumerate(headers)
         }
 
         mapping: Dict[str, int] = {}
-        for target, aliases in self.COLUMN_ALIASES.items():
-            for alias in aliases:
-                alias_norm = self._normalize_header(alias)
-                if alias_norm in normalized_index:
-                    mapping[target] = normalized_index[alias_norm]
-                    break
+        for target, normalized_header in self.STRICT_SCHEMA_HEADERS.items():
+            normalized_expected = self._normalize_header(normalized_header)
+            if normalized_expected in normalized_index:
+                mapping[target] = normalized_index[normalized_expected]
 
         return mapping
+
+    @staticmethod
+    def _normalize_digits(value: str) -> str:
+        return re.sub(r'\D', '', str(value or ''))
+
+    @staticmethod
+    def _normalize_company_name(value: str) -> str:
+        return BenefitsXLSXProcessor._normalize_header(value)
+
+    @staticmethod
+    def _normalize_recharge_month(value) -> str:
+        if value is None:
+            return ""
+
+        if isinstance(value, (datetime, date)):
+            return f"{value.year:04d}-{value.month:02d}"
+
+        text = str(value).strip()
+        match = re.match(r'^(\d{4})[-/](\d{1,2})', text)
+        if match:
+            year = int(match.group(1))
+            month = int(match.group(2))
+            if 1 <= month <= 12:
+                return f"{year:04d}-{month:02d}"
+        return text
+
+    def _resolve_company_constraints(self, company_code: str) -> Dict[str, set]:
+        companies = self.db.query(Company).filter(Company.payroll_prefix == company_code).all()
+
+        cnpjs = {
+            self._normalize_digits(company.cnpj)
+            for company in companies
+            if company.cnpj
+        }
+        names = {
+            self._normalize_company_name(company.name)
+            for company in companies
+            if company.name
+        }
+        trade_names = {
+            self._normalize_company_name(company.trade_name)
+            for company in companies
+            if company.trade_name
+        }
+
+        all_names = {name for name in names.union(trade_names) if name}
+        return {
+            'cnpjs': {cnpj for cnpj in cnpjs if cnpj},
+            'names': all_names,
+        }
+
+    def _extract_consolidated_row(self, row: List, column_indices: Dict[str, int]) -> Dict[str, object]:
+        def get_value(column_key: str):
+            idx = column_indices[column_key]
+            return row[idx] if len(row) > idx else None
+
+        alimentacao_pat = self._to_decimal(get_value('alimentacao_pat'))
+        alimentacao_nao_pat = self._to_decimal(get_value('alimentacao_refeicao_nao_pat'))
+
+        return {
+            'company_name': str(get_value('company_name') or '').strip(),
+            'cnpj': self._normalize_digits(get_value('cnpj')),
+            'recharge_id': str(get_value('recharge_id') or '').strip(),
+            'recharge_context': str(get_value('recharge_context') or '').strip(),
+            'recharge_month': self._normalize_recharge_month(get_value('recharge_month')),
+            'cpf': str(get_value('cpf') or '').strip(),
+            'name': str(get_value('nome') or '').strip(),
+            'refeicao': self._to_decimal(get_value('refeicao_pat')),
+            'alimentacao': alimentacao_pat + alimentacao_nao_pat,
+            'mobilidade': self._to_decimal(get_value('mobilidade')),
+            'livre': self._to_decimal(get_value('livre')),
+        }
 
     def _read_xlsx_rows(self, file_path: str) -> Tuple[List[str], List[List]]:
         wb = openpyxl.load_workbook(file_path, data_only=True)
@@ -83,7 +168,7 @@ class BenefitsXLSXProcessor:
 
         decoded_text = None
         decoded_encoding = None
-        for encoding in ('utf-8-sig', 'utf-8', 'cp1252', 'latin-1'):
+        for encoding in ('utf-16', 'utf-16le', 'utf-16be', 'utf-8-sig', 'utf-8', 'cp1252', 'latin-1'):
             try:
                 decoded_text = raw.decode(encoding)
                 decoded_encoding = encoding
@@ -358,86 +443,150 @@ class BenefitsXLSXProcessor:
             headers, rows = self._read_benefits_rows(file_path, file_extension)
             logger.info(f"Cabeçalhos encontrados: {headers}")
 
-            # Validar cabeçalhos necessários
+            # Validação de schema estrito do novo layout consolidado
             column_indices = self._map_columns(headers)
-            required_columns = ['cpf', 'refeicao', 'alimentacao', 'mobilidade', 'livre']
-            missing_columns = [col for col in required_columns if col not in column_indices]
+            missing_columns = [
+                key for key in self.STRICT_SCHEMA_HEADERS.keys()
+                if key not in column_indices
+            ]
             if missing_columns:
-                error_msg = f"Colunas obrigatórias ausentes: {', '.join(missing_columns)}"
+                error_msg = (
+                    "Arquivo fora do layout consolidado iFood. "
+                    f"Colunas ausentes: {', '.join(missing_columns)}"
+                )
                 logger.error(error_msg)
                 return {
                     "success": False,
                     "error": error_msg,
                     "errors": [error_msg]
                 }
-            
-            # Processar linhas
+
+            # Pré-validação e agregação por CPF
             total_rows = 0
             processed_rows = 0
             error_rows = 0
             change_set: List[Dict] = []
-
             matched_by_cpf = 0
             matched_by_name = 0
 
+            period_key = f"{year}-{month:02d}"
+            company_constraints = self._resolve_company_constraints(company)
+            company_names_found = set()
+            cnpjs_found = set()
+            recharge_ids_file = set()
+            validation_errors: List[str] = []
+
+            aggregated_by_cpf = defaultdict(lambda: {
+                'name': '',
+                'refeicao': Decimal('0'),
+                'alimentacao': Decimal('0'),
+                'mobilidade': Decimal('0'),
+                'livre': Decimal('0'),
+                'row_numbers': [],
+            })
+
             for row_idx, row in enumerate(rows, start=2):
                 total_rows += 1
-                
                 try:
-                    # Extrair dados da linha
-                    cpf = row[column_indices['cpf']] if len(row) > column_indices['cpf'] else None
-                    name = row[column_indices['nome']] if 'nome' in column_indices and len(row) > column_indices['nome'] else None
-                    refeicao = row[column_indices['refeicao']] if len(row) > column_indices['refeicao'] else None
-                    alimentacao = row[column_indices['alimentacao']] if len(row) > column_indices['alimentacao'] else None
-                    mobilidade = row[column_indices['mobilidade']] if len(row) > column_indices['mobilidade'] else None
-                    livre = row[column_indices['livre']] if len(row) > column_indices['livre'] else None
-                    
-                    # Ignorar linhas completamente vazias
-                    if not cpf and not name and refeicao in [None, ''] and alimentacao in [None, ''] and mobilidade in [None, ''] and livre in [None, '']:
-                        continue
-                    
-                    # Validar identificadores de colaborador
-                    if not cpf and not name:
-                        self.warnings.append(f"Linha {row_idx}: sem CPF e sem Nome, ignorando")
+                    parsed = self._extract_consolidated_row(row, column_indices)
+
+                    if not parsed['cpf'] and not parsed['name']:
                         continue
 
-                    cpf_str = str(cpf).strip() if cpf is not None else ''
-                    name_str = str(name).strip() if name is not None else ''
-                    
-                    # Processar linha
-                    success, match_type, change_entry = self._process_benefits_row(
-                        period=period,
-                        cpf=cpf_str,
-                        name=name_str,
-                        year=year,
-                        month=month,
-                        company=company,
-                        refeicao=refeicao,
-                        alimentacao=alimentacao,
-                        mobilidade=mobilidade,
-                        livre=livre,
-                        filename=filename,
-                        row_number=row_idx,
-                        merge_mode=merge_mode
-                    )
+                    if not parsed['cpf']:
+                        validation_errors.append(f"Linha {row_idx}: CPF ausente")
+                        continue
 
-                    if success and change_entry:
-                        change_set.append(change_entry)
-                    
-                    if success:
-                        processed_rows += 1
-                        if match_type == 'cpf':
-                            matched_by_cpf += 1
-                        elif match_type == 'name':
-                            matched_by_name += 1
-                    else:
-                        error_rows += 1
-                        
+                    cpf_digits = self.normalize_cpf(parsed['cpf'])
+                    if len(cpf_digits) != 11:
+                        validation_errors.append(f"Linha {row_idx}: CPF inválido '{parsed['cpf']}'")
+                        continue
+
+                    recharge_id = parsed['recharge_id']
+                    if not recharge_id:
+                        validation_errors.append(f"Linha {row_idx}: ID da recarga ausente")
+                        continue
+
+                    recharge_month = parsed['recharge_month']
+                    if recharge_month != period_key:
+                        validation_errors.append(
+                            f"Linha {row_idx}: Mês da recarga '{recharge_month}' divergente de {period_key}"
+                        )
+                        continue
+
+                    if parsed['cnpj']:
+                        cnpjs_found.add(parsed['cnpj'])
+                    if parsed['company_name']:
+                        company_names_found.add(parsed['company_name'])
+
+                    if company_constraints['cnpjs'] and parsed['cnpj'] not in company_constraints['cnpjs']:
+                        validation_errors.append(
+                            f"Linha {row_idx}: CNPJ '{parsed['cnpj']}' não pertence à empresa {company}"
+                        )
+                        continue
+
+                    recharge_ids_file.add(recharge_id)
+
+                    aggregated = aggregated_by_cpf[cpf_digits]
+                    if parsed['name'] and not aggregated['name']:
+                        aggregated['name'] = parsed['name']
+                    aggregated['refeicao'] += parsed['refeicao']
+                    aggregated['alimentacao'] += parsed['alimentacao']
+                    aggregated['mobilidade'] += parsed['mobilidade']
+                    aggregated['livre'] += parsed['livre']
+                    aggregated['row_numbers'].append(row_idx)
+
                 except Exception as e:
+                    validation_errors.append(f"Linha {row_idx}: {str(e)}")
+
+            if validation_errors:
+                return {
+                    "success": False,
+                    "error": "Falha na validação do arquivo consolidado de benefícios",
+                    "errors": validation_errors[:50],
+                    "total_rows": total_rows,
+                }
+
+            existing_recharge_ids = self._get_existing_recharge_ids(period.id)
+            duplicated_recharges = sorted(recharge_ids_file.intersection(existing_recharge_ids))
+            if duplicated_recharges:
+                return {
+                    "success": False,
+                    "error": "Upload bloqueado: existem IDs de recarga já processados para este período",
+                    "errors": [f"IDs duplicados: {', '.join(duplicated_recharges[:20])}"],
+                    "duplicated_recharge_ids": duplicated_recharges,
+                    "total_rows": total_rows,
+                }
+
+            for cpf_digits, payload in aggregated_by_cpf.items():
+                first_row = payload['row_numbers'][0] if payload['row_numbers'] else 0
+                success, match_type, change_entry = self._process_benefits_row(
+                    period=period,
+                    cpf=cpf_digits,
+                    name=payload['name'],
+                    year=year,
+                    month=month,
+                    company=company,
+                    refeicao=payload['refeicao'],
+                    alimentacao=payload['alimentacao'],
+                    mobilidade=payload['mobilidade'],
+                    livre=payload['livre'],
+                    filename=filename,
+                    row_number=first_row,
+                    merge_mode=merge_mode
+                )
+
+                if success and change_entry:
+                    change_set.append(change_entry)
+
+                if success:
+                    processed_rows += 1
+                    if match_type == 'cpf':
+                        matched_by_cpf += 1
+                    elif match_type == 'name':
+                        matched_by_name += 1
+                else:
                     error_rows += 1
-                    error_msg = f"Linha {row_idx}: {str(e)}"
-                    logger.error(error_msg)
-                    self.errors.append(error_msg)
             
             # Commit das alterações
             try:
@@ -468,6 +617,7 @@ class BenefitsXLSXProcessor:
                 status='completed' if error_rows == 0 else 'partial',
                 extra_summary={
                     "file_type": file_extension.lower().replace('.', ''),
+                    "schema_version": "ifood_consolidado_v2",
                     "merge_mode": merge_mode,
                     "source_label": source_label,
                     "matched_by_cpf": matched_by_cpf,
@@ -475,6 +625,11 @@ class BenefitsXLSXProcessor:
                     "company": company,
                     "month": month,
                     "year": year,
+                    "company_names_found": sorted(company_names_found),
+                    "cnpjs_found": sorted(cnpjs_found),
+                    "recharge_ids": sorted(recharge_ids_file),
+                    "recharge_ids_count": len(recharge_ids_file),
+                    "aggregated_rows": len(aggregated_by_cpf),
                     "rollback_version": 1,
                     "change_set": change_set,
                 }
@@ -490,10 +645,15 @@ class BenefitsXLSXProcessor:
                 "source_label": source_label,
                 "merge_mode": merge_mode,
                 "total_rows": total_rows,
+                "aggregated_rows": len(aggregated_by_cpf),
                 "processed_rows": processed_rows,
                 "error_rows": error_rows,
                 "matched_by_cpf": matched_by_cpf,
                 "matched_by_name": matched_by_name,
+                "recharge_ids_count": len(recharge_ids_file),
+                "recharge_ids": sorted(recharge_ids_file),
+                "cnpjs_found": sorted(cnpjs_found),
+                "company_names_found": sorted(company_names_found),
                 "warnings": self.warnings,
                 "errors": self.errors,
                 "processing_time": processing_time
@@ -669,6 +829,20 @@ class BenefitsXLSXProcessor:
             logger.error(error_msg)
             self.errors.append(error_msg)
             return False, None, None
+
+    def _get_existing_recharge_ids(self, period_id: int) -> set:
+        logs = self.db.query(BenefitsProcessingLog).filter(
+            BenefitsProcessingLog.period_id == period_id
+        ).all()
+
+        recharge_ids = set()
+        for log in logs:
+            summary = log.processing_summary or {}
+            log_recharge_ids = summary.get('recharge_ids') or []
+            if isinstance(log_recharge_ids, list):
+                recharge_ids.update(str(item).strip() for item in log_recharge_ids if str(item).strip())
+
+        return recharge_ids
     
     def _create_processing_log(
         self,

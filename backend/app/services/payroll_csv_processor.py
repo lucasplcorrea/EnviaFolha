@@ -667,12 +667,19 @@ class PayrollCSVProcessor:
         if val > 0:
             earnings['INSALUBRIDADE'] = val
         
-        # Plano de Saúde (soma de várias colunas)
-        plano_saude = 0
-        plano_saude += self._get_number(row, ['Outras despesas  Plano de Saúde'])
-        plano_saude += self._get_number(row, ['Saude Bradesco'])
-        plano_saude += self._get_number(row, ['Mensalidade  Plano de Saúde'])
-        plano_saude += self._get_number(row, ['Serviços odontológicos'])
+        # Plano de Saúde: somente as colunas validadas pelo RH
+        plano_saude = self._get_number(row, ['Benefício Plano de Saúde - Mensalidade', 'Beneficio Plano de Saude - Mensalidade'])
+        if plano_saude <= 0:
+            plano_saude = self._get_number(row, ['Saude Bradesco'])
+
+        # Odontológico (mantém separado para auditoria e soma no card de saúde+odonto)
+        bradesco_odonto = self._get_number(
+            row,
+            ['Bradesco Odonto', 'Bradesco Odontológico', 'Bradesco Odontologico']
+        )
+        if bradesco_odonto > 0:
+            earnings['BRADESCO_ODONTO'] = bradesco_odonto
+
         if plano_saude > 0:
             earnings['PLANO_SAUDE'] = plano_saude
         

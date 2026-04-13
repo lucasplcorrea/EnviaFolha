@@ -763,6 +763,11 @@ const PayrollDataProcessor = () => {
                   Carregamento alvo: <strong>{xlsxCompany === '0060' ? 'Empreendimentos (0060)' : 'Infraestrutura (0059)'}</strong> em <strong>{String(xlsxMonth).padStart(2, '0')}/{xlsxYear}</strong>
                 </div>
 
+                <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                  Layout obrigatório (consolidado iFood): Nome da empresa, CNPJ, ID da recarga, Mês da recarga, CPF, Nome do colaborador e colunas de benefício.
+                  O upload valida empresa/CNPJ e bloqueia recargas já processadas no mesmo período.
+                </div>
+
                 {/* Company Selection */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -917,12 +922,17 @@ const PayrollDataProcessor = () => {
                         {xlsxResult.success && (
                           <div className="mt-2 text-sm text-green-800 space-y-1">
                             <p>• Total de linhas: {xlsxResult.total_rows}</p>
+                            <p>• CPFs agregados: {xlsxResult.aggregated_rows || 0}</p>
                             <p>• Processadas: {xlsxResult.processed_rows}</p>
                             <p>• Erros: {xlsxResult.error_rows || 0}</p>
                             {xlsxResult.period_name && (
                               <p>• Período: {xlsxResult.period_name}</p>
                             )}
                             <p>• Empresa: {xlsxResult.company === '0060' ? 'Empreendimentos (0060)' : 'Infraestrutura (0059)'}</p>
+                            <p>• IDs de recarga detectados: {xlsxResult.recharge_ids_count || 0}</p>
+                            {Array.isArray(xlsxResult.cnpjs_found) && xlsxResult.cnpjs_found.length > 0 && (
+                              <p>• CNPJs no arquivo: {xlsxResult.cnpjs_found.join(', ')}</p>
+                            )}
                             <p>• Match por CPF: {xlsxResult.matched_by_cpf || 0}</p>
                             <p>• Match por Nome: {xlsxResult.matched_by_name || 0}</p>
                           </div>
