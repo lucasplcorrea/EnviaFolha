@@ -25,6 +25,7 @@ CURRENCY_COLUMNS = {
     "Salario Base",
     "Proventos",
     "Descontos",
+    "Adiantamento",
     "Liquido",
     "Mobilidade",
     "Vale Alimentacao",
@@ -111,6 +112,24 @@ def _sum_numeric_payload(payload: Any) -> float:
         return sum(_sum_numeric_payload(value) for value in payload.values())
     if isinstance(payload, (list, tuple, set)):
         return sum(_sum_numeric_payload(value) for value in payload)
+    return _as_float(payload)
+
+
+def _sum_numeric_payload_excluding_aliases(payload: Any, excluded_aliases: Iterable[str]) -> float:
+    payload = _parse_json_like(payload)
+    excluded = {_normalize_key(alias) for alias in excluded_aliases}
+
+    if payload is None:
+        return 0.0
+    if isinstance(payload, dict):
+        total = 0.0
+        for key, value in payload.items():
+            if _normalize_key(key) in excluded:
+                continue
+            total += _sum_numeric_payload(value)
+        return total
+    if isinstance(payload, (list, tuple, set)):
+        return sum(_sum_numeric_payload(item) for item in payload)
     return _as_float(payload)
 
 
@@ -226,6 +245,16 @@ def _build_export_rows(
     company: str,
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
+    adiantamento_aliases = [
+        "ADIANTAMENTO",
+        "Adiantamento",
+        "Adiantamento Salarial",
+        "ADIANTAMENTO_SALARIAL",
+        "Adiantamento 13",
+        "Adiantamento_13",
+        "13 Adiantamento",
+        "13o Adiantamento",
+    ]
 
     for employee in employees:
         payroll = payroll_by_employee.get(employee.id)
@@ -276,6 +305,19 @@ def _build_export_rows(
         if not descontos:
             descontos = _sum_numeric_payload(payroll_deductions)
 
+        adiantamento = _get_first_number_fuzzy(payroll_deductions, adiantamento_aliases)
+        if not adiantamento:
+            adiantamento = _get_first_number_fuzzy(payroll_additional, adiantamento_aliases)
+
+        # Fonte primaria: total da folha (additional_data) menos adiantamento,
+        # para manter consistencia com o fechamento mensal contabil.
+        descontos_sem_adiantamento = 0.0
+        if descontos > 0:
+            descontos_sem_adiantamento = max(descontos - adiantamento, 0.0)
+        else:
+            # Fallback para cenarios sem total consolidado em additional_data.
+            descontos_sem_adiantamento = _sum_numeric_payload_excluding_aliases(payroll_deductions, adiantamento_aliases)
+
         liquido = _get_first_number_fuzzy(
             payroll_additional,
             ["Liquido de Calculo", "Líquido de Cálculo", "LIQ_A_RECEBER", "Liquido", "Liquido a Receber"],
@@ -297,7 +339,8 @@ def _build_export_rows(
                 "Demissao": employee.termination_date,
                 "Salario Base": salario_base,
                 "Proventos": proventos,
-                "Descontos": descontos,
+                "Descontos": descontos_sem_adiantamento,
+                "Adiantamento": adiantamento,
                 "Liquido": liquido,
                 "Mobilidade": _as_float(benefits.mobilidade) if benefits else 0.0,
                 "Vale Alimentacao": _as_float(benefits.alimentacao) if benefits else 0.0,
@@ -337,6 +380,7 @@ def _write_xlsx(rows: List[Dict[str, Any]], company: str, year: int, month: int)
         "Salario Base",
         "Proventos",
         "Descontos",
+        "Adiantamento",
         "Liquido",
         "Mobilidade",
         "Vale Alimentacao",
@@ -393,6 +437,7 @@ def _write_xlsx(rows: List[Dict[str, Any]], company: str, year: int, month: int)
         "P": 16,
         "Q": 16,
         "R": 14,
+        "S": 14,
     }
     for letter, width in widths.items():
         sheet.column_dimensions[letter].width = width
