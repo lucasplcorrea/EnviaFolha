@@ -166,6 +166,15 @@ class ModularEnviaFolhaHandler(BaseHTTPRequestHandler):
             if path == '/api/v1/reports/exports/infra-analytics':
                 ReportsRouter(self).handle_export_infra_analytics()
                 return
+            if path == '/api/v1/reports/exports/monthly-provisions':
+                ReportsRouter(self).handle_export_monthly_provisions()
+                return
+            if path == '/api/v1/reports/exports/termination-simulation':
+                ReportsRouter(self).handle_export_termination_simulation()
+                return
+            if path == '/api/v1/reports/exports/fund-personnel-cost':
+                ReportsRouter(self).handle_export_fund_personnel_cost()
+                return
 
         if path.startswith('/api/v1/endomarketing/'):
             EndomarketingRouter(self).handle_get(path)

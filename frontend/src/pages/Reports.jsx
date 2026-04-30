@@ -15,7 +15,7 @@ import { useTheme } from '../contexts/ThemeContext';
 
 const Reports = () => {
   const { config } = useTheme();
-  const [exporting, setExporting] = useState(false);
+  const [exportingAction, setExportingAction] = useState('');
   const [exportParams, setExportParams] = useState({
     company: '0059',
     year: '2025',
@@ -24,6 +24,9 @@ const Reports = () => {
     department: '',
     employeeId: ''
   });
+  const [reportType, setReportType] = useState('strategic');
+  const [terminationScenario, setTerminationScenario] = useState('sem_justa_causa');
+  const [terminationDay, setTerminationDay] = useState('15');
   const [employees, setEmployees] = useState([]);
   const [loadingEmployees, setLoadingEmployees] = useState(false);
 
@@ -34,26 +37,19 @@ const Reports = () => {
     }));
   };
 
-  const exportReports = async () => {
+  const downloadXlsx = async ({ endpoint, params, defaultFilename, loadingMessage, successMessage, errorMessage, actionKey }) => {
     try {
-      setExporting(true);
-      const toastId = toast.loading('Gerando relatório estratégico...');
+      setExportingAction(actionKey);
+      const toastId = toast.loading(loadingMessage);
 
-      const response = await api.get('/reports/exports/infra-analytics', {
-        params: {
-          company: exportParams.company,
-          year: exportParams.year,
-          month: exportParams.month,
-          payroll_type: exportParams.payrollType,
-          department: exportParams.department || undefined,
-          employee_id: exportParams.employeeId || undefined,
-        },
+      const response = await api.get(endpoint, {
+        params,
         responseType: 'blob'
       });
 
       const contentDisposition = response.headers['content-disposition'] || '';
       const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
-      const filename = filenameMatch?.[1] || `relatorio_estrategico_${exportParams.company}_${exportParams.year}-${String(exportParams.month).padStart(2, '0')}.xlsx`;
+      const filename = filenameMatch?.[1] || defaultFilename;
 
       const blob = new Blob([
         response.data
@@ -68,15 +64,117 @@ const Reports = () => {
       link.remove();
       window.URL.revokeObjectURL(downloadUrl);
 
-      toast.success('Relatório exportado com sucesso', { id: toastId });
+      toast.success(successMessage, { id: toastId });
     } catch (error) {
       console.error('Erro ao exportar relatório:', error);
       const detail = error?.response?.data?.error;
-      toast.error(detail || 'Erro ao exportar relatório estratégico');
+      toast.error(detail || errorMessage);
     } finally {
-      setExporting(false);
+      setExportingAction('');
     }
   };
+
+  const getBaseExportParams = () => ({
+    company: exportParams.company,
+    year: exportParams.year,
+    month: exportParams.month,
+    payroll_type: exportParams.payrollType,
+    department: exportParams.department || undefined,
+    employee_id: exportParams.employeeId || undefined,
+  });
+
+  const exportReports = async () => {
+    const baseParams = getBaseExportParams();
+    await downloadXlsx({
+      endpoint: '/reports/exports/infra-analytics',
+      params: baseParams,
+      defaultFilename: `relatorio_estrategico_${exportParams.company}_${exportParams.year}-${String(exportParams.month).padStart(2, '0')}.xlsx`,
+      loadingMessage: 'Gerando relatório estratégico...',
+      successMessage: 'Relatório estratégico exportado com sucesso',
+      errorMessage: 'Erro ao exportar relatório estratégico',
+      actionKey: 'strategic',
+    });
+  };
+
+  const exportMonthlyProvisions = async () => {
+    const baseParams = getBaseExportParams();
+    await downloadXlsx({
+      endpoint: '/reports/exports/monthly-provisions',
+      params: baseParams,
+      defaultFilename: `relatorio_provisoes_${exportParams.company}_${exportParams.year}-${String(exportParams.month).padStart(2, '0')}.xlsx`,
+      loadingMessage: 'Gerando relatório de provisões...',
+      successMessage: 'Relatório de provisões exportado com sucesso',
+      errorMessage: 'Erro ao exportar relatório de provisões',
+      actionKey: 'provisions',
+    });
+  };
+
+  const exportTerminationSimulation = async () => {
+    const baseParams = getBaseExportParams();
+    await downloadXlsx({
+      endpoint: '/reports/exports/termination-simulation',
+      params: {
+        ...baseParams,
+        scenario: terminationScenario,
+        termination_day: terminationDay,
+      },
+      defaultFilename: `simulacao_rescisoes_${exportParams.company}_${exportParams.year}-${String(exportParams.month).padStart(2, '0')}_${terminationScenario}.xlsx`,
+      loadingMessage: 'Gerando simulação de rescisão...',
+      successMessage: 'Simulação de rescisão exportada com sucesso',
+      errorMessage: 'Erro ao exportar simulação de rescisão',
+      actionKey: 'termination',
+    });
+  };
+
+  const exportFundPersonnelCost = async () => {
+    const baseParams = getBaseExportParams();
+    await downloadXlsx({
+      endpoint: '/reports/exports/fund-personnel-cost',
+      params: baseParams,
+      defaultFilename: `relatorio_custo_fundo_${exportParams.company}_${exportParams.year}-${String(exportParams.month).padStart(2, '0')}.xlsx`,
+      loadingMessage: 'Gerando relatório de custo de pessoal para o fundo...',
+      successMessage: 'Relatório de custo de pessoal para o fundo exportado com sucesso',
+      errorMessage: 'Erro ao exportar relatório de custo de pessoal para o fundo',
+      actionKey: 'fund_cost',
+    });
+  };
+
+  const reportTypeOptions = [
+    {
+      key: 'strategic',
+      title: 'Estratégico',
+      description: 'Folha e benefícios por competência com visão analítica.',
+      actionLabel: 'Baixar Relatório Estratégico',
+      actionLoadingLabel: 'Gerando relatório estratégico...',
+      action: exportReports,
+    },
+    {
+      key: 'provisions',
+      title: 'Provisões Mensais',
+      description: 'Provisões de caixa e encargos por colaborador/setor.',
+      actionLabel: 'Baixar Relatório de Provisões',
+      actionLoadingLabel: 'Gerando relatório de provisões...',
+      action: exportMonthlyProvisions,
+    },
+    {
+      key: 'termination',
+      title: 'Simulação de Rescisão',
+      description: 'Estimativa de desligamento por colaborador e cenário.',
+      actionLabel: 'Baixar Simulação de Rescisão',
+      actionLoadingLabel: 'Gerando simulação de rescisão...',
+      action: exportTerminationSimulation,
+    },
+    {
+      key: 'fund_cost',
+      title: 'Custo de Pessoal Fundo',
+      description: 'Custo consolidado por colaborador/setor para prestação ao fundo.',
+      actionLabel: 'Baixar Relatório do Fundo',
+      actionLoadingLabel: 'Gerando relatório do fundo...',
+      action: exportFundPersonnelCost,
+    },
+  ];
+
+  const selectedReportType = reportTypeOptions.find((item) => item.key === reportType) || reportTypeOptions[0];
 
   const monthOptions = useMemo(() => {
     return [
@@ -210,14 +308,31 @@ const Reports = () => {
       <div className={`${config.classes.card} shadow rounded-lg p-6 ${config.classes.border}`}>
         <div className="flex items-start justify-between gap-4 mb-4">
           <div>
-            <h2 className={`text-lg font-semibold ${config.classes.text}`}>Relatório Estratégico Exportável</h2>
+            <h2 className={`text-lg font-semibold ${config.classes.text}`}>Exportação de Relatórios</h2>
             <p className={`mt-1 text-sm ${config.classes.textSecondary}`}>
-              Colaboradores ativos com folha e benefícios segmentados por competência e tipo de folha.
+              Selecione o tipo de relatório para aplicar os mesmos filtros com regras específicas.
             </p>
           </div>
           <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
             Produção
           </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
+          {reportTypeOptions.map((option) => {
+            const selected = reportType === option.key;
+            return (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setReportType(option.key)}
+                className={`text-left rounded-lg border px-4 py-3 transition ${selected ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 hover:bg-slate-50'}`}
+              >
+                <p className={`text-sm font-semibold ${selected ? 'text-emerald-800' : 'text-slate-800'}`}>{option.title}</p>
+                <p className={`mt-1 text-xs ${selected ? 'text-emerald-700' : 'text-slate-500'}`}>{option.description}</p>
+              </button>
+            );
+          })}
         </div>
 
         <div className="flex flex-wrap gap-2 mb-4">
@@ -328,20 +443,57 @@ const Reports = () => {
             </select>
           </div>
           <div className="flex items-end">
-            <button
-              onClick={exportReports}
-              disabled={exporting}
-              className="w-full inline-flex items-center justify-center px-4 py-2 rounded-md text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60"
-            >
-              <ArrowDownTrayIcon className="h-4 w-4 mr-2" />
-              {exporting ? 'Gerando...' : 'Baixar Relatório'}
-            </button>
+            <div className="w-full rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              Tipo selecionado: <span className="font-semibold text-slate-800">{selectedReportType.title}</span>
+            </div>
           </div>
+        </div>
+
+        {reportType === 'termination' && (
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div className="md:col-span-2">
+              <label className={`block text-sm font-medium ${config.classes.text} mb-1`}>Cenário de rescisão</label>
+              <select
+                value={terminationScenario}
+                onChange={(e) => setTerminationScenario(e.target.value)}
+                className={`w-full rounded-md px-3 py-2 text-sm ${config.classes.select}`}
+                disabled={exportingAction !== ''}
+              >
+                <option value="sem_justa_causa">Rescisão sem justa causa</option>
+                <option value="pedido_demissao">Pedido de demissão</option>
+                <option value="termino_contrato">Término de contrato</option>
+              </select>
+            </div>
+            <div>
+              <label className={`block text-sm font-medium ${config.classes.text} mb-1`}>Dia de referência</label>
+              <input
+                type="number"
+                min="1"
+                max="31"
+                value={terminationDay}
+                onChange={(e) => setTerminationDay(e.target.value)}
+                className={`w-full rounded-md px-3 py-2 text-sm ${config.classes.input}`}
+                disabled={exportingAction !== ''}
+                title="Dia de referência para simulação"
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="mt-3">
+          <button
+            onClick={selectedReportType.action}
+            disabled={exportingAction !== ''}
+            className="w-full md:w-auto inline-flex items-center justify-center px-4 py-2 rounded-md text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60"
+          >
+            <ArrowDownTrayIcon className="h-4 w-4 mr-2" />
+            {exportingAction === selectedReportType.key ? selectedReportType.actionLoadingLabel : selectedReportType.actionLabel}
+          </button>
         </div>
 
         <div className="mt-3 inline-flex items-center gap-2 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-700">
           <FunnelIcon className="h-4 w-4" />
-          O filtro padrão é Mensal para evitar mistura com 13º na competência 12.
+          O filtro padrão é Mensal para evitar mistura com 13º na competência 12. Selecione o tipo do relatório para clareza na exportação.
         </div>
       </div>
 

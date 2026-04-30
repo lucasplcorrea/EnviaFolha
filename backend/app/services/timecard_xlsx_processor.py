@@ -2,6 +2,7 @@
 Serviço para processar arquivos XLSX de Cartão Ponto
 """
 import logging
+import re
 import unicodedata
 import openpyxl
 from difflib import SequenceMatcher
@@ -498,6 +499,13 @@ class TimecardXLSXProcessor:
         employee = self._resolve_employee_by_alias(employee_number, employee_name, company)
         if employee:
             return employee, 'alias'
+
+        # Regra defensiva: só aplica fallback por matrícula numérica para formatos esperados
+        # (apenas dígitos, com sufixo opcional "E" para identificar empresa).
+        # Ex.: "1PJ" não deve virar matrícula "1" automaticamente.
+        employee_number_raw = str(employee_number or '').strip().upper()
+        if not re.fullmatch(r'\d+E?', employee_number_raw):
+            return None, None
 
         employee_number_clean = ''.join(ch for ch in employee_number if ch.isdigit())
         employee_number_nozeros = employee_number_clean.lstrip('0') or employee_number_clean
