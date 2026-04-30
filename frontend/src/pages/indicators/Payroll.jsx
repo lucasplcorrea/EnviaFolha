@@ -181,14 +181,11 @@ const PayrollV2 = () => {
         allPeriods
       });
       
-      // Prioridade 1: Se há período específico selecionado, usar ele
+      // Prioridade 1: Se há período específico selecionado, usar o period_id direto.
+      // Evita fallback para "todos os dados" quando há diferença de tipo (string x number).
       if (selectedPeriods.length > 0) {
-        const period = allPeriods.find(p => p.id === selectedPeriods[0]);
-        if (period) {
-          params.append('year', period.year);
-          params.append('month', period.month);
-          console.log('✅ Usando período selecionado:', period.year, '/', period.month);
-        }
+        params.append('period_id', String(selectedPeriods[0]));
+        console.log('✅ Usando period_id selecionado:', selectedPeriods[0]);
       }
       // Prioridade 2: Se há ano E mês selecionados, usar eles
       else if (selectedYears.length > 0 && selectedMonths.length > 0) {

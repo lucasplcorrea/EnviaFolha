@@ -144,6 +144,24 @@ class TimecardRouter(BaseRouter):
             employees = params.get('employees', [None])[0]
             companies = params.get('companies', [None])[0]
             departments = params.get('departments', [None])[0]
+            employee_ids = []
+            selected_employee_names = {}
+
+            def _normalize_name(value: str) -> str:
+                if not value:
+                    return ''
+                normalized = unicodedata.normalize('NFKD', str(value))
+                normalized = normalized.encode('ascii', 'ignore').decode('ascii')
+                normalized = normalized.lower()
+                normalized = ''.join(ch if ch.isalnum() else ' ' for ch in normalized)
+                return ' '.join(normalized.split())
+
+            def _names_consistent(left: str, right: str) -> bool:
+                a = _normalize_name(left)
+                b = _normalize_name(right)
+                if not a or not b:
+                    return False
+                return a == b or a in b or b in a
 
             stats_query = db.query(TimecardData)
 
@@ -153,7 +171,7 @@ class TimecardRouter(BaseRouter):
                 period = db.query(TimecardPeriod).filter(
                     TimecardPeriod.year == int(year),
                     TimecardPeriod.month == int(month),
-                ).first()
+                ).order_by(TimecardPeriod.id.desc()).first()
                 if period:
                     stats_query = stats_query.filter(TimecardData.period_id == period.id)
                 else:
@@ -184,6 +202,8 @@ class TimecardRouter(BaseRouter):
                 try:
                     employee_ids = [int(item.strip()) for item in employees.split(',') if item.strip()]
                     if employee_ids:
+                        selected = db.query(Employee).filter(Employee.id.in_(employee_ids)).all()
+                        selected_employee_names = {int(emp.id): str(emp.name or '') for emp in selected}
                         stats_query = stats_query.filter(TimecardData.employee_id.in_(employee_ids))
                 except Exception:
                     pass
@@ -208,6 +228,15 @@ class TimecardRouter(BaseRouter):
                     pass
 
             timecard_data = stats_query.all()
+
+            # Defesa contra vínculos incorretos (employee_id divergente do nome em timecard_data).
+            # Sem isso, um registro mal associado pode inflar os cards do colaborador selecionado.
+            if employee_ids and selected_employee_names:
+                timecard_data = [
+                    row for row in timecard_data
+                    if row.employee_id in selected_employee_names
+                    and _names_consistent(row.employee_name or '', selected_employee_names[row.employee_id])
+                ]
 
             if not timecard_data:
                 self.send_json_response({
