@@ -15,7 +15,12 @@ from ..models.communication_send import CommunicationSend
 from ..models.communication_recipient import CommunicationRecipient
 from ..models.user import User
 from ..models.base import get_db
-from ..services.exportable_reports import build_infra_analytics_xlsx
+from ..services.exportable_reports import (
+    build_infra_analytics_xlsx,
+    build_monthly_provisions_xlsx,
+    build_termination_simulation_xlsx,
+    build_fund_personnel_cost_xlsx,
+)
 
 
 class ReportsRouter(BaseRouter):
@@ -311,6 +316,242 @@ class ReportsRouter(BaseRouter):
             import traceback
             traceback.print_exc()
             self.send_error_response(500, 'Erro ao exportar relatório estratégico')
+
+    def handle_export_monthly_provisions(self):
+        """
+        GET /api/v1/reports/exports/monthly-provisions
+        Exporta XLSX de provisões mensais por colaborador/setor.
+        Query params opcionais:
+        - year, month, company, payroll_type, department, employee_id
+        - inss_patronal_rate (default: 0.20)
+        - fgts_rate (default: 0.08)
+        """
+        try:
+            query_params = self.parse_query_params()
+            year = int(query_params.get('year', ['2025'])[0])
+            month = int(query_params.get('month', ['12'])[0])
+            company = str(query_params.get('company', ['0059'])[0]).strip() or '0059'
+            payroll_type = str(query_params.get('payroll_type', ['mensal'])[0]).strip() or 'mensal'
+            department = str(query_params.get('department', [''])[0]).strip() or None
+
+            employee_id_raw = str(query_params.get('employee_id', [''])[0]).strip()
+            employee_id = int(employee_id_raw) if employee_id_raw else None
+
+            inss_patronal_rate = float(query_params.get('inss_patronal_rate', ['0.20'])[0])
+            fgts_rate = float(query_params.get('fgts_rate', ['0.08'])[0])
+
+            if month < 1 or month > 12:
+                self.send_error_response(400, 'Parâmetro month deve estar entre 1 e 12')
+                return
+            if inss_patronal_rate < 0 or inss_patronal_rate > 1:
+                self.send_error_response(400, 'Parâmetro inss_patronal_rate deve estar entre 0 e 1')
+                return
+            if fgts_rate < 0 or fgts_rate > 1:
+                self.send_error_response(400, 'Parâmetro fgts_rate deve estar entre 0 e 1')
+                return
+
+            allowed_payroll_types = {
+                'mensal',
+                '13_adiantamento',
+                '13_integral',
+                'complementar',
+                'adiantamento_salario',
+                'all',
+            }
+            if payroll_type not in allowed_payroll_types:
+                self.send_error_response(400, 'Parâmetro payroll_type inválido')
+                return
+
+            db = next(get_db())
+            try:
+                xlsx_bytes, total_rows, filename = build_monthly_provisions_xlsx(
+                    session=db,
+                    year=year,
+                    month=month,
+                    company=company,
+                    payroll_type=payroll_type,
+                    department=department,
+                    employee_id=employee_id,
+                    inss_patronal_rate=inss_patronal_rate,
+                    fgts_rate=fgts_rate,
+                )
+
+                print(
+                    f"📊 Relatório de provisões gerado: company={company}, year={year}, month={month}, rows={total_rows}"
+                )
+                self.send_binary_response(
+                    data=xlsx_bytes,
+                    content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    filename=filename,
+                )
+            finally:
+                db.close()
+
+        except ValueError:
+            self.send_error_response(400, 'Parâmetros inválidos para geração do relatório')
+        except Exception as e:
+            print(f"❌ Erro ao exportar relatório de provisões: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            self.send_error_response(500, 'Erro ao exportar relatório de provisões')
+
+    def handle_export_termination_simulation(self):
+        """
+        GET /api/v1/reports/exports/termination-simulation
+        Exporta XLSX com simulação de rescisão por colaborador.
+        Query params opcionais:
+        - year, month, company, payroll_type, department, employee_id
+        - scenario: sem_justa_causa | pedido_demissao | termino_contrato
+        - termination_day (default: 15)
+        - fgts_rate (default: 0.08)
+        """
+        try:
+            query_params = self.parse_query_params()
+            year = int(query_params.get('year', ['2025'])[0])
+            month = int(query_params.get('month', ['12'])[0])
+            company = str(query_params.get('company', ['0059'])[0]).strip() or '0059'
+            payroll_type = str(query_params.get('payroll_type', ['mensal'])[0]).strip() or 'mensal'
+            department = str(query_params.get('department', [''])[0]).strip() or None
+
+            employee_id_raw = str(query_params.get('employee_id', [''])[0]).strip()
+            employee_id = int(employee_id_raw) if employee_id_raw else None
+
+            scenario = str(query_params.get('scenario', ['sem_justa_causa'])[0]).strip() or 'sem_justa_causa'
+            termination_day = int(query_params.get('termination_day', ['15'])[0])
+            fgts_rate = float(query_params.get('fgts_rate', ['0.08'])[0])
+
+            if month < 1 or month > 12:
+                self.send_error_response(400, 'Parâmetro month deve estar entre 1 e 12')
+                return
+            if termination_day < 1 or termination_day > 31:
+                self.send_error_response(400, 'Parâmetro termination_day deve estar entre 1 e 31')
+                return
+            if fgts_rate < 0 or fgts_rate > 1:
+                self.send_error_response(400, 'Parâmetro fgts_rate deve estar entre 0 e 1')
+                return
+
+            allowed_payroll_types = {
+                'mensal',
+                '13_adiantamento',
+                '13_integral',
+                'complementar',
+                'adiantamento_salario',
+                'all',
+            }
+            if payroll_type not in allowed_payroll_types:
+                self.send_error_response(400, 'Parâmetro payroll_type inválido')
+                return
+
+            allowed_scenarios = {'sem_justa_causa', 'pedido_demissao', 'termino_contrato'}
+            if scenario not in allowed_scenarios:
+                self.send_error_response(400, 'Parâmetro scenario inválido')
+                return
+
+            db = next(get_db())
+            try:
+                xlsx_bytes, total_rows, filename = build_termination_simulation_xlsx(
+                    session=db,
+                    year=year,
+                    month=month,
+                    company=company,
+                    payroll_type=payroll_type,
+                    department=department,
+                    employee_id=employee_id,
+                    scenario=scenario,
+                    termination_day=termination_day,
+                    fgts_rate=fgts_rate,
+                )
+
+                print(
+                    f"📊 Simulação de rescisão gerada: company={company}, year={year}, month={month}, scenario={scenario}, rows={total_rows}"
+                )
+                self.send_binary_response(
+                    data=xlsx_bytes,
+                    content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    filename=filename,
+                )
+            finally:
+                db.close()
+
+        except ValueError:
+            self.send_error_response(400, 'Parâmetros inválidos para geração do relatório')
+        except Exception as e:
+            print(f"❌ Erro ao exportar simulação de rescisão: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            self.send_error_response(500, 'Erro ao exportar simulação de rescisão')
+
+    def handle_export_fund_personnel_cost(self):
+        """
+        GET /api/v1/reports/exports/fund-personnel-cost
+        Exporta XLSX de custo de pessoal para o fundo imobiliário.
+        Query params opcionais:
+        - year, month, company, payroll_type, department, employee_id
+        - inss_patronal_rate (default: 0.20)
+        """
+        try:
+            query_params = self.parse_query_params()
+            year = int(query_params.get('year', ['2025'])[0])
+            month = int(query_params.get('month', ['12'])[0])
+            company = str(query_params.get('company', ['0059'])[0]).strip() or '0059'
+            payroll_type = str(query_params.get('payroll_type', ['mensal'])[0]).strip() or 'mensal'
+            department = str(query_params.get('department', [''])[0]).strip() or None
+
+            employee_id_raw = str(query_params.get('employee_id', [''])[0]).strip()
+            employee_id = int(employee_id_raw) if employee_id_raw else None
+
+            inss_patronal_rate = float(query_params.get('inss_patronal_rate', ['0.20'])[0])
+
+            if month < 1 or month > 12:
+                self.send_error_response(400, 'Parâmetro month deve estar entre 1 e 12')
+                return
+            if inss_patronal_rate < 0 or inss_patronal_rate > 1:
+                self.send_error_response(400, 'Parâmetro inss_patronal_rate deve estar entre 0 e 1')
+                return
+
+            allowed_payroll_types = {
+                'mensal',
+                '13_adiantamento',
+                '13_integral',
+                'complementar',
+                'adiantamento_salario',
+                'all',
+            }
+            if payroll_type not in allowed_payroll_types:
+                self.send_error_response(400, 'Parâmetro payroll_type inválido')
+                return
+
+            db = next(get_db())
+            try:
+                xlsx_bytes, total_rows, filename = build_fund_personnel_cost_xlsx(
+                    session=db,
+                    year=year,
+                    month=month,
+                    company=company,
+                    payroll_type=payroll_type,
+                    department=department,
+                    employee_id=employee_id,
+                    inss_patronal_rate=inss_patronal_rate,
+                )
+
+                print(
+                    f"📊 Relatório custo fundo gerado: company={company}, year={year}, month={month}, rows={total_rows}"
+                )
+                self.send_binary_response(
+                    data=xlsx_bytes,
+                    content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    filename=filename,
+                )
+            finally:
+                db.close()
+
+        except ValueError:
+            self.send_error_response(400, 'Parâmetros inválidos para geração do relatório')
+        except Exception as e:
+            print(f"❌ Erro ao exportar relatório custo fundo: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            self.send_error_response(500, 'Erro ao exportar relatório custo fundo')
     
     def send_error_response(self, status_code: int, message: str):
         """Enviar resposta de erro"""
