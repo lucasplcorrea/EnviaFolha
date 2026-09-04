@@ -1868,23 +1868,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 if 'db' in locals():
                     db.close()
         
-        # Fallback para credenciais padrão
-        if username == 'admin' and password == 'admin123':
-            print("✅ Login bem-sucedido com credenciais padrão!")
-            self.send_json_response({
-                "access_token": "simple-token-123",
-                "token_type": "bearer",
-                "user": {
-                    "id": 1,
-                    "username": "admin",
-                    "full_name": "Administrador",
-                    "email": "admin@empresa.com",
-                    "is_admin": True
-                }
-            })
-        else:
-            print("❌ Credenciais inválidas!")
-            self.send_json_response({"detail": "Credenciais inválidas"}, 401)
+        self.send_json_response({"detail": "Serviço de autenticação indisponível"}, 503)
     
     def send_status_response(self):
         """Resposta de status da aplicação"""
@@ -2071,7 +2055,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         status = {
             "status": "connected",
             "instance_name": os.getenv('EVOLUTION_INSTANCE_NAME', 'API-Abecker'),
-            "server_url": os.getenv('EVOLUTION_SERVER_URL', 'http://192.168.230.253:8080/'),
+            "server_url": os.getenv('EVOLUTION_SERVER_URL', ''),
             "last_check": datetime.now().isoformat(),
             "message": "Simulado - verificação real da API não implementada"
         }

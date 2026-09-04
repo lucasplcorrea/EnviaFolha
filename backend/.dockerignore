@@ -73,6 +73,12 @@ data/
 uploads/
 enviados/
 holerites_formatados_final/
+processed/
+sent/
+
+# One-off maintenance scripts must not ship in the runtime image
+reprocess_*.py
+migrate_user_passwords.py
 
 # Documentation
 docs/
