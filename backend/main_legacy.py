@@ -17,6 +17,73 @@ import re
 import time
 import random
 
+
+# Metadados usados tanto no processamento quanto no arquivamento/exportação.
+# O nome do PDF é o contrato de integração com o RH Gestor.
+PAYROLL_TYPE_NAMES = {
+    '11': 'Mensal',
+    '31': 'Adiantamento_13',
+    '32': '13_Integral',
+    '91': 'Adiantamento_Salarial'
+}
+
+
+def parse_payroll_filename(filename):
+    """Extrai matrícula, tipo e competência de um PDF no padrão RH Gestor."""
+    match = re.match(
+        r'^EN_(.+)_([0-9]+)_([0-9]{2})_([0-9]{4})\.pdf$',
+        os.path.basename(filename),
+        re.IGNORECASE
+    )
+    if not match:
+        return None
+
+    payroll_type = match.group(2)
+    month = int(match.group(3))
+    year = int(match.group(4))
+    if payroll_type not in PAYROLL_TYPE_NAMES or not 1 <= month <= 12:
+        return None
+
+    return {
+        'registration': match.group(1),
+        'payroll_type': payroll_type,
+        'month': month,
+        'year': year
+    }
+
+
+def payroll_period_folder(payroll_type, month, year):
+    """Retorna o nome canônico da pasta de uma competência."""
+    return f"{PAYROLL_TYPE_NAMES[payroll_type]}_{int(month):02d}_{int(year)}"
+
+
+def build_payroll_inventory():
+    """Indexa PDFs pendentes e enviados por tipo/mês/ano, sem duplicá-los."""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    roots = {
+        'processed': os.path.join(base_dir, 'processed'),
+        'sent': os.path.join(base_dir, 'enviados')
+    }
+    inventory = {}
+
+    for status_name, root_dir in roots.items():
+        if not os.path.isdir(root_dir):
+            continue
+        for current_dir, _, filenames in os.walk(root_dir):
+            for filename in filenames:
+                metadata = parse_payroll_filename(filename)
+                if not metadata:
+                    continue
+                key = (
+                    metadata['payroll_type'],
+                    metadata['month'],
+                    metadata['year']
+                )
+                period = inventory.setdefault(key, {'processed': {}, 'sent': {}})
+                period[status_name][filename] = os.path.join(current_dir, filename)
+
+    return inventory
+
 try:
     import PyPDF2
     PDF_PROCESSING_AVAILABLE = True
@@ -1061,18 +1128,29 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                     except Exception as db_error:
                         print(f"⚠️ [JOB {job_id[:8]}] Erro ao salvar no banco: {db_error}")
                     
-                    # Mover arquivo para pasta 'enviados'
+                    # Mover arquivo para 'enviados', preservando a organização
+                    # por tipo e competência. Arquivos antigos que já estão na
+                    # raiz de enviados/ continuam sendo reconhecidos na exportação.
                     try:
                         enviados_dir = os.path.join(
                             os.path.dirname(os.path.abspath(__file__)),
                             'enviados'
                         )
-                        if not os.path.exists(enviados_dir):
-                            os.makedirs(enviados_dir)
+                        metadata = parse_payroll_filename(filename)
+                        if metadata:
+                            enviados_dir = os.path.join(
+                                enviados_dir,
+                                payroll_period_folder(
+                                    metadata['payroll_type'],
+                                    metadata['month'],
+                                    metadata['year']
+                                )
+                            )
+                        os.makedirs(enviados_dir, exist_ok=True)
                         
                         dest_path = os.path.join(enviados_dir, filename)
                         shutil.move(file_path, dest_path)
-                        print(f"📦 [JOB {job_id[:8]}] Arquivo movido para enviados/")
+                        print(f"📦 [JOB {job_id[:8]}] Arquivo movido para {enviados_dir}/")
                     except Exception as move_error:
                         print(f"⚠️ [JOB {job_id[:8]}] Erro ao mover arquivo: {move_error}")
                     
@@ -5284,74 +5362,32 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             }, 500)
     
     def handle_list_payroll_periods(self):
-        """Lista períodos disponíveis para download"""
+        """Lista períodos existentes em processed/ e enviados/."""
         try:
-            import os
-            import glob
-            
-            processed_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'processed')
-            
-            if not os.path.exists(processed_dir):
-                self.send_json_response({"periods": []})
-                return
-            
-            # Listar todas as subpastas em processed/
+            inventory = build_payroll_inventory()
             periods = []
-            for folder_name in os.listdir(processed_dir):
-                folder_path = os.path.join(processed_dir, folder_name)
-                
-                if not os.path.isdir(folder_path):
-                    continue
-                
-                # Contar PDFs na pasta
-                pdf_files = glob.glob(os.path.join(folder_path, '*.pdf'))
-                file_count = len(pdf_files)
-                
-                if file_count == 0:
-                    continue
-                
-                # Extrair informações da pasta (formato: TipoNome_MM_YYYY)
-                # Ex: Mensal_11_2025, Adiantamento_13_12_2025
-                parts = folder_name.split('_')
-                
-                # Tentar extrair tipo, mês e ano
-                payroll_type = None
-                month = None
-                year = None
-                
-                if len(parts) >= 3:
-                    # Último é ano, penúltimo é mês
-                    try:
-                        year = int(parts[-1])
-                        month = int(parts[-2])
-                        
-                        # Tipo pode ter múltiplas palavras (Adiantamento_13)
-                        type_name = '_'.join(parts[:-2])
-                        
-                        # Mapear nome para código
-                        type_map = {
-                            'Mensal': '11',
-                            'Adiantamento_13': '31',
-                            '13_Integral': '32',
-                            'Adiantamento_Salarial': '91'
-                        }
-                        payroll_type = type_map.get(type_name, '11')
-                    except (ValueError, IndexError):
-                        pass
-                
+            for (payroll_type, month, year), files_by_status in inventory.items():
+                pending_names = set(files_by_status['processed'])
+                sent_names = set(files_by_status['sent'])
+                all_names = pending_names | sent_names
+                # Se houver uma cópia nos dois locais, ela é exibida como
+                # pendente e contabilizada apenas uma vez no total.
+                sent_only_names = sent_names - pending_names
+                folder_name = payroll_period_folder(payroll_type, month, year)
                 periods.append({
                     "folder": folder_name,
-                    "file_count": file_count,
+                    "file_count": len(all_names),
+                    "pending_count": len(pending_names),
+                    "sent_count": len(sent_only_names),
                     "payroll_type": payroll_type,
                     "month": month,
-                    "year": year,
-                    "path": folder_path
+                    "year": year
                 })
             
             # Ordenar por ano e mês (mais recentes primeiro)
             periods.sort(key=lambda x: (x.get('year', 0), x.get('month', 0)), reverse=True)
             
-            print(f"📁 {len(periods)} período(s) disponível(is)")
+            print(f"📁 {len(periods)} período(s) disponível(is) em processed/ e enviados/")
             self.send_json_response({"periods": periods})
             
         except Exception as e:
@@ -7399,9 +7435,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     # ==========================================
     
     def handle_export_payroll_batch(self):
-        """Exportar lote de holerites como ZIP"""
+        """Exporta um lote completo, incluindo PDFs pendentes e já enviados."""
         try:
-            import os
             import zipfile
             from io import BytesIO
             
@@ -7411,37 +7446,61 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             year = int(data.get('year', datetime.now().year))
             
             print(f"📦 Exportando lote: Tipo {payroll_type}, {month}/{year}")
-            
-            # Determinar pasta de origem
-            from app.services.payroll_formatter import PayrollFormatter
-            formatter = PayrollFormatter(payroll_type, month, year)
-            source_dir = formatter.output_dir
-            
-            if not os.path.exists(source_dir):
-                self.send_json_response({"error": "Nenhum arquivo encontrado para este período"}, 404)
+
+            if payroll_type not in PAYROLL_TYPE_NAMES or not 1 <= month <= 12:
+                self.send_json_response({"error": "Tipo ou mês de holerite inválido"}, 400)
                 return
-            
-            # Listar PDFs
-            pdf_files = [f for f in os.listdir(source_dir) if f.endswith('.pdf') and f.startswith('EN_')]
-            
-            if not pdf_files:
+
+            inventory = build_payroll_inventory()
+            period_files = inventory.get((payroll_type, month, year), {'processed': {}, 'sent': {}})
+
+            # A versão pendente tem prioridade caso o mesmo nome exista nos dois
+            # locais. O nome é a chave porque também é o identificador aceito
+            # pelo RH Gestor.
+            files_by_name = dict(period_files['sent'])
+            files_by_name.update(period_files['processed'])
+
+            if not files_by_name:
                 self.send_json_response({"error": "Nenhum arquivo PDF encontrado"}, 404)
                 return
             
-            print(f"📄 {len(pdf_files)} arquivos encontrados")
+            print(
+                f"📄 {len(files_by_name)} arquivos encontrados "
+                f"({len(period_files['processed'])} em processed, "
+                f"{len(period_files['sent'])} em enviados)"
+            )
             
             # Criar ZIP em memória
             zip_buffer = BytesIO()
             with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                for pdf_file in pdf_files:
-                    file_path = os.path.join(source_dir, pdf_file)
+                for pdf_file in sorted(files_by_name):
+                    file_path = files_by_name[pdf_file]
+
+                    # O download pode acontecer durante um envio. Se o PDF tiver
+                    # sido movido depois do inventário, localizá-lo novamente no
+                    # destino antes de desistir.
+                    if not os.path.exists(file_path):
+                        refreshed = build_payroll_inventory().get(
+                            (payroll_type, month, year),
+                            {'processed': {}, 'sent': {}}
+                        )
+                        file_path = (
+                            refreshed['processed'].get(pdf_file)
+                            or refreshed['sent'].get(pdf_file)
+                        )
+
+                    if not file_path or not os.path.exists(file_path):
+                        raise FileNotFoundError(
+                            f"Arquivo mudou de local durante a exportação: {pdf_file}"
+                        )
+
                     zip_file.write(file_path, pdf_file)
             
             zip_buffer.seek(0)
             zip_data = zip_buffer.getvalue()
             
             # Nome do arquivo ZIP
-            type_name = formatter.PAYROLL_TYPES[payroll_type]
+            type_name = PAYROLL_TYPE_NAMES[payroll_type]
             zip_filename = f"Holerites_{type_name}_{month:02d}_{year}.zip"
             
             print(f"✅ ZIP criado: {zip_filename} ({len(zip_data)} bytes)")
@@ -8108,15 +8167,22 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             
             file_path = None
             found_in_dir = None
+
+            def find_in_tree(root_dir, target_filename):
+                """Localiza um arquivo na raiz ou nas subpastas de um diretório."""
+                if not os.path.isdir(root_dir):
+                    return None
+                for current_dir, _, filenames in os.walk(root_dir):
+                    if target_filename in filenames:
+                        return os.path.join(current_dir, target_filename)
+                return None
             
-            # 1. Procurar primeiro em enviados/ (mais comum)
+            # 1. Procurar primeiro em enviados/ e suas subpastas por período
             enviados_dir = possible_dirs[0]
-            if os.path.exists(enviados_dir):
-                test_path = os.path.join(enviados_dir, filename)
-                if os.path.exists(test_path):
-                    file_path = test_path
-                    found_in_dir = enviados_dir
-                    print(f"✅ Arquivo encontrado em: enviados/")
+            file_path = find_in_tree(enviados_dir, filename)
+            if file_path:
+                found_in_dir = os.path.dirname(file_path)
+                print(f"✅ Arquivo encontrado em: {found_in_dir}")
             
             # 2. Se não encontrou, procurar nas subpastas de processed/
             if not file_path:
@@ -8138,14 +8204,12 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             if not file_path:
                 alt_filename = filename.replace('_holerite_', '_holerite__')
                 
-                # Tentar em enviados/
-                if os.path.exists(enviados_dir):
-                    test_path = os.path.join(enviados_dir, alt_filename)
-                    if os.path.exists(test_path):
-                        file_path = test_path
-                        found_in_dir = enviados_dir
-                        filename = alt_filename
-                        print(f"✅ Arquivo encontrado com underscore duplo em: enviados/")
+                # Tentar em enviados/ e suas subpastas
+                file_path = find_in_tree(enviados_dir, alt_filename)
+                if file_path:
+                    found_in_dir = os.path.dirname(file_path)
+                    filename = alt_filename
+                    print(f"✅ Arquivo encontrado com underscore duplo em: {found_in_dir}")
                 
                 # Tentar em subpastas de processed/
                 if not file_path and os.path.exists(processed_dir):

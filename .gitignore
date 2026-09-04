@@ -111,4 +111,5 @@ tests/
 docker-compose.override.yml
 data/
 *.sh
+!backend/docker-entrypoint.sh
 *.ps1

@@ -214,16 +214,26 @@ const PayrollProcessor = () => {
                     <div className="flex items-center justify-between mb-2">
                       <h3 className="text-sm font-medium text-gray-900 truncate">{period.folder}</h3>
                     </div>
-                    <p className="text-xs text-gray-500 mb-3">
-                      {period.file_count} arquivo{period.file_count !== 1 ? 's' : ''}
-                    </p>
+                    <div className="text-xs text-gray-500 mb-3 space-y-1">
+                      <p className="font-medium text-gray-700">
+                        {period.file_count} arquivo{period.file_count !== 1 ? 's' : ''} no total
+                      </p>
+                      <div className="flex gap-3">
+                        <span className="text-amber-600">
+                          {period.pending_count ?? period.file_count} pendente{(period.pending_count ?? period.file_count) !== 1 ? 's' : ''}
+                        </span>
+                        <span className="text-green-600">
+                          {period.sent_count ?? 0} enviado{(period.sent_count ?? 0) !== 1 ? 's' : ''}
+                        </span>
+                      </div>
+                    </div>
                     <button
                       onClick={() => handleDownloadZip(period.payroll_type, period.month, period.year)}
                       disabled={processing}
                       className="w-full inline-flex items-center justify-center px-2 py-1.5 border border-blue-300 text-xs font-medium rounded-md text-blue-700 bg-blue-50 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       <ArrowDownTrayIcon className="h-3.5 w-3.5 mr-1" />
-                      Baixar
+                      Baixar ZIP completo
                     </button>
                   </div>
                 ))}

@@ -9,6 +9,11 @@ FROM node:18-alpine AS builder
 
 WORKDIR /build
 
+# A aplicação usa o proxy /api do Nginx por padrão. O valor pode ser
+# sobrescrito no build com --build-arg REACT_APP_API_URL=...
+ARG REACT_APP_API_URL=/api/v1
+ENV REACT_APP_API_URL=${REACT_APP_API_URL}
+
 # Copiar package files
 COPY package*.json ./
 
@@ -18,9 +23,6 @@ RUN npm ci --only=production && \
 
 # Copiar código fonte
 COPY . .
-
-# Copiar .env.production para ser usado no build
-COPY .env.production .env.production
 
 # Build da aplicação (criar build otimizado para produção)
 RUN npm run build

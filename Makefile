@@ -5,7 +5,7 @@
 .PHONY: help build test push deploy clean logs status
 
 # Variáveis
-DOCKER_USERNAME ?= nexorh
+DOCKER_USERNAME ?= lucasplcorrea
 BACKEND_IMAGE = $(DOCKER_USERNAME)/nexo-rh-backend
 FRONTEND_IMAGE = $(DOCKER_USERNAME)/nexo-rh-frontend
 TAG ?= latest
