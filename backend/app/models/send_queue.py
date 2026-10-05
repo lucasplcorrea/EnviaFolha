@@ -100,6 +100,8 @@ class SendQueueItem(Base, TimestampMixin):
     
     # Detalhes
     phone_number = Column(String(20))
+    channel = Column(String(20), nullable=False, default='whatsapp')
+    recipient = Column(String(320))
     file_path = Column(String(500))
     
     # Resultado

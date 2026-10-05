@@ -19,7 +19,7 @@ def run_all_migrations():
     # Listar todos os arquivos Python de migration
     migration_files = sorted([
         f for f in migrations_dir.glob('*.py')
-        if f.name != '__init__.py' and not f.name.startswith('_')
+        if f.name not in {'__init__.py', 'env.py'} and not f.name.startswith('_')
     ])
     
     if not migration_files:

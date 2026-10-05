@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import toast from 'react-hot-toast';
 import api from '../services/api';
@@ -7,6 +7,48 @@ const UtilityScripts = () => {
   const { config } = useTheme();
   const [loadingScripts, setLoadingScripts] = useState({});
   const [scriptResults, setScriptResults] = useState({});
+  const [smtpStatus, setSmtpStatus] = useState(null);
+  const [loadingSmtp, setLoadingSmtp] = useState(true);
+  const [testingSmtp, setTestingSmtp] = useState(false);
+  const [smtpTestResult, setSmtpTestResult] = useState(null);
+
+  const loadSmtpStatus = async () => {
+    try {
+      setLoadingSmtp(true);
+      const response = await api.get('/email/status');
+      setSmtpStatus(response.data);
+    } catch (error) {
+      setSmtpStatus({
+        configured: false,
+        error: error.response?.data?.error || error.response?.data?.detail || 'Não foi possível consultar o SMTP'
+      });
+    } finally {
+      setLoadingSmtp(false);
+    }
+  };
+
+  useEffect(() => {
+    loadSmtpStatus();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const testSmtpConnection = async () => {
+    try {
+      setTestingSmtp(true);
+      setSmtpTestResult(null);
+      const response = await api.post('/email/test-connection');
+      setSmtpTestResult({ success: true, message: 'Conexão e autenticação SMTP realizadas com sucesso.' });
+      toast.success(response.data?.status === 'connected' ? 'SMTP conectado com sucesso!' : 'Teste SMTP concluído');
+    } catch (error) {
+      const message = error.response?.data?.error_message
+        || error.response?.data?.error
+        || error.response?.data?.detail
+        || 'Não foi possível conectar ao servidor SMTP';
+      setSmtpTestResult({ success: false, message });
+      toast.error(message);
+    } finally {
+      setTestingSmtp(false);
+    }
+  };
 
   const scripts = [
     {
@@ -212,6 +254,62 @@ const UtilityScripts = () => {
             </p>
           </div>
         </div>
+      </div>
+
+      {/* SMTP diagnostics */}
+      <div className={`${config.classes.card} shadow rounded-lg p-6 ${config.classes.border}`}>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <div className="flex items-center gap-3">
+              <span className="text-3xl">✉️</span>
+              <div>
+                <h3 className={`text-lg font-medium ${config.classes.text}`}>
+                  Teste de SMTP
+                </h3>
+                <p className={`text-sm ${config.classes.textSecondary}`}>
+                  Verifica conexão segura e autenticação sem enviar nenhum e-mail.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 text-sm">
+              {loadingSmtp ? (
+                <span className={config.classes.textSecondary}>Consultando configuração...</span>
+              ) : (
+                <div className="space-y-1">
+                  <p className={config.classes.text}>
+                    <strong>Status:</strong>{' '}
+                    <span className={smtpStatus?.configured ? 'text-green-600' : 'text-red-600'}>
+                      {smtpStatus?.configured ? 'Configurado' : 'Não configurado'}
+                    </span>
+                  </p>
+                  {smtpStatus?.from && <p className={config.classes.textSecondary}><strong>Remetente:</strong> {smtpStatus.from}</p>}
+                  {smtpStatus?.security && <p className={config.classes.textSecondary}><strong>Segurança:</strong> {smtpStatus.security}</p>}
+                  {smtpStatus?.error && <p className="text-red-600">{smtpStatus.error}</p>}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={testSmtpConnection}
+            disabled={loadingSmtp || testingSmtp || !smtpStatus?.configured}
+            className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-400"
+          >
+            {testingSmtp ? 'Testando conexão...' : 'Testar conexão SMTP'}
+          </button>
+        </div>
+
+        {smtpTestResult && (
+          <div className={`mt-4 rounded-lg border p-3 text-sm ${
+            smtpTestResult.success
+              ? 'border-green-200 bg-green-50 text-green-800'
+              : 'border-red-200 bg-red-50 text-red-800'
+          }`}>
+            {smtpTestResult.message}
+          </div>
+        )}
       </div>
 
       {/* Info Card */}

@@ -75,7 +75,9 @@ class ReportsRouter(BaseRouter):
                     
                     # Aplicar filtro de status
                     if status_filter == 'success':
-                        payroll_query = payroll_query.filter(PayrollSend.status == 'sent')
+                        payroll_query = payroll_query.filter(
+                            PayrollSend.status.in_(['sent', 'accepted'])
+                        )
                     elif status_filter == 'failed':
                         payroll_query = payroll_query.filter(PayrollSend.status == 'failed')
                     
@@ -92,6 +94,8 @@ class ReportsRouter(BaseRouter):
                             'status': send.status,
                             'sent_at': send.sent_at.isoformat() if send.sent_at else None,
                             'month': send.month,
+                            'channel': send.channel,
+                            'recipient': send.recipient,
                             'error_message': send.error_message
                         })
                 
@@ -184,7 +188,7 @@ class ReportsRouter(BaseRouter):
                 # Estatísticas de holerites
                 total_payrolls = db.query(func.count(PayrollSend.id)).scalar() or 0
                 success_payrolls = db.query(func.count(PayrollSend.id)).filter(
-                    PayrollSend.status == 'sent'
+                    PayrollSend.status.in_(['sent', 'accepted'])
                 ).scalar() or 0
                 failed_payrolls = db.query(func.count(PayrollSend.id)).filter(
                     PayrollSend.status == 'failed'

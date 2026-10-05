@@ -50,5 +50,14 @@ class Employee(Base, TimestampMixin):
     # new and old code can coexist during migration.
     payroll_data = relationship("PayrollData", back_populates="employee")
 
+    @property
+    def full_name(self):
+        """Alias legado para os fluxos que usam o contrato da API."""
+        return self.name
+
+    @full_name.setter
+    def full_name(self, value):
+        self.name = value
+
     def __repr__(self):
         return f"<Employee(unique_id='{self.unique_id}', name='{self.name}')>"

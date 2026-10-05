@@ -16,6 +16,34 @@ import sys
 import re
 import time
 import random
+import hashlib
+
+
+VALID_COMPANY_CODES = {'0059', '0060'}
+
+
+def normalize_company_code(value):
+    """Normaliza e valida o código das empresas suportadas pelo sistema."""
+    digits = re.sub(r'\D', '', str(value or ''))
+    normalized = digits.zfill(4) if digits else ''
+    if normalized not in VALID_COMPANY_CODES:
+        raise ValueError("Código da empresa deve ser 0059 ou 0060")
+    return normalized
+
+
+def normalize_cpf(value):
+    """Valida os dígitos verificadores e retorna o CPF formatado."""
+    digits = re.sub(r'\D', '', str(value or ''))
+    if len(digits) != 11 or digits == digits[0] * 11:
+        raise ValueError("CPF inválido")
+
+    for length in (9, 10):
+        total = sum(int(digits[index]) * (length + 1 - index) for index in range(length))
+        check_digit = (total * 10 % 11) % 10
+        if check_digit != int(digits[length]):
+            raise ValueError("CPF inválido")
+
+    return f"{digits[:3]}.{digits[3:6]}.{digits[6:9]}-{digits[9:]}"
 
 
 # Metadados usados tanto no processamento quanto no arquivamento/exportação.
@@ -27,6 +55,22 @@ PAYROLL_TYPE_NAMES = {
     '91': 'Adiantamento_Salarial'
 }
 
+PAYROLL_MONTH_NAMES = {
+    'janeiro': 1,
+    'fevereiro': 2,
+    'marco': 3,
+    'março': 3,
+    'abril': 4,
+    'maio': 5,
+    'junho': 6,
+    'julho': 7,
+    'agosto': 8,
+    'setembro': 9,
+    'outubro': 10,
+    'novembro': 11,
+    'dezembro': 12,
+}
+
 
 def parse_payroll_filename(filename):
     """Extrai matrícula, tipo e competência de um PDF no padrão RH Gestor."""
@@ -36,7 +80,25 @@ def parse_payroll_filename(filename):
         re.IGNORECASE
     )
     if not match:
-        return None
+        # Formato usado pelas primeiras versões:
+        # MATRICULA_holerite_janeiro_2026.pdf. Como não havia código de
+        # evento no nome, esses arquivos pertencem à folha mensal (11).
+        legacy_match = re.match(
+            r'^(.+)_holerite_([a-zçã]+)_([0-9]{4})\.pdf$',
+            os.path.basename(filename),
+            re.IGNORECASE,
+        )
+        if not legacy_match:
+            return None
+        month = PAYROLL_MONTH_NAMES.get(legacy_match.group(2).lower())
+        if not month:
+            return None
+        return {
+            'registration': legacy_match.group(1),
+            'payroll_type': '11',
+            'month': month,
+            'year': int(legacy_match.group(3)),
+        }
 
     payroll_type = match.group(2)
     month = int(match.group(3))
@@ -58,31 +120,75 @@ def payroll_period_folder(payroll_type, month, year):
 
 
 def build_payroll_inventory():
-    """Indexa PDFs pendentes e enviados por tipo/mês/ano, sem duplicá-los."""
+    """Indexa PDFs atuais e legados por tipo/mês/ano, sem duplicá-los."""
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    roots = {
-        'processed': os.path.join(base_dir, 'processed'),
-        'sent': os.path.join(base_dir, 'enviados')
-    }
+    roots = [
+        ('processed', 'processed', os.path.join(base_dir, 'processed')),
+        (
+            'processed',
+            'holerites_formatados_final',
+            os.path.join(base_dir, 'holerites_formatados_final'),
+        ),
+        ('sent', 'enviados', os.path.join(base_dir, 'enviados')),
+        ('sent', 'sent', os.path.join(base_dir, 'sent')),
+    ]
     inventory = {}
 
-    for status_name, root_dir in roots.items():
+    for status_name, source_name, root_dir in roots:
         if not os.path.isdir(root_dir):
             continue
+        indexed_count = 0
+        ignored_count = 0
         for current_dir, _, filenames in os.walk(root_dir):
             for filename in filenames:
                 metadata = parse_payroll_filename(filename)
                 if not metadata:
+                    if filename.lower().endswith('.pdf'):
+                        ignored_count += 1
                     continue
                 key = (
                     metadata['payroll_type'],
                     metadata['month'],
                     metadata['year']
                 )
-                period = inventory.setdefault(key, {'processed': {}, 'sent': {}})
-                period[status_name][filename] = os.path.join(current_dir, filename)
+                period = inventory.setdefault(
+                    key,
+                    {'processed': {}, 'sent': {}, 'sources': {}},
+                )
+                period[status_name].setdefault(
+                    filename,
+                    os.path.join(current_dir, filename),
+                )
+                period['sources'][source_name] = period['sources'].get(source_name, 0) + 1
+                indexed_count += 1
+        print(
+            f"📂 Inventário: {indexed_count} PDF(s) reconhecido(s) e "
+            f"{ignored_count} ignorado(s) em {root_dir}"
+        )
 
     return inventory
+
+
+def resolve_payroll_file(filename):
+    """Localiza um PDF apenas nos diretórios autorizados, sem confiar no caminho do cliente."""
+    safe_filename = os.path.basename(filename or '')
+    if not safe_filename or safe_filename != filename or not safe_filename.lower().endswith('.pdf'):
+        return None
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    allowed_roots = [
+        os.path.join(base_dir, 'processed'),
+        os.path.join(base_dir, 'enviados'),
+        os.path.join(base_dir, 'holerites_formatados_final'),
+        os.path.join(base_dir, 'sent'),
+    ]
+    for root_dir in allowed_roots:
+        if not os.path.isdir(root_dir):
+            continue
+        for current_dir, _, filenames in os.walk(root_dir):
+            if safe_filename in filenames:
+                return os.path.join(current_dir, safe_filename)
+    return None
 
 try:
     import PyPDF2
@@ -192,7 +298,8 @@ def setup_database():
             db_name = os.getenv('DB_NAME', 'enviafolha_db')
             database_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
         
-        print(f"🔌 Conectando ao PostgreSQL: {database_url}")
+        safe_database_url = re.sub(r'(?<=://)([^:/]+):([^@]+)@', r'\1:***@', database_url)
+        print(f"🔌 Conectando ao PostgreSQL: {safe_database_url}")
         
         # Criar engine com connection pooling otimizado
         engine = create_engine(
@@ -332,13 +439,15 @@ jobs_lock = threading.Lock()
 
 class BulkSendJob:
     """Representa um job de envio em background"""
-    def __init__(self, job_id, total_files):
+    def __init__(self, job_id, total_files, channel='whatsapp'):
         self.job_id = job_id
+        self.channel = channel
         self.status = 'running'  # running, completed, failed
         self.total_files = total_files
         self.processed_files = 0
         self.successful_sends = 0
         self.failed_sends = 0
+        self.skipped_sends = 0
         self.failed_employees = []
         self.start_time = datetime.now()
         self.end_time = None
@@ -350,11 +459,13 @@ class BulkSendJob:
         elapsed = (self.end_time or datetime.now()) - self.start_time
         return {
             'job_id': self.job_id,
+            'channel': self.channel,
             'status': self.status,
             'total_files': self.total_files,
             'processed_files': self.processed_files,
             'successful_sends': self.successful_sends,
             'failed_sends': self.failed_sends,
+            'skipped_sends': self.skipped_sends,
             'failed_employees': self.failed_employees,
             'progress_percentage': round((self.processed_files / self.total_files) * 100, 1) if self.total_files > 0 else 0,
             'start_time': self.start_time.isoformat(),
@@ -364,16 +475,51 @@ class BulkSendJob:
             'current_file': self.current_file
         }
 
-def load_employees_data():
+def employee_to_dict(employee):
+    """Converte Employee para o contrato legado utilizado pelo frontend."""
+    employment_status = employee.employment_status or "Ativo"
+    normalized_status = employment_status.lower()
+    effective_is_active = bool(employee.is_active) and not (
+        'desligad' in normalized_status or 'demitid' in normalized_status
+    )
+    return {
+        "id": employee.id,
+        "unique_id": employee.unique_id,
+        "full_name": employee.name,
+        "cpf": employee.cpf or "",
+        "phone_number": employee.phone or "",
+        "email": employee.email or "",
+        "department": employee.department or "",
+        "position": employee.position or "",
+        "company_code": employee.company_code or "",
+        "registration_number": employee.registration_number or "",
+        "birth_date": employee.birth_date.isoformat() if employee.birth_date else "",
+        "sex": employee.sex or "",
+        "marital_status": employee.marital_status or "",
+        "admission_date": employee.admission_date.isoformat() if employee.admission_date else "",
+        "contract_type": employee.contract_type or "",
+        "employment_status": employment_status,
+        "termination_date": employee.termination_date.isoformat() if employee.termination_date else "",
+        "leave_start_date": employee.leave_start_date.isoformat() if employee.leave_start_date else "",
+        "leave_end_date": employee.leave_end_date.isoformat() if employee.leave_end_date else "",
+        "status_reason": employee.status_reason or "",
+        "is_active": effective_is_active,
+    }
+
+
+def load_employees_data(status='active'):
     """Carrega dados dos funcionários do PostgreSQL ou JSON como fallback com cache"""
     global employees_cache
+
+    if status not in {'active', 'inactive', 'all'}:
+        raise ValueError("Status de colaborador inválido")
     
     # Verificar se cache é válido
     import time
     current_time = time.time()
     cache_age = current_time - employees_cache['last_update']
     
-    if employees_cache['data'] is not None and cache_age < employees_cache['ttl']:
+    if status == 'active' and employees_cache['data'] is not None and cache_age < employees_cache['ttl']:
         # Retornar do cache
         print(f"💾 Usando cache de employees (idade: {cache_age:.1f}s)")
         return employees_cache['data']
@@ -391,34 +537,30 @@ def load_employees_data():
             db = SessionLocal()
             
             print("📊 Executando query para buscar employees...")
-            employees = db.query(Employee).filter(Employee.is_active == True).all()
+            from sqlalchemy import func
+
+            query = db.query(Employee)
+            normalized_status = func.lower(func.coalesce(Employee.employment_status, ''))
+            if status == 'active':
+                query = query.filter(
+                    Employee.is_active.is_(True),
+                    ~normalized_status.like('%desligad%'),
+                    ~normalized_status.like('%demitid%'),
+                )
+            elif status == 'inactive':
+                from sqlalchemy import or_
+                query = query.filter(or_(
+                    Employee.is_active.is_(False),
+                    normalized_status.like('%desligad%'),
+                    normalized_status.like('%demitid%'),
+                ))
+            employees = query.order_by(Employee.name.asc()).all()
             print(f"✅ Query concluída: {len(employees)} employees encontrados")
             
             # Converter para formato compatível incluindo novos campos
             employees_data = []
             for emp in employees:
-                emp_dict = {
-                    "id": emp.id,
-                    "unique_id": emp.unique_id,
-                    "full_name": emp.name,
-                    "cpf": emp.cpf or "",
-                    "phone_number": emp.phone or "",
-                    "email": emp.email or "",
-                    "department": emp.department or "",
-                    "position": emp.position or "",
-                    "birth_date": emp.birth_date.isoformat() if emp.birth_date else "",
-                    "sex": emp.sex or "",
-                    "marital_status": emp.marital_status or "",
-                    "admission_date": emp.admission_date.isoformat() if emp.admission_date else "",
-                    "contract_type": emp.contract_type or "",
-                    "employment_status": emp.employment_status or "Ativo",
-                    "termination_date": emp.termination_date.isoformat() if emp.termination_date else "",
-                    "leave_start_date": emp.leave_start_date.isoformat() if emp.leave_start_date else "",
-                    "leave_end_date": emp.leave_end_date.isoformat() if emp.leave_end_date else "",
-                    "status_reason": emp.status_reason or "",
-                    "is_active": emp.is_active
-                }
-                employees_data.append(emp_dict)
+                employees_data.append(employee_to_dict(emp))
             
             print(f"✅ Carregados {len(employees_data)} funcionários do PostgreSQL")
             
@@ -429,8 +571,9 @@ def load_employees_data():
             
             # Atualizar cache
             result = {"employees": employees_data, "users": []}
-            employees_cache['data'] = result
-            employees_cache['last_update'] = current_time
+            if status == 'active':
+                employees_cache['data'] = result
+                employees_cache['last_update'] = current_time
             
             return result
             
@@ -454,7 +597,21 @@ def load_employees_data():
                 data = json.load(f)
                 employees_count = len(data.get('employees', []))
                 print(f"✅ Carregados {employees_count} funcionários do arquivo JSON")
-                return data
+                if status == 'all':
+                    return data
+                def is_inactive(employee):
+                    employment_status = str(employee.get('employment_status', '')).lower()
+                    return (
+                        not bool(employee.get('is_active', True))
+                        or 'desligad' in employment_status
+                        or 'demitid' in employment_status
+                    )
+
+                filtered = [
+                    employee for employee in data.get('employees', [])
+                    if is_inactive(employee) == (status == 'inactive')
+                ]
+                return {**data, 'employees': filtered}
         else:
             print("⚠️  Arquivo employees.json não encontrado. Criando estrutura vazia.")
             return {"employees": [], "users": []}
@@ -485,7 +642,7 @@ def get_employee_by_id(employee_id):
             try:
                 emp_id = int(employee_id)
                 print(f"🔢 Tentando buscar por ID numérico: {emp_id}")
-                employee = db.query(Employee).filter(Employee.id == emp_id, Employee.is_active == True).first()
+                employee = db.query(Employee).filter(Employee.id == emp_id).first()
             except ValueError:
                 print(f"⚠️  Não é ID numérico, tentando por unique_id")
                 employee = None
@@ -493,34 +650,14 @@ def get_employee_by_id(employee_id):
             # Se não encontrou por ID, buscar por unique_id
             if not employee:
                 print(f"🔍 Buscando por unique_id: {employee_id}")
-                employee = db.query(Employee).filter(Employee.unique_id == employee_id, Employee.is_active == True).first()
+                employee = db.query(Employee).filter(Employee.unique_id == employee_id).first()
             
             if not employee:
                 print(f"❌ Funcionário {employee_id} não encontrado")
                 return None
             
             # Converter para dicionário
-            emp_dict = {
-                "id": employee.id,
-                "unique_id": employee.unique_id,
-                "full_name": employee.name,
-                "cpf": employee.cpf,
-                "phone_number": employee.phone,
-                "email": employee.email or "",
-                "department": employee.department or "",
-                "position": employee.position or "",
-                "birth_date": employee.birth_date.isoformat() if employee.birth_date else "",
-                "sex": employee.sex or "",
-                "marital_status": employee.marital_status or "",
-                "admission_date": employee.admission_date.isoformat() if employee.admission_date else "",
-                "contract_type": employee.contract_type or "",
-                "employment_status": employee.employment_status or "Ativo",
-                "termination_date": employee.termination_date.isoformat() if employee.termination_date else "",
-                "leave_start_date": employee.leave_start_date.isoformat() if employee.leave_start_date else "",
-                "leave_end_date": employee.leave_end_date.isoformat() if employee.leave_end_date else "",
-                "status_reason": employee.status_reason or "",
-                "is_active": employee.is_active
-            }
+            emp_dict = employee_to_dict(employee)
             
             print(f"✅ Funcionário {employee.name} (ID: {employee.id}) encontrado diretamente no banco")
             return emp_dict
@@ -582,6 +719,11 @@ def save_employee_to_db(employee_data, created_by_user_id=3):
                 existing.email = employee_data.get('email', existing.email)
                 existing.department = employee_data.get('department', existing.department)
                 existing.position = employee_data.get('position', existing.position)
+                existing.cpf = employee_data.get('cpf', existing.cpf)
+                existing.company_code = employee_data.get('company_code', existing.company_code)
+                existing.registration_number = employee_data.get(
+                    'registration_number', existing.registration_number
+                )
                 existing.is_active = employee_data.get('is_active', existing.is_active)
                 
                 # Atualizar novos campos RH
@@ -625,16 +767,19 @@ def save_employee_to_db(employee_data, created_by_user_id=3):
                 new_employee = Employee(
                     unique_id=employee_data.get('unique_id'),
                     name=employee_data.get('full_name'),
-                    cpf=employee_data.get('unique_id', '000.000.000-00'),
+                    cpf=employee_data.get('cpf'),
                     phone=employee_data.get('phone_number'),
                     email=employee_data.get('email'),
                     department=employee_data.get('department'),
                     position=employee_data.get('position'),
+                    company_code=employee_data.get('company_code'),
+                    registration_number=employee_data.get('registration_number'),
                     birth_date=birth_date_obj,
                     sex=employee_data.get('sex'),
                     marital_status=employee_data.get('marital_status'),
                     admission_date=admission_date_obj,
                     contract_type=employee_data.get('contract_type'),
+                    employment_status=employee_data.get('employment_status', 'Ativo'),
                     status_reason=employee_data.get('status_reason'),
                     is_active=employee_data.get('is_active', True),
                     created_by=created_by_user_id
@@ -689,6 +834,234 @@ def save_employee_to_db(employee_data, created_by_user_id=3):
 
 # Carregar dados iniciais
 employees_data = load_employees_data()
+
+
+def process_email_send_in_background(
+    job_id,
+    selected_files,
+    subject_template,
+    body_template,
+    user_id,
+    force_resend=False,
+):
+    """Processa um lote SMTP sem mover os PDFs entre diretórios."""
+    from app.core.config import settings
+    from app.models.employee import Employee
+    from app.models.payroll_send import PayrollSend
+    from app.models.send_queue import SendQueue
+    from app.services.email_service import (
+        DEFAULT_PAYROLL_BODY,
+        DEFAULT_PAYROLL_SUBJECT,
+        EmailService,
+    )
+    from app.services.queue_manager import QueueManagerService
+
+    with jobs_lock:
+        job = bulk_send_jobs.get(job_id)
+    if not job:
+        return
+
+    if not SessionLocal:
+        job.status = 'failed'
+        job.error_message = 'Banco de dados indisponível'
+        job.end_time = datetime.now()
+        return
+    if not settings.has_smtp_configured():
+        job.status = 'failed'
+        job.error_message = 'SMTP não configurado'
+        job.end_time = datetime.now()
+        return
+
+    db = SessionLocal()
+    queue_service = QueueManagerService(db)
+    queue_id = None
+    queue_item_map = {}
+    try:
+        queue_id = queue_service.create_queue(
+            user_id=user_id,
+            queue_type='payroll_email',
+            description=f'Envio por e-mail de {len(selected_files)} holerites',
+            total_items=len(selected_files),
+            metadata={
+                'job_id': job_id,
+                'channel': 'email',
+                'force_resend': bool(force_resend),
+            },
+        )
+        for file_info in selected_files:
+            employee_info = file_info.get('employee') or {}
+            filename = os.path.basename(file_info.get('filename') or '')
+            item = queue_service.add_queue_item(
+                queue_id=queue_id,
+                employee_id=employee_info.get('id'),
+                file_path=filename,
+                channel='email',
+                recipient=employee_info.get('email'),
+                metadata={'month_year': file_info.get('month_year', '')},
+            )
+            queue_item_map[filename] = item.id
+
+        queue = db.query(SendQueue).filter(SendQueue.queue_id == queue_id).first()
+        if queue:
+            queue.status = 'processing'
+            db.commit()
+
+        email_service = EmailService()
+        retries = max(1, settings.SMTP_MAX_RETRIES)
+        retry_delay = max(0, settings.SMTP_RETRY_DELAY_SECONDS)
+
+        for file_info in selected_files:
+            filename = os.path.basename(file_info.get('filename') or '')
+            job.current_file = filename
+            employee_info = file_info.get('employee') or {}
+            employee_id = employee_info.get('id')
+            item_id = queue_item_map.get(filename)
+
+            queue = db.query(SendQueue).filter(SendQueue.queue_id == queue_id).first()
+            if queue and queue.status == 'cancelled':
+                job.status = 'cancelled'
+                job.end_time = datetime.now()
+                return
+            while queue and queue.status == 'paused':
+                time.sleep(2)
+                db.refresh(queue)
+                if queue.status == 'cancelled':
+                    job.status = 'cancelled'
+                    job.end_time = datetime.now()
+                    return
+
+            employee = db.query(Employee).filter(Employee.id == employee_id).first() if employee_id else None
+            file_path = resolve_payroll_file(filename)
+            metadata = parse_payroll_filename(filename)
+            competence = (
+                f"{metadata['year']}-{metadata['month']:02d}"
+                if metadata else file_info.get('month_year', 'desconhecido')
+            )
+            recipient = (employee.email or '').strip() if employee else ''
+            employee_name = (
+                employee.name
+                if employee and employee.name
+                else employee_info.get('full_name', 'Colaborador(a)')
+            )
+
+            validation_error = None
+            if not employee:
+                validation_error = 'Colaborador não encontrado'
+            elif not file_path:
+                validation_error = 'Arquivo não encontrado nos diretórios autorizados'
+            else:
+                try:
+                    recipient = email_service.validate_recipient(recipient)
+                except ValueError:
+                    validation_error = 'Colaborador sem e-mail válido'
+
+            delivery_key_source = '|'.join([
+                str(employee_id or ''), competence, filename.lower(), 'email', recipient.lower()
+            ])
+            delivery_key = hashlib.sha256(delivery_key_source.encode('utf-8')).hexdigest()
+            existing = db.query(PayrollSend).filter(
+                PayrollSend.idempotency_key == delivery_key
+            ).first()
+
+            if existing and existing.status in {'accepted', 'sent'} and not force_resend:
+                job.skipped_sends += 1
+                job.processed_files += 1
+                queue_service.update_item_status(item_id, 'skipped', 'Envio já aceito anteriormente')
+                queue_service.update_queue_progress(queue_id=queue_id, processed=1)
+                continue
+
+            if validation_error:
+                job.failed_sends += 1
+                job.processed_files += 1
+                job.failed_employees.append({
+                    'employee': employee_name,
+                    'reason': validation_error,
+                })
+                queue_service.update_item_status(item_id, 'failed', validation_error)
+                queue_service.update_queue_progress(queue_id=queue_id, processed=1, failed=1)
+                continue
+
+            audit_key = delivery_key
+            extra_data = {'payroll_type': metadata.get('payroll_type') if metadata else None}
+            if existing and force_resend:
+                audit_key = f"{delivery_key}:{uuid.uuid4().hex[:12]}"
+                extra_data['resend_of'] = existing.id
+
+            delivery = existing if existing and not force_resend else PayrollSend(
+                employee_id=employee.id,
+                month=competence,
+                file_path=filename,
+                channel='email',
+                recipient=recipient,
+                status='pending',
+                attempt_count=0,
+                idempotency_key=audit_key,
+                user_id=user_id,
+                extra_data=extra_data,
+            )
+            if delivery.id is None:
+                db.add(delivery)
+            delivery.status = 'sending'
+            delivery.error_message = None
+            db.commit()
+
+            result = None
+            attempts = 0
+            for attempt in range(1, retries + 1):
+                attempts = attempt
+                result = email_service.send_payroll(
+                    recipient=recipient,
+                    employee_name=employee_name,
+                    file_path=file_path,
+                    competence=competence,
+                    subject_template=subject_template or DEFAULT_PAYROLL_SUBJECT,
+                    body_template=body_template or DEFAULT_PAYROLL_BODY,
+                )
+                if result.success:
+                    break
+                if attempt < retries and retry_delay:
+                    time.sleep(retry_delay * (2 ** (attempt - 1)))
+
+            delivery.attempt_count = (delivery.attempt_count or 0) + attempts
+            delivery.provider_message_id = result.message_id if result else None
+            job.processed_files += 1
+            if result and result.success:
+                delivery.status = 'accepted'
+                delivery.sent_at = datetime.now()
+                job.successful_sends += 1
+                queue_service.update_item_status(item_id, 'sent')
+                queue_service.update_queue_progress(queue_id=queue_id, processed=1, successful=1)
+            else:
+                error_message = result.error_message if result else 'Falha desconhecida no SMTP'
+                delivery.status = 'failed'
+                delivery.error_message = error_message
+                job.failed_sends += 1
+                job.failed_employees.append({
+                    'employee': employee_name,
+                    'reason': error_message,
+                })
+                queue_service.update_item_status(item_id, 'failed', error_message)
+                queue_service.update_queue_progress(queue_id=queue_id, processed=1, failed=1)
+            db.commit()
+
+        job.status = 'completed'
+        job.current_file = None
+        job.end_time = datetime.now()
+    except Exception as exc:
+        db.rollback()
+        job.status = 'failed'
+        job.error_message = f'Falha no processamento do lote de e-mail: {exc}'
+        job.end_time = datetime.now()
+        if queue_id:
+            queue = db.query(SendQueue).filter(SendQueue.queue_id == queue_id).first()
+            if queue:
+                queue.status = 'failed'
+                queue.error_message = 'Falha interna no processamento do lote'
+                queue.completed_at = datetime.now()
+                db.commit()
+    finally:
+        db.close()
+
 
 def process_bulk_send_in_background(job_id, selected_files, message_templates, user_id):
     """
@@ -1116,6 +1489,9 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                                 employee_id=employee_id,
                                 month=month_for_db,
                                 file_path=filename,
+                                channel='whatsapp',
+                                recipient=phone_number,
+                                attempt_count=1,
                                 status='sent',
                                 sent_at=datetime.now(),
                                 user_id=user_id
@@ -1232,6 +1608,9 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                                 employee_id=employee_id,
                                 month=month_for_db,
                                 file_path=filename,
+                                channel='whatsapp',
+                                recipient=phone_number,
+                                attempt_count=1,
                                 status='failed',
                                 error_message=last_error,
                                 user_id=user_id
@@ -1545,6 +1924,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         elif path == '/api/v1/evolution/instances':
             from app.routes import SystemRouter
             SystemRouter(self).handle_evolution_instances_status()
+        elif path == '/api/v1/email/status':
+            self.handle_email_status()
         elif path == '/api/v1/system/status':
             from app.routes import SystemRouter
             SystemRouter(self).handle_system_status()
@@ -1707,6 +2088,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_export_payroll_batch()
         elif path == '/api/v1/payrolls/bulk-send':
             self.handle_bulk_send_payrolls()
+        elif path == '/api/v1/payrolls/email/bulk-send':
+            self.handle_bulk_send_payrolls_email()
         elif path == '/api/v1/payrolls/delete-file':
             self.handle_delete_payroll_file()
         elif path == '/api/v1/files/upload':
@@ -1715,6 +2098,8 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             self.handle_send_communication()
         elif path == '/api/v1/evolution/test-message':
             self.handle_test_evolution_message()
+        elif path == '/api/v1/email/test-connection':
+            self.handle_test_email_connection()
         elif path.startswith('/api/v1/scripts/'):
             script_id = path.split('/')[-1]
             self.handle_execute_script(script_id)
@@ -1936,12 +2321,18 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
     def send_employees_list(self):
         """Lista todos os funcionários"""
         try:
-            current_data = load_employees_data()
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            status = query_params.get('status', ['active'])[0].lower()
+            if status not in {'active', 'inactive', 'all'}:
+                self.send_json_response({"error": "Situação de colaborador inválida"}, 400)
+                return
+            current_data = load_employees_data(status=status)
             employees = current_data.get('employees', [])
             
             response = {
                 "employees": employees,
                 "total": len(employees),
+                "status": status,
                 "source": "PostgreSQL" if SessionLocal else "JSON"
             }
             
@@ -2061,25 +2452,67 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
         }
         
         self.send_json_response(status)
+
+    def handle_email_status(self):
+        """Informa se o SMTP está pronto sem expor credenciais."""
+        user = self.get_authenticated_user()
+        if not user:
+            self.send_json_response({"detail": "Token de acesso necessário"}, 401)
+            return
+
+        try:
+            from app.core.config import settings
+            self.send_json_response({
+                "configured": settings.has_smtp_configured(),
+                "security": settings.get_smtp_security(),
+                "from": settings.SMTP_FROM,
+                "host_configured": bool(settings.SMTP_HOST),
+            })
+        except ValueError as exc:
+            self.send_json_response({
+                "configured": False,
+                "error": str(exc),
+            }, 500)
+
+    def handle_test_email_connection(self):
+        """Testa autenticação no SMTP sem enviar uma mensagem."""
+        user = self.get_authenticated_user()
+        if not user:
+            self.send_json_response({"detail": "Token de acesso necessário"}, 401)
+            return
+
+        from app.services.email_service import EmailService
+        result = EmailService().test_connection()
+        status_code = 200 if result.success else 503
+        self.send_json_response(result.to_dict(), status_code)
     
     def handle_payrolls_processed(self):
         """Lista de holerites processados (NOVO: busca em processed/ e subpastas)"""
         try:
             import os
             import glob
+
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            include_sent = query_params.get('include_sent', ['false'])[0].lower() == 'true'
             
             # NOVO: Diretório processed/ com subpastas organizadas
             processed_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'processed')
             
             # Fallback: pasta antiga para compatibilidade
             legacy_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'holerites_formatados_final')
+            sent_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'enviados')
             
-            if not os.path.exists(processed_dir) and not os.path.exists(legacy_dir):
+            if (
+                not os.path.exists(processed_dir)
+                and not os.path.exists(legacy_dir)
+                and (not include_sent or not os.path.exists(sent_dir))
+            ):
                 self.send_json_response({
                     "files": [],
                     "statistics": {
                         "total": 0,
                         "ready": 0,
+                        "email_ready": 0,
                         "orphan": 0,
                         "associated": 0
                     }
@@ -2092,6 +2525,14 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 pdf_files.extend(glob.glob(os.path.join(processed_dir, '**', '*.pdf'), recursive=True))
             if os.path.exists(legacy_dir):
                 pdf_files.extend(glob.glob(os.path.join(legacy_dir, '*.pdf')))
+            if include_sent and os.path.exists(sent_dir):
+                pdf_files.extend(glob.glob(os.path.join(sent_dir, '**', '*.pdf'), recursive=True))
+
+            # Se o mesmo arquivo existir em mais de uma pasta, priorizar processed/.
+            unique_pdf_files = {}
+            for pdf_path in pdf_files:
+                unique_pdf_files.setdefault(os.path.basename(pdf_path), pdf_path)
+            pdf_files = list(unique_pdf_files.values())
             
             # Carregar dados dos colaboradores
             employees_data = load_employees_data()
@@ -2104,6 +2545,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             stats = {
                 "total": 0,
                 "ready": 0,  # Com telefone e associado
+                "email_ready": 0,  # Com e-mail válido e associado
                 "orphan": 0,  # Sem colaborador cadastrado
                 "associated": 0  # Associado a um colaborador
             }
@@ -2158,24 +2600,35 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     "created_at": datetime.fromtimestamp(os.path.getctime(pdf_path)).isoformat(),
                     "is_orphan": employee is None,
                     "can_send": False,
+                    "can_send_email": False,
+                    "location": "sent" if os.path.commonpath([sent_dir, pdf_path]) == sent_dir else "processed",
                     "associated_employee": None
                 }
                 
                 if employee:
                     stats["associated"] += 1
                     phone = employee.get('phone_number', '').strip()
+                    email = employee.get('email', '').strip()
                     
                     file_info["associated_employee"] = {
                         "id": employee.get('id'),  # PRIMARY KEY para o banco
                         "unique_id": employee.get('unique_id'),
                         "full_name": employee.get('full_name'),
-                        "phone_number": phone
+                        "phone_number": phone,
+                        "email": email,
                     }
                     
                     # Pode enviar se tem telefone
                     if phone and len(phone) >= 10:
                         file_info["can_send"] = True
                         stats["ready"] += 1
+                    try:
+                        from app.services.email_service import EmailService
+                        EmailService.validate_recipient(email)
+                        file_info["can_send_email"] = True
+                        stats["email_ready"] += 1
+                    except ValueError:
+                        pass
                 else:
                     stats["orphan"] += 1
                 
@@ -2205,19 +2658,29 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             print(f"📝 Criando funcionário: {data}")
             
             # Validar dados obrigatórios
-            required_fields = ['unique_id', 'full_name', 'phone_number']
+            required_fields = ['unique_id', 'full_name', 'phone_number', 'cpf', 'company_code']
             for field in required_fields:
                 if not data.get(field):
                     self.send_json_response({"error": f"Campo obrigatório: {field}"}, 400)
                     return
+
+            try:
+                normalized_cpf = normalize_cpf(data.get('cpf'))
+                normalized_company_code = normalize_company_code(data.get('company_code'))
+            except ValueError as exc:
+                self.send_json_response({"error": str(exc)}, 400)
+                return
             
             # Verificar se unique_id já existe
-            current_data = load_employees_data()
+            current_data = load_employees_data(status='all')
             existing_employees = current_data.get('employees', [])
             
             for emp in existing_employees:
                 if emp.get('unique_id') == data.get('unique_id'):
                     self.send_json_response({"error": f"ID único {data.get('unique_id')} já existe"}, 400)
+                    return
+                if re.sub(r'\D', '', emp.get('cpf', '')) == re.sub(r'\D', '', normalized_cpf):
+                    self.send_json_response({"error": "CPF já cadastrado"}, 400)
                     return
             
             # Preparar dados do funcionário (campos básicos + novos campos RH)
@@ -2225,6 +2688,9 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 "unique_id": data.get('unique_id'),
                 "full_name": data.get('full_name'),
                 "phone_number": data.get('phone_number'),
+                "cpf": normalized_cpf,
+                "company_code": normalized_company_code,
+                "registration_number": data.get('registration_number') or data.get('unique_id'),
                 "email": data.get('email', ''),
                 "department": data.get('department', ''),
                 "position": data.get('position', ''),
@@ -2234,6 +2700,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 "admission_date": data.get('admission_date', ''),
                 "contract_type": data.get('contract_type', ''),
                 "status_reason": data.get('status_reason', ''),
+                "employment_status": "Ativo",
                 "is_active": True
             }
             
@@ -2291,6 +2758,35 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                         db.close()
                         self.send_json_response({"error": f"ID único {data.get('unique_id')} já existe"}, 400)
                         return
+
+                normalized_cpf = employee.cpf
+                if 'cpf' in data:
+                    try:
+                        normalized_cpf = normalize_cpf(data.get('cpf'))
+                    except ValueError as exc:
+                        db.close()
+                        self.send_json_response({"error": str(exc)}, 400)
+                        return
+                    cpf_digits = re.sub(r'\D', '', normalized_cpf)
+                    other_cpfs = db.query(Employee.id, Employee.cpf).filter(
+                        Employee.id != employee.id
+                    ).all()
+                    if any(
+                        re.sub(r'\D', '', stored_cpf or '') == cpf_digits
+                        for _, stored_cpf in other_cpfs
+                    ):
+                        db.close()
+                        self.send_json_response({"error": "CPF já cadastrado"}, 400)
+                        return
+
+                normalized_company_code = employee.company_code
+                if 'company_code' in data:
+                    try:
+                        normalized_company_code = normalize_company_code(data.get('company_code'))
+                    except ValueError as exc:
+                        db.close()
+                        self.send_json_response({"error": str(exc)}, 400)
+                        return
                 
                 # Atualizar campos básicos
                 if 'unique_id' in data:
@@ -2298,7 +2794,11 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 if 'full_name' in data:
                     employee.name = data['full_name']
                 if 'cpf' in data:
-                    employee.cpf = data['cpf']
+                    employee.cpf = normalized_cpf
+                if 'company_code' in data:
+                    employee.company_code = normalized_company_code
+                if 'registration_number' in data:
+                    employee.registration_number = data['registration_number'] or None
                 if 'phone_number' in data:
                     employee.phone = data['phone_number']
                 if 'email' in data:
@@ -2308,7 +2808,14 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 if 'position' in data:
                     employee.position = data['position']
                 if 'is_active' in data:
-                    employee.is_active = data['is_active']
+                    employee.is_active = bool(data['is_active'])
+                    if employee.is_active and (employee.employment_status or '').lower() in {
+                        'desligado', 'demitido'
+                    }:
+                        employee.employment_status = 'Ativo'
+                        employee.termination_date = None
+                    elif not employee.is_active:
+                        employee.employment_status = 'Desligado'
                 
                 # Atualizar novos campos de métricas RH
                 if 'birth_date' in data:
@@ -2380,27 +2887,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 db.commit()
                 
                 # Preparar resposta com todos os campos
-                updated_employee = {
-                    "id": employee.id,
-                    "unique_id": employee.unique_id,
-                    "full_name": employee.name,
-                    "cpf": employee.cpf,
-                    "phone_number": employee.phone,
-                    "email": employee.email or "",
-                    "department": employee.department or "",
-                    "position": employee.position or "",
-                    "is_active": employee.is_active,
-                    "birth_date": employee.birth_date.isoformat() if employee.birth_date else None,
-                    "sex": employee.sex or "",
-                    "marital_status": employee.marital_status or "",
-                    "admission_date": employee.admission_date.isoformat() if employee.admission_date else None,
-                    "contract_type": employee.contract_type or "",
-                    "employment_status": employee.employment_status or "Ativo",
-                    "termination_date": employee.termination_date.isoformat() if employee.termination_date else None,
-                    "leave_start_date": employee.leave_start_date.isoformat() if employee.leave_start_date else None,
-                    "leave_end_date": employee.leave_end_date.isoformat() if employee.leave_end_date else None,
-                    "status_reason": employee.status_reason or ""
-                }
+                updated_employee = employee_to_dict(employee)
                 
                 db.close()
                 
@@ -2439,6 +2926,10 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
                 # Soft delete (marcar como inativo)
                 employee.is_active = False
+                employee.employment_status = 'Desligado'
+                if not employee.termination_date:
+                    from datetime import date
+                    employee.termination_date = date.today()
                 db.commit()
                 
                 employee_name = employee.name
@@ -5365,13 +5856,14 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     "sent_count": len(sent_only_names),
                     "payroll_type": payroll_type,
                     "month": month,
-                    "year": year
+                    "year": year,
+                    "sources": files_by_status.get('sources', {}),
                 })
             
             # Ordenar por ano e mês (mais recentes primeiro)
             periods.sort(key=lambda x: (x.get('year', 0), x.get('month', 0)), reverse=True)
             
-            print(f"📁 {len(periods)} período(s) disponível(is) em processed/ e enviados/")
+            print(f"📁 {len(periods)} período(s) disponível(is) nas pastas atuais e legadas")
             self.send_json_response({"periods": periods})
             
         except Exception as e:
@@ -8251,6 +8743,62 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             import traceback
             traceback.print_exc()
             self.send_json_response({"error": f"Erro interno: {str(e)}"}, 500)
+
+    def handle_bulk_send_payrolls_email(self):
+        """Inicia um lote de holerites por e-mail e retorna imediatamente."""
+        try:
+            user = self.get_authenticated_user()
+            if not user:
+                self.send_json_response({"detail": "Token de acesso necessário"}, 401)
+                return
+
+            data = self.get_request_data()
+            selected_files = data.get('selected_files') or []
+            subject_template = (data.get('subject_template') or '').strip()
+            body_template = (data.get('body_template') or '').strip()
+            force_resend = bool(data.get('force_resend', False))
+
+            if not selected_files:
+                self.send_json_response({"error": "Nenhum arquivo selecionado"}, 400)
+                return
+            if len(selected_files) > 1000:
+                self.send_json_response({"error": "O lote excede o limite de 1000 arquivos"}, 400)
+                return
+            if len(subject_template) > 200:
+                self.send_json_response({"error": "O assunto excede 200 caracteres"}, 400)
+                return
+            if len(body_template) > 10000:
+                self.send_json_response({"error": "A mensagem excede 10000 caracteres"}, 400)
+                return
+
+            job_id = str(uuid.uuid4())
+            with jobs_lock:
+                job = BulkSendJob(job_id, len(selected_files), channel='email')
+                bulk_send_jobs[job_id] = job
+
+            thread = threading.Thread(
+                target=process_email_send_in_background,
+                args=(
+                    job_id,
+                    selected_files,
+                    subject_template,
+                    body_template,
+                    user.id,
+                    force_resend,
+                ),
+                daemon=True,
+            )
+            thread.start()
+            self.send_json_response({
+                "success": True,
+                "message": "Envio por e-mail iniciado em segundo plano",
+                "job_id": job_id,
+                "channel": "email",
+                "total_files": len(selected_files),
+                "status_endpoint": f"/api/v1/payrolls/bulk-send/{job_id}/status",
+            }, 202)
+        except Exception as exc:
+            self.send_json_response({"error": f"Erro ao iniciar lote de e-mail: {exc}"}, 500)
 
     def handle_bulk_send_payrolls(self):
         """Iniciar envio em lote em background e retornar job_id imediatamente"""

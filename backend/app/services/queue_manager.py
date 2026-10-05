@@ -77,16 +77,21 @@ class QueueManagerService:
     def add_queue_item(
         self,
         queue_id: str,
-        employee_id: int,
-        phone_number: str,
+        employee_id: Optional[int],
+        phone_number: Optional[str] = None,
         file_path: Optional[str] = None,
-        metadata: Optional[Dict] = None
+        metadata: Optional[Dict] = None,
+        channel: str = 'whatsapp',
+        recipient: Optional[str] = None,
     ) -> SendQueueItem:
         """Adiciona um item à fila."""
+        resolved_recipient = recipient or phone_number
         item = SendQueueItem(
             queue_id=queue_id,
             employee_id=employee_id,
             phone_number=phone_number,
+            channel=channel,
+            recipient=resolved_recipient,
             file_path=file_path,
             status='pending',
             item_metadata=metadata or {}
@@ -349,6 +354,8 @@ class QueueManagerService:
                 'employee_id': item.employee_id,
                 'employee_name': item.employee.name if item.employee else None,
                 'phone_number': item.phone_number,
+                'channel': item.channel,
+                'recipient': item.recipient,
                 'status': item.status,
                 'sent_at': item.sent_at.isoformat() if item.sent_at else None,
                 'error_message': item.error_message,

@@ -1,9 +1,14 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PlusIcon, DocumentArrowUpIcon, ChevronUpIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import api from '../services/api';
 import { useTheme } from '../contexts/ThemeContext';
+
+const COMPANY_OPTIONS = [
+  { code: '0059', name: 'Infraestrutura' },
+  { code: '0060', name: 'Empreendimentos' },
+];
 
 const Employees = () => {
   const navigate = useNavigate();
@@ -22,6 +27,8 @@ const Employees = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [positionFilter, setPositionFilter] = useState('');
+  const [companyFilter, setCompanyFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('active');
   
   // Estado de ordenação
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
@@ -36,6 +43,9 @@ const Employees = () => {
   
   const [formData, setFormData] = useState({
     unique_id: '',
+    registration_number: '',
+    cpf: '',
+    company_code: '',
     full_name: '',
     phone_number: '',
     email: '',
@@ -49,18 +59,10 @@ const Employees = () => {
     status_reason: ''
   });
 
-  useEffect(() => {
-    loadEmployees();
-    // Check if coming from import page with refresh parameter
-    const refresh = searchParams.get('refresh');
-    if (refresh) {
-      toast.success('Lista de colaboradores atualizada!');
-    }
-  }, [searchParams]);
-
-  const loadEmployees = async () => {
+  const loadEmployees = useCallback(async () => {
     try {
-      const response = await api.get('/employees');
+      setLoading(true);
+      const response = await api.get('/employees', { params: { status: statusFilter } });
       // Backend retorna { employees: [...], total: number, source: string }
       setEmployees(response.data.employees || []);
       
@@ -76,7 +78,16 @@ const Employees = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [statusFilter]);
+
+  useEffect(() => {
+    loadEmployees();
+    // Check if coming from import page with refresh parameter
+    const refresh = searchParams.get('refresh');
+    if (refresh) {
+      toast.success('Lista de colaboradores atualizada!');
+    }
+  }, [loadEmployees, searchParams]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -94,6 +105,9 @@ const Employees = () => {
       
       setFormData({
         unique_id: '',
+        registration_number: '',
+        cpf: '',
+        company_code: '',
         full_name: '',
         phone_number: '',
         email: '',
@@ -112,7 +126,7 @@ const Employees = () => {
       loadEmployees();
       
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Erro ao salvar colaborador');
+      toast.error(error.response?.data?.error || error.response?.data?.detail || 'Erro ao salvar colaborador');
     }
   };
 
@@ -120,6 +134,9 @@ const Employees = () => {
     setEditingEmployee(employee);
     setFormData({
       unique_id: employee.unique_id || '',
+      registration_number: employee.registration_number || employee.unique_id || '',
+      cpf: employee.cpf || '',
+      company_code: employee.company_code || '',
       full_name: employee.full_name || '',
       phone_number: employee.phone_number || '',
       email: employee.email || '',
@@ -130,7 +147,8 @@ const Employees = () => {
       marital_status: employee.marital_status || '',
       admission_date: employee.admission_date || '',
       contract_type: employee.contract_type || '',
-      status_reason: employee.status_reason || ''
+      status_reason: employee.status_reason || '',
+      is_active: employee.is_active !== false
     });
     setShowEditModal(true);
   };
@@ -141,6 +159,9 @@ const Employees = () => {
     setEditingEmployee(null);
     setFormData({
       unique_id: '',
+      registration_number: '',
+      cpf: '',
+      company_code: '',
       full_name: '',
       phone_number: '',
       email: '',
@@ -166,6 +187,18 @@ const Employees = () => {
       loadEmployees();
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Erro ao remover colaborador');
+    }
+  };
+
+  const handleReactivate = async (employee) => {
+    if (!window.confirm(`Deseja reativar ${employee.full_name}?`)) return;
+
+    try {
+      await api.put(`/employees/${employee.id}`, { is_active: true });
+      toast.success('Colaborador reativado com sucesso!');
+      loadEmployees();
+    } catch (error) {
+      toast.error(error.response?.data?.error || error.response?.data?.detail || 'Erro ao reativar colaborador');
     }
   };
 
@@ -259,7 +292,7 @@ const Employees = () => {
 
   const handleSelectAll = (checked) => {
     if (checked) {
-      setSelectedEmployees(employees.map(emp => emp.id));
+      setSelectedEmployees(sortedAndFilteredEmployees.map(emp => emp.id));
     } else {
       setSelectedEmployees([]);
     }
@@ -346,6 +379,7 @@ const Employees = () => {
     const matchesSearch = searchTerm === '' || 
       employee.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       employee.unique_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      employee.cpf?.includes(searchTerm) ||
       employee.phone_number?.includes(searchTerm);
     
     const matchesDepartment = departmentFilter === '' || 
@@ -353,8 +387,10 @@ const Employees = () => {
     
     const matchesPosition = positionFilter === '' || 
       employee.position?.toLowerCase().includes(positionFilter.toLowerCase());
+
+    const matchesCompany = companyFilter === '' || employee.company_code === companyFilter;
     
-    return matchesSearch && matchesDepartment && matchesPosition;
+    return matchesSearch && matchesDepartment && matchesPosition && matchesCompany;
   });
 
   // Ordenar colaboradores filtrados
@@ -422,6 +458,9 @@ const Employees = () => {
               setEditingEmployee(null);
               setFormData({
                 unique_id: '',
+                registration_number: '',
+                cpf: '',
+                company_code: '',
                 full_name: '',
                 phone_number: '',
                 email: '',
@@ -704,6 +743,23 @@ const Employees = () => {
           </h2>
           <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
+              <label className="block text-sm font-medium text-gray-700">Código da Empresa *</label>
+              <select
+                required
+                value={formData.company_code}
+                onChange={(e) => setFormData({...formData, company_code: e.target.value})}
+                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+              >
+                <option value="">Selecione...</option>
+                {COMPANY_OPTIONS.map((company) => (
+                  <option key={company.code} value={company.code}>
+                    {company.code} - {company.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
               <label className="block text-sm font-medium text-gray-700">ID Único *</label>
               <input
                 type="text"
@@ -712,6 +768,30 @@ const Employees = () => {
                 onChange={(e) => setFormData({...formData, unique_id: e.target.value})}
                 className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
                 placeholder="000012345"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Matrícula</label>
+              <input
+                type="text"
+                value={formData.registration_number}
+                onChange={(e) => setFormData({...formData, registration_number: e.target.value})}
+                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+                placeholder="Matrícula na empresa"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700">CPF *</label>
+              <input
+                type="text"
+                required
+                maxLength="14"
+                value={formData.cpf}
+                onChange={(e) => setFormData({...formData, cpf: e.target.value})}
+                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+                placeholder="000.000.000-00"
               />
             </div>
             
@@ -872,10 +952,10 @@ const Employees = () => {
           </h3>
           
           {/* Filtros de Busca */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mt-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                🔍 Buscar por Nome, ID ou Telefone
+                🔍 Buscar por Nome, ID, CPF ou Telefone
               </label>
               <input
                 type="text"
@@ -884,6 +964,39 @@ const Employees = () => {
                 placeholder="Digite para buscar..."
                 className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                🏢 Empresa
+              </label>
+              <select
+                value={companyFilter}
+                onChange={(e) => setCompanyFilter(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="">Todas as empresas</option>
+                {COMPANY_OPTIONS.map((company) => (
+                  <option key={company.code} value={company.code}>
+                    {company.code} - {company.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                ⚙️ Situação
+              </label>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="active">🟢 Ativos</option>
+                <option value="inactive">🔴 Desligados</option>
+                <option value="all">Todos</option>
+              </select>
             </div>
             
             <div>
@@ -920,13 +1033,15 @@ const Employees = () => {
           </div>
           
           {/* Botão para limpar filtros */}
-          {(searchTerm || departmentFilter || positionFilter) && (
+          {(searchTerm || departmentFilter || positionFilter || companyFilter || statusFilter !== 'active') && (
             <div className="mt-3">
               <button
                 onClick={() => {
                   setSearchTerm('');
                   setDepartmentFilter('');
                   setPositionFilter('');
+                  setCompanyFilter('');
+                  setStatusFilter('active');
                 }}
                 className="text-sm text-blue-600 hover:text-blue-800 font-medium"
               >
@@ -938,8 +1053,10 @@ const Employees = () => {
         
         {sortedAndFilteredEmployees.length === 0 ? (
           <div className={`p-6 text-center ${config.classes.textSecondary}`}>
-            {employees.length === 0 ? 
-              'Nenhum colaborador cadastrado ainda.' :
+            {employees.length === 0 ?
+              (statusFilter === 'inactive'
+                ? 'Nenhum colaborador desligado encontrado.'
+                : 'Nenhum colaborador cadastrado nesta situação.') :
               'Nenhum colaborador encontrado com os filtros aplicados.'
             }
           </div>
@@ -951,7 +1068,10 @@ const Employees = () => {
                   <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
                     <input
                       type="checkbox"
-                      checked={employees.length > 0 && selectedEmployees.length === employees.length}
+                      checked={
+                        sortedAndFilteredEmployees.length > 0
+                        && sortedAndFilteredEmployees.every(employee => selectedEmployees.includes(employee.id))
+                      }
                       onChange={(e) => handleSelectAll(e.target.checked)}
                       className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
@@ -985,6 +1105,9 @@ const Employees = () => {
                   <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
                     Telefone
                   </th>
+                  <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
+                    Empresa
+                  </th>
                   <th 
                     onClick={() => handleSort('department')}
                     className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none`}
@@ -997,6 +1120,9 @@ const Employees = () => {
                           <ChevronDownIcon className="h-4 w-4" />
                       )}
                     </div>
+                  </th>
+                  <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
+                    Situação
                   </th>
                   <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>
                     Ações
@@ -1024,7 +1150,19 @@ const Employees = () => {
                       {employee.phone_number}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {employee.company_code || '-'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {employee.department}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${
+                        employee.is_active
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-red-100 text-red-800'
+                      }`}>
+                        {employee.is_active ? (employee.employment_status || 'Ativo') : 'Desligado'}
+                      </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       <div className="flex space-x-2">
@@ -1040,12 +1178,21 @@ const Employees = () => {
                         >
                           Editar
                         </button>
-                        <button 
-                          onClick={() => handleDelete(employee)}
-                          className="text-red-600 hover:text-red-900"
-                        >
-                          Excluir
-                        </button>
+                        {employee.is_active ? (
+                          <button
+                            onClick={() => handleDelete(employee)}
+                            className="text-red-600 hover:text-red-900"
+                          >
+                            Desligar
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleReactivate(employee)}
+                            className="text-green-600 hover:text-green-900"
+                          >
+                            Reativar
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -1090,6 +1237,48 @@ const Employees = () => {
                     onChange={(e) => setFormData({...formData, unique_id: e.target.value})}
                     className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Código da Empresa*</label>
+                  <select
+                    required
+                    value={formData.company_code}
+                    onChange={(e) => setFormData({...formData, company_code: e.target.value})}
+                    className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+                  >
+                    <option value="">Selecione...</option>
+                    {COMPANY_OPTIONS.map((company) => (
+                      <option key={company.code} value={company.code}>
+                        {company.code} - {company.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">CPF*</label>
+                  <input
+                    type="text"
+                    required
+                    maxLength="14"
+                    value={formData.cpf}
+                    onChange={(e) => setFormData({...formData, cpf: e.target.value})}
+                    className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+                    placeholder="000.000.000-00"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Situação</label>
+                  <select
+                    value={formData.is_active === false ? 'inactive' : 'active'}
+                    onChange={(e) => setFormData({...formData, is_active: e.target.value === 'active'})}
+                    className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 px-3 py-2 border"
+                  >
+                    <option value="active">Ativo</option>
+                    <option value="inactive">Desligado</option>
+                  </select>
                 </div>
 
                 <div>
@@ -1200,4 +1389,3 @@ const Employees = () => {
 };
 
 export default Employees;
-

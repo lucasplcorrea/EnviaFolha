@@ -6,6 +6,7 @@ import {
   PaperAirplaneIcon,
   TrashIcon,
   PhoneIcon,
+  EnvelopeIcon,
   DocumentTextIcon,
   ExclamationTriangleIcon,
   CheckCircleIcon,
@@ -20,6 +21,11 @@ const PayrollSender = () => {
   const [loading, setLoading] = useState(true);
   const [sendingBulk, setSendingBulk] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState([]);
+  const [sendChannel, setSendChannel] = useState('whatsapp');
+  const [emailSubject, setEmailSubject] = useState('Holerite referente a {competencia}');
+  const [emailBody, setEmailBody] = useState(
+    'Olá, {primeiro_nome}.\n\nSegue em anexo seu holerite referente a {competencia}. Para abrir o documento, utilize os 4 primeiros dígitos do seu CPF.\n\nEm caso de dúvidas, entre em contato com o Departamento de Recursos Humanos.\n\nAtenciosamente,\nRecursos Humanos'
+  );
   
   // Estados para job em background
   const [activeJobId, setActiveJobId] = useState(null);
@@ -113,7 +119,7 @@ const PayrollSender = () => {
         queuesIntervalRef.current = null;
       }
     };
-  }, [monthFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [monthFilter, sendChannel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Função para fazer polling do status do job
   const pollJobStatus = async (jobId) => {
@@ -179,7 +185,10 @@ const PayrollSender = () => {
   const loadPayrollFiles = async () => {
     try {
       setLoading(true);
-      const params = monthFilter ? `?month=${encodeURIComponent(monthFilter)}` : '';
+      const query = new URLSearchParams();
+      if (monthFilter) query.set('month', monthFilter);
+      if (sendChannel === 'email') query.set('include_sent', 'true');
+      const params = query.toString() ? `?${query.toString()}` : '';
       const response = await api.get(`/payrolls/processed${params}`);
       setPayrollFiles(response.data.files || []);
       setStatistics(response.data.statistics || {});
@@ -208,11 +217,12 @@ const PayrollSender = () => {
   };
 
   const handleSelectFile = (file, checked) => {
+    const canSend = sendChannel === 'email' ? file.can_send_email : file.can_send;
     if (checked) {
-      if (file.can_send) {
+      if (canSend) {
         setSelectedFiles(prev => [...prev, file]);
       } else {
-        toast.error('Este arquivo não pode ser enviado (colaborador sem telefone)');
+        toast.error(`Este arquivo não pode ser enviado (colaborador sem ${sendChannel === 'email' ? 'e-mail válido' : 'telefone'})`);
       }
     } else {
       setSelectedFiles(prev => prev.filter(f => f.filename !== file.filename));
@@ -221,7 +231,7 @@ const PayrollSender = () => {
 
   const handleSelectAll = (type) => {
     if (type === 'ready') {
-      const readyFiles = payrollFiles.filter(f => f.can_send);
+      const readyFiles = payrollFiles.filter(f => sendChannel === 'email' ? f.can_send_email : f.can_send);
       setSelectedFiles(readyFiles);
     } else if (type === 'none') {
       setSelectedFiles([]);
@@ -322,14 +332,18 @@ const PayrollSender = () => {
       return;
     }
 
-    // Validar que pelo menos um template foi preenchido (agora com 8 templates)
     const templates = [
       messageTemplate1, messageTemplate2, messageTemplate3, messageTemplate4,
       messageTemplate5, messageTemplate6, messageTemplate7, messageTemplate8
     ].filter(t => t && t.trim());
     
-    if (templates.length === 0) {
+    if (sendChannel === 'whatsapp' && templates.length === 0) {
       toast.error('Preencha pelo menos um template de mensagem');
+      return;
+    }
+
+    if (sendChannel === 'email' && (!emailSubject.trim() || !emailBody.trim())) {
+      toast.error('Preencha o assunto e a mensagem do e-mail');
       return;
     }
 
@@ -339,7 +353,7 @@ const PayrollSender = () => {
     const estimatedTime = selectedFiles.length > 1 ? 
       Math.round((selectedFiles.length - 1) * avgDelay + longPauses * 750) : 0;
     
-    if (selectedFiles.length > 1) {
+    if (sendChannel === 'whatsapp' && selectedFiles.length > 1) {
       const hours = Math.floor(estimatedTime / 3600);
       const minutes = Math.floor((estimatedTime % 3600) / 60);
       const timeStr = hours > 0 ? `${hours}h ${minutes}min` : `${minutes}min`;
@@ -368,17 +382,26 @@ const PayrollSender = () => {
 
       const filesToSend = selectedFiles.map(file => ({
         filename: file.filename,
-        filepath: file.filepath,  // IMPORTANTE: caminho completo do arquivo
         employee: file.associated_employee,
         month_year: file.month_year
       }));
 
       toast.loading('Iniciando envio em background...', { duration: 2000 });
 
-      const response = await api.post('/payrolls/bulk-send', {
-        selected_files: filesToSend,
-        message_templates: templates
-      });
+      const endpoint = sendChannel === 'email'
+        ? '/payrolls/email/bulk-send'
+        : '/payrolls/bulk-send';
+      const payload = sendChannel === 'email'
+        ? {
+            selected_files: filesToSend,
+            subject_template: emailSubject,
+            body_template: emailBody
+          }
+        : {
+            selected_files: filesToSend,
+            message_templates: templates
+          };
+      const response = await api.post(endpoint, payload);
 
       // Backend retorna job_id e HTTP 202
       const { job_id, total_files } = response.data;
@@ -441,6 +464,7 @@ const PayrollSender = () => {
   };
 
   const getStatusBadge = (file) => {
+    const canSend = sendChannel === 'email' ? file.can_send_email : file.can_send;
     if (file.is_orphan) {
       return (
         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
@@ -450,7 +474,7 @@ const PayrollSender = () => {
       );
     }
     
-    if (file.can_send) {
+    if (canSend) {
       return (
         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
           <CheckCircleIcon className="w-3 h-3 mr-1" />
@@ -462,7 +486,7 @@ const PayrollSender = () => {
     return (
       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
         <ExclamationTriangleIcon className="w-3 h-3 mr-1" />
-        Sem telefone
+        Sem {sendChannel === 'email' ? 'e-mail' : 'telefone'}
       </span>
     );
   };
@@ -471,7 +495,7 @@ const PayrollSender = () => {
     if (file.is_orphan) {
       return 'border-l-4 border-yellow-400 bg-yellow-50 dark:bg-yellow-900/20';
     }
-    if (file.can_send) {
+    if (sendChannel === 'email' ? file.can_send_email : file.can_send) {
       return 'border-l-4 border-green-400 bg-green-50 dark:bg-green-900/20';
     }
     return 'border-l-4 border-red-400 bg-red-50 dark:bg-red-900/20';
@@ -562,7 +586,9 @@ const PayrollSender = () => {
               <div className="flex items-center space-x-3">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
                 <div>
-                  <h3 className="text-lg font-semibold text-blue-900">📨 Envio em Andamento</h3>
+                  <h3 className="text-lg font-semibold text-blue-900">
+                    📨 Envio por {jobStatus.channel === 'email' ? 'e-mail' : 'WhatsApp'} em andamento
+                  </h3>
                   <p className="text-sm text-blue-700">
                     {jobStatus.processed_files} de {jobStatus.total_files} holerites enviados ({jobStatus.progress_percentage}%)
                   </p>
@@ -608,7 +634,9 @@ const PayrollSender = () => {
               <CheckCircleIcon className="h-8 w-8 text-green-600" />
               <div className="ml-3">
                 <p className="text-sm font-medium text-green-600">Prontos para Envio</p>
-                <p className="text-2xl font-bold text-green-900">{statistics.ready || 0}</p>
+                <p className="text-2xl font-bold text-green-900">
+                  {sendChannel === 'email' ? (statistics.email_ready || 0) : (statistics.ready || 0)}
+                </p>
               </div>
             </div>
           </div>
@@ -677,9 +705,31 @@ const PayrollSender = () => {
         </div>
 
         {/* Controles de seleção */}
-        {payrollFiles.filter(f => f.can_send).length > 0 && (
-          <div className="bg-white p-4 rounded-lg shadow mb-6">
+        <div className="bg-white p-4 rounded-lg shadow mb-6">
             <h3 className="text-lg font-medium text-gray-900 mb-4">Envio em Lote</h3>
+
+            <div className="mb-4">
+              <label htmlFor="sendChannel" className="block text-sm font-medium text-gray-700 mb-2">
+                Canal de envio
+              </label>
+              <select
+                id="sendChannel"
+                value={sendChannel}
+                onChange={(event) => {
+                  setSendChannel(event.target.value);
+                  setSelectedFiles([]);
+                }}
+                className="block w-full md:w-72 border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="whatsapp">WhatsApp</option>
+                <option value="email">E-mail</option>
+              </select>
+              {sendChannel === 'email' && (
+                <p className="mt-2 text-xs text-gray-500">
+                  A lista inclui arquivos processados e já enviados pelo WhatsApp. Envios já aceitos por e-mail serão ignorados.
+                </p>
+              )}
+            </div>
             
             <div className="flex flex-wrap gap-2 mb-4">
               <button
@@ -699,6 +749,7 @@ const PayrollSender = () => {
               </span>
             </div>
 
+            {sendChannel === 'whatsapp' ? (
             <div className="mb-4 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -823,6 +874,39 @@ const PayrollSender = () => {
                 />
               </div>
             </div>
+            ) : (
+              <div className="mb-4 space-y-4">
+                <div>
+                  <label htmlFor="emailSubject" className="block text-sm font-medium text-gray-700 mb-1">
+                    Assunto do e-mail
+                  </label>
+                  <input
+                    id="emailSubject"
+                    type="text"
+                    maxLength={200}
+                    value={emailSubject}
+                    onChange={(event) => setEmailSubject(event.target.value)}
+                    className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="emailBody" className="block text-sm font-medium text-gray-700 mb-1">
+                    Mensagem do e-mail
+                  </label>
+                  <textarea
+                    id="emailBody"
+                    rows={8}
+                    maxLength={10000}
+                    value={emailBody}
+                    onChange={(event) => setEmailBody(event.target.value)}
+                    className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Variáveis disponíveis: {'{nome}'}, {'{primeiro_nome}'}, {'{competencia}'}.
+                  </p>
+                </div>
+              </div>
+            )}
 
             <button
               onClick={handleBulkSend}
@@ -837,12 +921,11 @@ const PayrollSender = () => {
               ) : (
                 <>
                   <PaperAirplaneIcon className="h-4 w-4 mr-2" />
-                  Enviar {selectedFiles.length} Holerite(s)
+                  Enviar {selectedFiles.length} holerite(s) por {sendChannel === 'email' ? 'e-mail' : 'WhatsApp'}
                 </>
               )}
             </button>
-          </div>
-        )}
+        </div>
       </div>
 
       {/* Lista de arquivos */}
@@ -861,7 +944,7 @@ const PayrollSender = () => {
               <li key={file.filename} className={`px-6 py-4 ${getItemStatusClass(file)}`}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center flex-1">
-                    {file.can_send && (
+                    {(sendChannel === 'email' ? file.can_send_email : file.can_send) && (
                       <input
                         type="checkbox"
                         checked={selectedFiles.some(f => f.filename === file.filename)}
@@ -895,6 +978,15 @@ const PayrollSender = () => {
                               <PhoneIcon className="h-4 w-4 ml-3 mr-1" />
                               <span>{file.associated_employee.phone_number}</span>
                             </>
+                          )}
+                          {file.associated_employee.email && (
+                            <>
+                              <EnvelopeIcon className="h-4 w-4 ml-3 mr-1" />
+                              <span>{file.associated_employee.email}</span>
+                            </>
+                          )}
+                          {file.location === 'sent' && (
+                            <span className="ml-3 text-xs text-blue-600">Arquivado após WhatsApp</span>
                           )}
                         </div>
                       )}
@@ -1041,6 +1133,13 @@ const PayrollSender = () => {
                       <div className="flex justify-between items-center p-2 bg-red-50 rounded">
                         <span className="text-gray-700">❌ Falhas:</span>
                         <span className="font-semibold text-red-700">{jobStatus.failed_sends}</span>
+                      </div>
+                    )}
+
+                    {jobStatus.skipped_sends > 0 && (
+                      <div className="flex justify-between items-center p-2 bg-blue-50 rounded">
+                        <span className="text-gray-700">⏭️ Já enviados anteriormente:</span>
+                        <span className="font-semibold text-blue-700">{jobStatus.skipped_sends}</span>
                       </div>
                     )}
 

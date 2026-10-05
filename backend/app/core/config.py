@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: Optional[str] = None
     SMTP_FROM: str = "Sistema RH <rh@empresa.com>"
     SMTP_USE_TLS: bool = True
+    SMTP_SECURITY: Optional[str] = None  # starttls, ssl ou none
+    SMTP_TIMEOUT_SECONDS: int = 30
+    SMTP_MAX_ATTACHMENT_SIZE: int = 20 * 1024 * 1024  # 20 MB
+    SMTP_MAX_RETRIES: int = 3
+    SMTP_RETRY_DELAY_SECONDS: int = 5
     
     # Configurações de upload
     UPLOAD_FOLDER: str = "uploads"
@@ -66,6 +71,15 @@ class Settings(BaseSettings):
     def has_smtp_configured(self) -> bool:
         """Verifica se SMTP está configurado"""
         return all([self.SMTP_HOST, self.SMTP_USER, self.SMTP_PASSWORD])
+
+    def get_smtp_security(self) -> str:
+        """Retorna o modo de segurança SMTP mantendo compatibilidade com SMTP_USE_TLS."""
+        security = (self.SMTP_SECURITY or '').strip().lower()
+        if not security:
+            return 'starttls' if self.SMTP_USE_TLS else 'none'
+        if security not in {'starttls', 'ssl', 'none'}:
+            raise ValueError("SMTP_SECURITY deve ser 'starttls', 'ssl' ou 'none'")
+        return security
 
 settings = Settings()
 
