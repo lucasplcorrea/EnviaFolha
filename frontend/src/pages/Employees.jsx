@@ -1061,8 +1061,13 @@ const Employees = () => {
             }
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
+          <div
+            className="max-w-full overflow-x-auto"
+            role="region"
+            aria-label="Tabela de colaboradores"
+            tabIndex="0"
+          >
+            <table className="w-full min-w-[1180px] table-auto divide-y divide-gray-200">
               <thead className={config.classes.tableHeader}>
                 <tr>
                   <th className={`px-6 py-3 text-left text-xs font-medium ${config.classes.textSecondary} uppercase tracking-wider`}>

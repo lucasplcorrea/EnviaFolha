@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import api from '../services/api';
 import { useTheme } from '../contexts/ThemeContext';
@@ -16,6 +17,8 @@ import {
 
 const PayrollSender = () => {
   const { config } = useTheme();
+  const [searchParams] = useSearchParams();
+  const resendEmployeeId = searchParams.get('resendEmployee');
   const [payrollFiles, setPayrollFiles] = useState([]);
   const [statistics, setStatistics] = useState({});
   const [loading, setLoading] = useState(true);
@@ -119,7 +122,7 @@ const PayrollSender = () => {
         queuesIntervalRef.current = null;
       }
     };
-  }, [monthFilter, sendChannel]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [monthFilter, sendChannel, resendEmployeeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Função para fazer polling do status do job
   const pollJobStatus = async (jobId) => {
@@ -187,7 +190,8 @@ const PayrollSender = () => {
       setLoading(true);
       const query = new URLSearchParams();
       if (monthFilter) query.set('month', monthFilter);
-      if (sendChannel === 'email') query.set('include_sent', 'true');
+      query.set('channel', sendChannel);
+      if (resendEmployeeId) query.set('resend_employee_id', resendEmployeeId);
       const params = query.toString() ? `?${query.toString()}` : '';
       const response = await api.get(`/payrolls/processed${params}`);
       setPayrollFiles(response.data.files || []);
@@ -395,7 +399,8 @@ const PayrollSender = () => {
         ? {
             selected_files: filesToSend,
             subject_template: emailSubject,
-            body_template: emailBody
+            body_template: emailBody,
+            force_resend: Boolean(resendEmployeeId)
           }
         : {
             selected_files: filesToSend,
@@ -513,6 +518,13 @@ const PayrollSender = () => {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-4">Envio de Holerites</h1>
+
+        {resendEmployeeId && (
+          <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+            <strong>Modo de reenvio:</strong> exibindo o histórico de holerites deste colaborador.
+            Selecione conscientemente o arquivo e o canal para realizar uma nova entrega.
+          </div>
+        )}
         
         {/* Cards de Filas Ativas de Outros Usuários */}
         {activeQueues.length > 0 && activeQueues.some(q => q.is_active) && (
@@ -726,7 +738,9 @@ const PayrollSender = () => {
               </select>
               {sendChannel === 'email' && (
                 <p className="mt-2 text-xs text-gray-500">
-                  A lista inclui arquivos processados e já enviados pelo WhatsApp. Envios já aceitos por e-mail serão ignorados.
+                  {resendEmployeeId
+                    ? 'O envio será registrado como reenvio por e-mail.'
+                    : 'Holerites já entregues por WhatsApp ou e-mail não são exibidos nesta fila.'}
                 </p>
               )}
             </div>

@@ -970,13 +970,19 @@ const EmployeeDetail = () => {
             <div className="inline-flex items-center justify-center w-16 h-16 bg-green-100 rounded-full mb-4">
               <CurrencyDollarIcon className="h-8 w-8 text-green-600" />
             </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Folha de Pagamento em Desenvolvimento</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Holerites do Colaborador</h3>
             <p className="text-sm text-gray-500 max-w-md mx-auto mb-4">
-              Histórico de holerites, salários e benefícios estarão disponíveis em breve.
+              Use esta opção somente quando for necessário reenviar um holerite já entregue.
+              Na próxima tela você poderá selecionar o arquivo e escolher WhatsApp ou e-mail.
             </p>
-            <span className="inline-flex items-center px-3 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">
-              🚧 Aguarde futuras atualizações
-            </span>
+            <button
+              type="button"
+              onClick={() => navigate(`/payroll-sender?resendEmployee=${employee.id}`)}
+              className="inline-flex items-center rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
+            >
+              <DocumentTextIcon className="mr-2 h-5 w-5" />
+              Selecionar holerite para reenvio
+            </button>
           </div>
         )}
 

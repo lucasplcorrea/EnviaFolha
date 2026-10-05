@@ -1365,15 +1365,9 @@ def process_bulk_send_in_background(job_id, selected_files, message_templates, u
                 continue
             
             # NOVO: Usar caminho do arquivo (filepath) se fornecido, senão construir caminho antigo
-            file_path = file_info.get('filepath')
-            
-            if not file_path:
-                # Fallback: formato atual (processed/)
-                file_path = os.path.join(
-                    os.path.dirname(os.path.abspath(__file__)),
-                    'processed',
-                    filename
-                )
+            # Resolver no servidor evita confiar em caminhos enviados pelo
+            # navegador e permite reenvios a partir de enviados/.
+            file_path = resolve_payroll_file(filename)
             
             if not os.path.exists(file_path):
                 print(f"⚠️ [JOB {job_id[:8]}] Arquivo não encontrado: {file_path}")
@@ -2493,7 +2487,18 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             import glob
 
             query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            include_sent = query_params.get('include_sent', ['false'])[0].lower() == 'true'
+            delivery_channel = query_params.get('channel', ['whatsapp'])[0].lower()
+            if delivery_channel not in {'whatsapp', 'email'}:
+                self.send_json_response({"error": "Canal de envio inválido"}, 400)
+                return
+            resend_employee_id = query_params.get('resend_employee_id', [None])[0]
+            if resend_employee_id is not None:
+                try:
+                    resend_employee_id = int(resend_employee_id)
+                except (TypeError, ValueError):
+                    self.send_json_response({"error": "Colaborador para reenvio inválido"}, 400)
+                    return
+            include_sent = resend_employee_id is not None
             
             # NOVO: Diretório processed/ com subpastas organizadas
             processed_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'processed')
@@ -2501,11 +2506,15 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             # Fallback: pasta antiga para compatibilidade
             legacy_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'holerites_formatados_final')
             sent_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'enviados')
+            historical_sent_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sent')
             
             if (
                 not os.path.exists(processed_dir)
                 and not os.path.exists(legacy_dir)
-                and (not include_sent or not os.path.exists(sent_dir))
+                and (
+                    not include_sent
+                    or not any(os.path.exists(path) for path in (sent_dir, historical_sent_dir))
+                )
             ):
                 self.send_json_response({
                     "files": [],
@@ -2513,6 +2522,7 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                         "total": 0,
                         "ready": 0,
                         "email_ready": 0,
+                        "already_sent": 0,
                         "orphan": 0,
                         "associated": 0
                     }
@@ -2525,8 +2535,13 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 pdf_files.extend(glob.glob(os.path.join(processed_dir, '**', '*.pdf'), recursive=True))
             if os.path.exists(legacy_dir):
                 pdf_files.extend(glob.glob(os.path.join(legacy_dir, '*.pdf')))
-            if include_sent and os.path.exists(sent_dir):
-                pdf_files.extend(glob.glob(os.path.join(sent_dir, '**', '*.pdf'), recursive=True))
+            if include_sent:
+                for archived_dir in (sent_dir, historical_sent_dir):
+                    if os.path.exists(archived_dir):
+                        pdf_files.extend(glob.glob(
+                            os.path.join(archived_dir, '**', '*.pdf'),
+                            recursive=True,
+                        ))
 
             # Se o mesmo arquivo existir em mais de uma pasta, priorizar processed/.
             unique_pdf_files = {}
@@ -2535,17 +2550,45 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
             pdf_files = list(unique_pdf_files.values())
             
             # Carregar dados dos colaboradores
-            employees_data = load_employees_data()
+            employees_data = load_employees_data(
+                status='all' if resend_employee_id is not None else 'active'
+            )
             employees = employees_data.get('employees', [])
             
             # Criar dicionário de colaboradores por unique_id para busca rápida
             employees_by_id = {emp.get('unique_id'): emp for emp in employees}
+
+            # A fila normal contém somente arquivos nunca entregues. O histórico
+            # completo só é exposto quando o usuário entra explicitamente no
+            # modo de reenvio de um colaborador.
+            successful_deliveries = set()
+            if resend_employee_id is None and SessionLocal:
+                from app.models.payroll_send import PayrollSend
+
+                db = SessionLocal()
+                try:
+                    deliveries = db.query(
+                        PayrollSend.employee_id,
+                        PayrollSend.file_path,
+                    ).filter(
+                        PayrollSend.status.in_(['accepted', 'sent']),
+                    ).all()
+                    successful_deliveries = {
+                        (
+                            delivery.employee_id,
+                            os.path.basename(delivery.file_path or '').lower(),
+                        )
+                        for delivery in deliveries
+                    }
+                finally:
+                    db.close()
             
             files_list = []
             stats = {
                 "total": 0,
                 "ready": 0,  # Com telefone e associado
                 "email_ready": 0,  # Com e-mail válido e associado
+                "already_sent": 0,  # Entregue anteriormente por qualquer canal
                 "orphan": 0,  # Sem colaborador cadastrado
                 "associated": 0  # Associado a um colaborador
             }
@@ -2589,6 +2632,15 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                 
                 # Buscar colaborador associado
                 employee = employees_by_id.get(unique_id)
+
+                if resend_employee_id is not None:
+                    if not employee or employee.get('id') != resend_employee_id:
+                        continue
+                elif employee:
+                    delivery_key = (employee.get('id'), filename.lower())
+                    if delivery_key in successful_deliveries:
+                        stats["already_sent"] += 1
+                        continue
                 
                 file_info = {
                     "filename": filename,
@@ -2601,7 +2653,10 @@ class EnviaFolhaHandler(http.server.SimpleHTTPRequestHandler):
                     "is_orphan": employee is None,
                     "can_send": False,
                     "can_send_email": False,
-                    "location": "sent" if os.path.commonpath([sent_dir, pdf_path]) == sent_dir else "processed",
+                    "location": "sent" if any(
+                        os.path.commonpath([archived_dir, pdf_path]) == archived_dir
+                        for archived_dir in (sent_dir, historical_sent_dir)
+                    ) else "processed",
                     "associated_employee": None
                 }
                 
