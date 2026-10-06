@@ -3,6 +3,7 @@ Dashboard Routes - Estatísticas e métricas do dashboard
 """
 from datetime import datetime
 from .base import BaseRouter
+from app.services.runtime_compat import SessionLocal, load_employees_data
 
 
 class DashboardRouter(BaseRouter):
@@ -14,7 +15,6 @@ class DashboardRouter(BaseRouter):
         Retorna estatísticas gerais para os cards do dashboard
         """
         try:
-            from main_legacy import load_employees_data, SessionLocal
             import os
             import asyncio
             

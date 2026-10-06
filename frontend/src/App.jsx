@@ -16,13 +16,15 @@ import Settings from './pages/Settings.jsx';
 import Reports from './pages/Reports.jsx';
 import Users from './pages/Users.jsx';
 import PayrollDataProcessor from './pages/PayrollDataProcessor.jsx';
-import DataImport from './pages/DataImport.jsx';
 import EmployeeDetail from './pages/EmployeeDetail.jsx';
 import SystemLogs from './pages/SystemLogs.jsx';
 import Endomarketing from './pages/Endomarketing.jsx';
 import RHIndicators from './pages/RHIndicators.jsx';
 import QueueManagement from './pages/QueueManagement.jsx';
 import Profile from './pages/Profile.jsx';
+import Companies from './pages/Companies.jsx';
+import WorkLocations from './pages/WorkLocations.jsx';
+import TaxStatements from './pages/TaxStatements.jsx';
 
 // Indicadores Refatorados
 import {
@@ -80,10 +82,13 @@ function AppContent() {
                     <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
                     <Route path="employees/:id" element={<ProtectedRoute><EmployeeDetail /></ProtectedRoute>} />
                     <Route path="employees" element={<ProtectedRoute><Employees /></ProtectedRoute>} />
+                    <Route path="companies" element={<ProtectedRoute><Companies /></ProtectedRoute>} />
+                    <Route path="work-locations" element={<ProtectedRoute><WorkLocations /></ProtectedRoute>} />
                     {/* Rota removida: importação agora é feita em /employees */}
                     <Route path="payroll-processor" element={<ProtectedRoute><PayrollProcessor /></ProtectedRoute>} />
                     <Route path="payroll-sender" element={<ProtectedRoute><PayrollSender /></ProtectedRoute>} />
                     <Route path="payroll" element={<ProtectedRoute><PayrollSender /></ProtectedRoute>} />
+                    <Route path="tax-statements" element={<ProtectedRoute><TaxStatements /></ProtectedRoute>} />
                     <Route path="communications" element={<ProtectedRoute><CommunicationSender /></ProtectedRoute>} />
                     <Route path="endomarketing" element={<ProtectedRoute><Endomarketing /></ProtectedRoute>} />
                     <Route path="rh-indicators" element={<ProtectedRoute><RHIndicators /></ProtectedRoute>} />

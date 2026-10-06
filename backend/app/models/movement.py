@@ -14,6 +14,8 @@ class MovementRecord(Base):
     new_position = Column(String, nullable=True)
     previous_department = Column(String, nullable=True)
     new_department = Column(String, nullable=True)
+    previous_work_location_id = Column(Integer, ForeignKey('work_locations.id'), nullable=True)
+    new_work_location_id = Column(Integer, ForeignKey('work_locations.id'), nullable=True)
     date = Column(Date, nullable=False)
     reason = Column(String, nullable=True)
     created_at = Column(DateTime, nullable=True)

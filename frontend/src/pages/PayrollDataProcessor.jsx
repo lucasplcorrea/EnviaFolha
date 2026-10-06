@@ -14,7 +14,6 @@ import {
   GiftIcon,
   ClockIcon
 } from '@heroicons/react/24/outline';
-import BenefitsUpload from './BenefitsUpload';
 import TimecardUpload from './TimecardUpload';
 
 const PayrollDataProcessor = () => {
@@ -25,7 +24,9 @@ const PayrollDataProcessor = () => {
   const [csvFiles, setCsvFiles] = useState([]);
   const [csvDivision, setCsvDivision] = useState('0060');
   const [csvAutoCreate, setCsvAutoCreate] = useState(true);
-  const [selectedPeriod, setSelectedPeriod] = useState('');
+  const [csvMonth, setCsvMonth] = useState(new Date().getMonth() + 1);
+  const [csvYear, setCsvYear] = useState(new Date().getFullYear());
+  const [csvPayrollType, setCsvPayrollType] = useState('mensal');
   const [csvUploading, setCsvUploading] = useState(false);
   const [csvResult, setCsvResult] = useState(null);
   const [processingHistory, setProcessingHistory] = useState([]);
@@ -37,6 +38,8 @@ const PayrollDataProcessor = () => {
   const [xlsxYear, setXlsxYear] = useState(new Date().getFullYear());
   const [xlsxMonth, setXlsxMonth] = useState(new Date().getMonth() + 1);
   const [xlsxCompany, setXlsxCompany] = useState('0060');
+  const [benefitsMergeMode, setBenefitsMergeMode] = useState('sum');
+  const [benefitsSourceLabel, setBenefitsSourceLabel] = useState('');
   const [xlsxUploading, setXlsxUploading] = useState(false);
   const [xlsxResult, setXlsxResult] = useState(null);
   
@@ -44,6 +47,7 @@ const PayrollDataProcessor = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [periodToDelete, setPeriodToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [deletingBenefitsLogId, setDeletingBenefitsLogId] = useState(null);
 
   useEffect(() => {
     loadPeriods();
@@ -167,7 +171,7 @@ const PayrollDataProcessor = () => {
           const formData = new FormData();
           formData.append('file', file);
 
-          const uploadResponse = await api.post('/uploads/csv', formData, {
+          const uploadResponse = await api.post('/files/upload', formData, {
             headers: {
               'Content-Type': 'multipart/form-data',
             },
@@ -180,7 +184,9 @@ const PayrollDataProcessor = () => {
             file_path: filePath,
             division_code: csvDivision,
             auto_create_employees: csvAutoCreate,
-            period_id: selectedPeriod || null,
+            month: Number(csvMonth),
+            year: Number(csvYear),
+            payroll_type: csvPayrollType,
           });
 
           const result = processResponse.data;
@@ -229,8 +235,12 @@ const PayrollDataProcessor = () => {
     const file = event.target.files[0];
     if (!file) return;
 
-    if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.XLSX')) {
-      toast.error('Por favor, selecione apenas arquivos XLSX');
+    const fileName = file.name.toLowerCase();
+    const allowedExtensions = ['.xlsx', '.xlsm', '.xltx', '.xltm', '.csv', '.txt'];
+    const isValidFile = allowedExtensions.some((ext) => fileName.endsWith(ext));
+
+    if (!isValidFile) {
+      toast.error('Selecione um arquivo CSV ou XLSX');
       return;
     }
 
@@ -240,7 +250,7 @@ const PayrollDataProcessor = () => {
 
   const handleXlsxUpload = async () => {
     if (!xlsxFile) {
-      toast.error('Selecione um arquivo XLSX');
+      toast.error('Selecione um arquivo CSV ou XLSX');
       return;
     }
 
@@ -255,6 +265,8 @@ const PayrollDataProcessor = () => {
       formData.append('year', xlsxYear);
       formData.append('month', xlsxMonth);
       formData.append('company', xlsxCompany);
+      formData.append('merge_mode', benefitsMergeMode);
+      formData.append('source_label', benefitsSourceLabel);
 
       const response = await api.post('/benefits/upload-xlsx', formData, {
         headers: {
@@ -270,6 +282,7 @@ const PayrollDataProcessor = () => {
         loadBenefitsPeriods();
         loadBenefitsProcessingHistory();
         setXlsxFile(null);
+        setBenefitsSourceLabel('');
       } else {
         toast.error(result.error || 'Erro ao processar benefícios', { id: 'xlsx-upload' });
         setXlsxResult(result);
@@ -314,6 +327,35 @@ const PayrollDataProcessor = () => {
     }
   };
 
+  const handleDeleteBenefitsUploadLog = async (log) => {
+    if (!log || !log.id) return;
+
+    const label = log.filename || `ID ${log.id}`;
+    const confirmed = window.confirm(
+      `Deseja remover somente este upload de benefícios?\n\nArquivo: ${label}\nPeríodo: ${log.period_name || `${String(log.month).padStart(2, '0')}/${log.year}`}\n\nA ação vai desfazer os valores deste upload e manter os demais.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setDeletingBenefitsLogId(log.id);
+      const response = await api.delete(`/benefits/processing-logs/${log.id}`);
+
+      if (response.data?.success) {
+        toast.success(response.data.message || 'Upload removido com sucesso');
+        loadBenefitsPeriods();
+        loadBenefitsProcessingHistory();
+      } else {
+        toast.error(response.data?.error || 'Não foi possível remover este upload');
+      }
+    } catch (error) {
+      console.error('Erro ao remover upload de benefícios:', error);
+      toast.error(error.response?.data?.error || 'Erro ao remover upload de benefícios');
+    } finally {
+      setDeletingBenefitsLogId(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -350,7 +392,7 @@ const PayrollDataProcessor = () => {
             } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 transition-colors`}
           >
             <GiftIcon className="h-5 w-5" />
-            <span>Benefícios iFood (XLSX)</span>
+            <span>Benefícios iFood (CSV/XLSX)</span>
           </button>
           <button
             onClick={() => setActiveTab('timecard')}
@@ -414,26 +456,53 @@ const PayrollDataProcessor = () => {
               )}
             </div>
 
-            {/* Period Selection (Optional) */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Período (Opcional)
-              </label>
-              <select
-                value={selectedPeriod}
-                onChange={(e) => setSelectedPeriod(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                <option value="">Detectar automaticamente pelo nome do arquivo</option>
-                {periods.map((period) => (
-                  <option key={period.id} value={period.id}>
-                    {period.period_name} ({period.year})
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-xs text-gray-500">
-                Se não especificado, o período será criado/detectado pelo nome do arquivo
-              </p>
+            {/* Competência manual */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Tipo de Folha
+                </label>
+                <select
+                  value={csvPayrollType}
+                  onChange={(e) => setCsvPayrollType(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="mensal">Mensal</option>
+                  <option value="13_adiantamento">13º - 1ª Parcela</option>
+                  <option value="13_integral">13º - 2ª Parcela</option>
+                  <option value="complementar">Folha Complementar</option>
+                  <option value="adiantamento_salario">Adiantamento Salarial</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Mês
+                </label>
+                <select
+                  value={csvMonth}
+                  onChange={(e) => setCsvMonth(Number(e.target.value))}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  {[...Array(12)].map((_, i) => (
+                    <option key={i + 1} value={i + 1}>
+                      {new Date(2000, i).toLocaleDateString('pt-BR', { month: 'long' })}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Ano
+                </label>
+                <input
+                  type="number"
+                  value={csvYear}
+                  onChange={(e) => setCsvYear(Number(e.target.value))}
+                  min="2000"
+                  max="2100"
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
             </div>
 
             {/* Division/Company Code */}
@@ -690,6 +759,15 @@ const PayrollDataProcessor = () => {
               </h2>
               
               <div className="space-y-5">
+                <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                  Carregamento alvo: <strong>{xlsxCompany === '0060' ? 'Empreendimentos (0060)' : 'Infraestrutura (0059)'}</strong> em <strong>{String(xlsxMonth).padStart(2, '0')}/{xlsxYear}</strong>
+                </div>
+
+                <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                  Layout obrigatório (consolidado iFood): Nome da empresa, CNPJ, ID da recarga, Mês da recarga, CPF, Nome do colaborador e colunas de benefício.
+                  O upload valida empresa/CNPJ e bloqueia recargas já processadas no mesmo período.
+                </div>
+
                 {/* Company Selection */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -739,15 +817,43 @@ const PayrollDataProcessor = () => {
                   </div>
                 </div>
 
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Tipo de consolidação
+                    </label>
+                    <select
+                      value={benefitsMergeMode}
+                      onChange={(e) => setBenefitsMergeMode(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    >
+                      <option value="sum">Somar com o já carregado (complementar)</option>
+                      <option value="replace">Substituir valores do mês/empresa</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Identificação do lote (opcional)
+                    </label>
+                    <input
+                      type="text"
+                      value={benefitsSourceLabel}
+                      onChange={(e) => setBenefitsSourceLabel(e.target.value)}
+                      placeholder="Ex: Complementar Abril - Loja A"
+                      className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                </div>
+
                 {/* File Upload */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Arquivo XLSX
+                    Arquivo CSV ou XLSX
                   </label>
                   <div className="flex items-center space-x-2">
                     <input
                       type="file"
-                      accept=".xlsx,.XLSX"
+                      accept=".xlsx,.xlsm,.xltx,.xltm,.csv,.txt"
                       onChange={handleXlsxFileSelect}
                       className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
                     />
@@ -816,11 +922,19 @@ const PayrollDataProcessor = () => {
                         {xlsxResult.success && (
                           <div className="mt-2 text-sm text-green-800 space-y-1">
                             <p>• Total de linhas: {xlsxResult.total_rows}</p>
+                            <p>• CPFs agregados: {xlsxResult.aggregated_rows || 0}</p>
                             <p>• Processadas: {xlsxResult.processed_rows}</p>
                             <p>• Erros: {xlsxResult.error_rows || 0}</p>
                             {xlsxResult.period_name && (
                               <p>• Período: {xlsxResult.period_name}</p>
                             )}
+                            <p>• Empresa: {xlsxResult.company === '0060' ? 'Empreendimentos (0060)' : 'Infraestrutura (0059)'}</p>
+                            <p>• IDs de recarga detectados: {xlsxResult.recharge_ids_count || 0}</p>
+                            {Array.isArray(xlsxResult.cnpjs_found) && xlsxResult.cnpjs_found.length > 0 && (
+                              <p>• CNPJs no arquivo: {xlsxResult.cnpjs_found.join(', ')}</p>
+                            )}
+                            <p>• Match por CPF: {xlsxResult.matched_by_cpf || 0}</p>
+                            <p>• Match por Nome: {xlsxResult.matched_by_name || 0}</p>
                           </div>
                         )}
                         {xlsxResult.error && (
@@ -899,9 +1013,12 @@ const PayrollDataProcessor = () => {
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Data/Hora</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Arquivo</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Período</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Empresa</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Modo</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Registros</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tempo</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
@@ -915,7 +1032,13 @@ const PayrollDataProcessor = () => {
                           {log.filename || '-'}
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-600">
-                          {log.year}/{log.month}
+                          {log.period_name || `${String(log.month).padStart(2, '0')}/${log.year}`}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-600">
+                          {log.company_name || log.company || '-'}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-600">
+                          {log.processing_summary?.merge_mode === 'replace' ? 'Substituir' : 'Somar'}
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-600">
                           {log.processed_rows || 0}/{log.total_rows || 0}
@@ -935,11 +1058,30 @@ const PayrollDataProcessor = () => {
                         <td className="px-4 py-3 text-sm text-gray-600">
                           {log.processing_time ? `${parseFloat(log.processing_time).toFixed(2)}s` : '-'}
                         </td>
+                        <td className="px-4 py-3 text-sm text-gray-600">
+                          <button
+                            onClick={() => handleDeleteBenefitsUploadLog(log)}
+                            disabled={deletingBenefitsLogId === log.id || !log.can_delete}
+                            title={
+                              log.can_delete
+                                ? `Remover somente este upload (modo: ${log.delete_mode === 'rollback' ? 'reversão' : 'simples'})`
+                                : (log.rollback_reason || 'Este upload não pode ser removido individualmente')
+                            }
+                            className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-xs font-medium ${
+                              log.can_delete
+                                ? 'text-red-700 border-red-300 hover:bg-red-50'
+                                : 'text-gray-400 border-gray-200 cursor-not-allowed'
+                            }`}
+                          >
+                            <TrashIcon className="h-3.5 w-3.5" />
+                            {deletingBenefitsLogId === log.id ? 'Removendo...' : 'Remover upload'}
+                          </button>
+                        </td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan="6" className="px-4 py-8 text-center text-gray-500">
+                      <td colSpan="9" className="px-4 py-8 text-center text-gray-500">
                         <p className="text-sm">Nenhum histórico de processamento disponível</p>
                         <p className="text-xs mt-1">Os uploads aparecerão aqui após serem processados</p>
                       </td>

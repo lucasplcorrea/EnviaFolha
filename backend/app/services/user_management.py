@@ -37,6 +37,11 @@ class UserManagementService:
             {"name": "payroll.read", "description": "Visualizar folha de pagamento", "module": "payroll", "action": "read"},
             {"name": "payroll.process", "description": "Processar folhas de pagamento", "module": "payroll", "action": "process"},
             {"name": "payroll.send", "description": "Enviar holerites por WhatsApp", "module": "payroll", "action": "send"},
+
+            # Módulo de Informes de Rendimentos
+            {"name": "tax_statements.read", "description": "Visualizar informes de rendimentos", "module": "tax_statements", "action": "read"},
+            {"name": "tax_statements.process", "description": "Processar informes de rendimentos", "module": "tax_statements", "action": "process"},
+            {"name": "tax_statements.send", "description": "Enviar informes de rendimentos por WhatsApp", "module": "tax_statements", "action": "send"},
             
             # Módulo de Comunicações
             {"name": "communications.read", "description": "Visualizar comunicações", "module": "communications", "action": "read"},
@@ -89,6 +94,7 @@ class UserManagementService:
                 "permissions": [
                     "employees.read", "employees.write", "employees.bulk",
                     "payroll.read", "payroll.process", "payroll.send",
+                    "tax_statements.read", "tax_statements.process", "tax_statements.send",
                     "communications.read", "communications.send",
                     "reports.read", "reports.export",
                     "dashboard.read"
@@ -100,6 +106,7 @@ class UserManagementService:
                 "permissions": [
                     "employees.read", "employees.write",
                     "payroll.read", "payroll.send",
+                    "tax_statements.read", "tax_statements.process", "tax_statements.send",
                     "communications.read", "communications.send",
                     "dashboard.read"
                 ]
@@ -110,6 +117,7 @@ class UserManagementService:
                 "permissions": [
                     "employees.read",
                     "payroll.read", 
+                    "tax_statements.read",
                     "communications.read",
                     "reports.read",
                     "dashboard.read"

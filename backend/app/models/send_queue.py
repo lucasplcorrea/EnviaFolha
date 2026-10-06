@@ -70,7 +70,7 @@ class SendQueue(Base, TimestampMixin):
     @property
     def is_active(self):
         """Verifica se a fila está ativa."""
-        return self.status in ['pending', 'processing']
+        return self.status in ['pending', 'processing', 'paused']
     
     @property
     def success_rate(self):

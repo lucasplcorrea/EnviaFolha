@@ -10,12 +10,15 @@ from sqlalchemy import create_engine, inspect, text
 
 
 EMPLOYEE_COLUMNS = {
+    'absolute_id': 'VARCHAR(80)',
+    'name_id': 'VARCHAR(255)',
     'email': 'VARCHAR(255)',
     'department': 'VARCHAR(100)',
     'position': 'VARCHAR(100)',
     'company_code': 'VARCHAR(20)',
     'registration_number': 'VARCHAR(20)',
-    'sector': 'VARCHAR(100)',
+    'company_id': 'INTEGER',
+    'work_location_id': 'INTEGER',
     'is_active': 'BOOLEAN DEFAULT TRUE',
     'created_by': 'INTEGER',
     'updated_by': 'INTEGER',

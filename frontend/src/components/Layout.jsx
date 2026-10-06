@@ -14,11 +14,14 @@ import {
   Bars3Icon,
   XMarkIcon,
   HeartIcon,
+  DocumentTextIcon,
   DocumentArrowUpIcon,
   PaperAirplaneIcon,
   PresentationChartLineIcon,
   QueueListIcon,
   UserCircleIcon,
+  BuildingOfficeIcon,
+  MapPinIcon,
 } from '@heroicons/react/24/outline';
 
 const navigation = [
@@ -36,6 +39,12 @@ const navigation = [
     icon: PaperAirplaneIcon,
     description: 'Envio via WhatsApp'
   },
+  {
+    name: 'Informes de Rendimentos',
+    href: '/tax-statements',
+    icon: DocumentTextIcon,
+    description: 'Processamento e envio anual de IR'
+  },
   { 
     name: 'Dados de Folha', 
     href: '/payroll-data', 
@@ -49,6 +58,12 @@ const navigation = [
   { name: 'Relatórios', href: '/reports', icon: ChartBarIcon },
   { name: 'Meu Perfil', href: '/profile', icon: UserCircleIcon },
   { name: 'Configurações', href: '/settings', icon: CogIcon },
+];
+
+// Itens exclusivos de administrador
+const adminNavigation = [
+  { name: 'Empresas', href: '/companies', icon: BuildingOfficeIcon },
+  { name: 'Locais de Trabalho', href: '/work-locations', icon: MapPinIcon },
 ];
 
 const Layout = ({ children }) => {
@@ -91,6 +106,38 @@ const Layout = ({ children }) => {
               </Link>
             );
           })}
+
+          {/* Seção Admin */}
+          {user?.is_admin && (
+            <>
+              <div className="pt-3 pb-1">
+                <p className="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">
+                  Administração
+                </p>
+              </div>
+              {adminNavigation.map((item) => {
+                const isActive = location.pathname === item.href;
+                return (
+                  <Link
+                    key={item.name}
+                    to={item.href}
+                    className={`${
+                      isActive
+                        ? 'bg-brand-100 dark:bg-brand-800 border-brand-500 text-brand-700 dark:text-brand-300'
+                        : 'border-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white'
+                    } group flex items-center px-2 py-2 text-sm font-medium border-l-4 transition-colors duration-200`}
+                  >
+                    <item.icon
+                      className={`${
+                        isActive ? 'text-brand-500 dark:text-brand-400' : 'text-gray-400 dark:text-gray-500 group-hover:text-gray-500 dark:group-hover:text-gray-400'
+                      } mr-3 h-6 w-6`}
+                    />
+                    {item.name}
+                  </Link>
+                );
+              })}
+            </>
+          )}
         </nav>
       </div>
     </div>
@@ -135,7 +182,7 @@ const Layout = ({ children }) => {
           <div className="flex-1 px-4 flex justify-between items-center">
             <div className="flex-1 flex">
               <h1 className={`text-2xl font-semibold ${config.classes.text}`}>
-                {navigation.find(item => item.href === location.pathname)?.name || 'Dashboard'}
+                {[...navigation, ...adminNavigation].find(item => item.href === location.pathname)?.name || 'Dashboard'}
               </h1>
             </div>
             
@@ -157,7 +204,7 @@ const Layout = ({ children }) => {
         {/* Page content */}
         <main className={`flex-1 relative overflow-y-auto focus:outline-none ${config.classes.body} print:overflow-visible print:h-auto`}>
           <div className="py-6 print:py-2">
-            <div className={`${location.pathname === '/employees' ? 'max-w-screen-2xl' : 'max-w-7xl'} mx-auto px-4 sm:px-6 md:px-8 print:max-w-none print:px-2`}>
+            <div className="w-full max-w-[96%] xl:max-w-screen-2xl mx-auto px-4 sm:px-6 md:px-8 print:max-w-none print:px-2">
               {children}
             </div>
           </div>

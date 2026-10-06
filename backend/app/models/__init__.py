@@ -2,6 +2,8 @@
 from .base import Base, TimestampMixin
 from .user import User
 from .employee import Employee
+from .company import Company
+from .work_location import WorkLocation
 from .role_simple import Role
 from .payroll import PayrollRecord
 from .benefit import BenefitRecord
@@ -13,6 +15,7 @@ from .communication_send import CommunicationSend
 from .communication_recipient import CommunicationRecipient
 from .send_queue import SendQueue, SendQueueItem
 from .hr_indicators import HRIndicatorSnapshot
+from .tax_statement import TaxStatement, TaxStatementUpload
 
 # keep older payroll-related imports if they exist elsewhere; import safe names
 try:
@@ -32,6 +35,8 @@ __all__ = [
     "TimestampMixin",
     "User",
     "Employee",
+    "Company",
+    "WorkLocation",
     "Role",
     "PayrollRecord",
     "BenefitRecord",
@@ -49,7 +54,9 @@ __all__ = [
     "CommunicationRecipient",
     "SendQueue",
     "SendQueueItem",
-    "HRIndicatorSnapshot"
+    "HRIndicatorSnapshot",
+    "TaxStatement",
+    "TaxStatementUpload"
     # "AuditLog",
     # "SystemSetting"
 ]

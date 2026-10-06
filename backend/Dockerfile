@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copiar código da aplicação
 COPY . .
+RUN chmod +x /app/docker-entrypoint.sh
 
 # Criar diretórios necessários
 RUN mkdir -p uploads enviados holerites_formatados_final
@@ -32,5 +33,5 @@ EXPOSE 8002
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8002/api/v1/database/health')" || exit 1
 
-# Comando para executar a aplicação
-CMD ["python", "main_legacy.py"]
+# Aplicar migrações antes de iniciar o servidor modular.
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

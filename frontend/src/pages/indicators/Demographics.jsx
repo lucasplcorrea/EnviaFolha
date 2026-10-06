@@ -10,14 +10,15 @@ import ExportPDFButton from '../../components/ExportPDFButton';
 import toast from 'react-hot-toast';
 import { MetricCard, LoadingSpinner, EmptyState } from './components';
 import {
-  LineChart,
   Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   Legend,
-  ResponsiveContainer
+  ResponsiveContainer,
+  ComposedChart,
+  Area
 } from 'recharts';
 
 const Demographics = () => {
@@ -36,7 +37,8 @@ const Demographics = () => {
     division: 'all',
     months_range: 12
   });
-  
+
+  const [selectedAgeRange, setSelectedAgeRange] = useState(null);
   const [filtersReady, setFiltersReady] = useState(false);
   const initialLoadDone = useRef(false);
 
@@ -44,11 +46,11 @@ const Demographics = () => {
   useEffect(() => {
     if (initialLoadDone.current) return;
     initialLoadDone.current = true;
-    
+
     const loadFilters = async () => {
       try {
         const token = localStorage.getItem('token');
-        
+
         const [yearsRes, monthsRes, divisionsRes] = await Promise.all([
           fetch('http://localhost:8002/api/v1/payroll/years', {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -60,34 +62,34 @@ const Demographics = () => {
             headers: { 'Authorization': `Bearer ${token}` }
           })
         ]);
-        
+
         const [yearsData, monthsData, divisionsData] = await Promise.all([
           yearsRes.json(),
           monthsRes.json(),
           divisionsRes.json()
         ]);
-        
+
         // Extrair apenas os nomes das divisões
-        const divisionNames = (divisionsData.departments || []).map(d => 
+        const divisionNames = (divisionsData.departments || []).map(d =>
           typeof d === 'object' ? d.name : d
         ).filter(Boolean);
-        
+
         const years = yearsData.years || [];
         const months = monthsData.months || [];
-        
+
         setFilters({
           years,
           months,
           divisions: divisionNames
         });
-        
+
         // Selecionar período mais recente
         if (years.length > 0 && months.length > 0) {
           const latestYear = Math.max(...years);
           const latestMonth = months[months.length - 1].number;
-          
-          setSelectedFilters(prev => ({ 
-            ...prev, 
+
+          setSelectedFilters(prev => ({
+            ...prev,
             year: latestYear,
             month: latestMonth
           }));
@@ -101,13 +103,13 @@ const Demographics = () => {
         setLoading(false);
       }
     };
-    
+
     loadFilters();
   }, []);
 
   const loadData = useCallback(async () => {
     if (!selectedFilters.year || !selectedFilters.month) return;
-    
+
     setLoading(true);
     try {
       const params = new URLSearchParams({
@@ -117,7 +119,7 @@ const Demographics = () => {
         month: selectedFilters.month,
         months_range: selectedFilters.months_range
       });
-      
+
       const response = await api.get(`/indicators/demographics?${params}`);
       setData(response.data);
     } catch (error) {
@@ -180,7 +182,7 @@ const Demographics = () => {
               ))}
             </select>
           </div>
-          
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Mês</label>
             <select
@@ -194,7 +196,7 @@ const Demographics = () => {
               ))}
             </select>
           </div>
-          
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Empresa</label>
             <select
@@ -207,7 +209,7 @@ const Demographics = () => {
               <option value="0059">Infraestrutura</option>
             </select>
           </div>
-          
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Setor</label>
             <select
@@ -221,7 +223,7 @@ const Demographics = () => {
               ))}
             </select>
           </div>
-          
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Período Evolução</label>
             <select
@@ -267,62 +269,34 @@ const Demographics = () => {
         />
       </div>
 
-      {/* Gráfico de Evolução da Idade Média */}
+      {/* Gráfico Combinado: Idade e Sexo */}
       {evolution && evolution.length > 0 && (
         <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
           <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
-            📊 Evolução da Idade Média
+            📊 Evolução Demográfica (Idade Média vs Sexo)
           </h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="month_name" />
-              <YAxis label={{ value: 'Idade (anos)', angle: -90, position: 'insideLeft' }} />
-              <Tooltip />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey="average_age"
-                stroke="#f59e0b"
-                strokeWidth={2}
-                name="Idade Média"
-                dot={{ fill: '#f59e0b', r: 4 }}
+          <ResponsiveContainer width="100%" height={350}>
+            <ComposedChart data={chartData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+              <XAxis dataKey="month_name" axisLine={false} tickLine={false} />
+              <YAxis yAxisId="left" orientation="left" axisLine={false} tickLine={false} label={{ value: 'Quantidade de Pessoas', angle: -90, position: 'insideLeft', offset: -10 }} />
+              <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} label={{ value: 'Idade Média (anos)', angle: 90, position: 'insideRight', offset: 10 }} />
+              <Tooltip
+                cursor={{fill: 'transparent'}}
+                itemSorter={(item) => {
+                  if (item.name === 'Masculino') return 1;
+                  if (item.name === 'Feminino') return 2;
+                  if (item.name === 'Idade Média') return 3;
+                  return 4;
+                }}
               />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      )}
+              <Legend />
 
-      {/* Gráfico de Evolução por Sexo */}
-      {evolution && evolution.length > 0 && (
-        <div className={`${config.classes.card} p-6 rounded-lg shadow ${config.classes.border}`}>
-          <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
-            👥 Evolução da Distribuição por Sexo
-          </h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="month_name" />
-              <YAxis label={{ value: 'Quantidade', angle: -90, position: 'insideLeft' }} />
-              <Tooltip />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey="male_count"
-                stroke="#3b82f6"
-                strokeWidth={2}
-                name="Masculino"
-                dot={{ fill: '#3b82f6', r: 4 }}
-              />
-              <Line
-                type="monotone"
-                dataKey="female_count"
-                stroke="#ec4899"
-                strokeWidth={2}
-                name="Feminino"
-                dot={{ fill: '#ec4899', r: 4 }}
-              />
-            </LineChart>
+              <Area yAxisId="left" type="monotone" dataKey="male_count" name="Masculino" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.15} strokeWidth={2} />
+              <Area yAxisId="left" type="monotone" dataKey="female_count" name="Feminino" stroke="#ec4899" fill="#ec4899" fillOpacity={0.15} strokeWidth={2} />
+
+              <Line yAxisId="right" type="monotone" dataKey="average_age" stroke="#f59e0b" strokeWidth={3} name="Idade Média" dot={{ fill: '#f59e0b', r: 5 }} />
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
       )}
@@ -338,11 +312,11 @@ const Demographics = () => {
               const percentage = total_employees > 0 ? ((item.count / total_employees) * 100).toFixed(1) : 0;
               const isMale = item.sex === 'M';
               return (
-                <div 
-                  key={idx} 
+                <div
+                  key={idx}
                   className={`p-6 rounded-lg border ${
-                    isMale 
-                      ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' 
+                    isMale
+                      ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
                       : 'bg-pink-50 dark:bg-pink-900/20 border-pink-200 dark:border-pink-800'
                   }`}
                 >
@@ -355,7 +329,7 @@ const Demographics = () => {
                     </span>
                   </div>
                   <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3">
-                    <div 
+                    <div
                       className={`h-3 rounded-full ${isMale ? 'bg-blue-500' : 'bg-pink-500'}`}
                       style={{ width: `${percentage}%` }}
                     ></div>
@@ -376,11 +350,11 @@ const Demographics = () => {
           <h3 className={`text-lg font-semibold ${config.classes.text} mb-4`}>
             📊 Distribuição por Faixa Etária (Período Atual)
           </h3>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             {age_ranges.map((range, idx) => {
               const totalRange = age_ranges.reduce((sum, r) => sum + r.count, 0);
               const percentage = totalRange > 0 ? ((range.count / totalRange) * 100).toFixed(1) : 0;
-              
+
               // Cores progressivas por faixa
               const colors = [
                 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800',
@@ -389,13 +363,17 @@ const Demographics = () => {
                 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800',
                 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',
               ];
-              
+
               return (
-                <div key={idx} className={`p-4 rounded-lg border ${colors[idx % colors.length]}`}>
+                <div
+                  key={idx}
+                  className={`p-4 rounded-lg border ${colors[idx % colors.length]} cursor-pointer hover:shadow-md transition-shadow`}
+                  onClick={() => setSelectedAgeRange(range)}
+                >
                   <p className={`text-sm font-medium ${config.classes.textSecondary}`}>{range.range}</p>
                   <p className={`text-3xl font-bold ${config.classes.text} mt-2`}>{range.count}</p>
                   <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 mt-2">
-                    <div 
+                    <div
                       className="bg-blue-500 h-2 rounded-full"
                       style={{ width: `${percentage}%` }}
                     ></div>
@@ -404,6 +382,47 @@ const Demographics = () => {
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Detalhamento por Faixa Etária */}
+      {selectedAgeRange && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[80vh] flex flex-col">
+            <div className="p-4 border-b flex justify-between items-center">
+              <h3 className="text-lg font-bold text-gray-900">
+                Idade: {selectedAgeRange.range} ({selectedAgeRange.count} pessoas)
+              </h3>
+              <button
+                onClick={() => setSelectedAgeRange(null)}
+                className="text-gray-500 hover:text-gray-700 font-bold text-xl"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1">
+              {selectedAgeRange.employees && selectedAgeRange.employees.length > 0 ? (
+                <ul className="divide-y divide-gray-100">
+                  {selectedAgeRange.employees.map((emp, i) => (
+                    <li key={i} className="py-3 px-2 flex flex-col hover:bg-gray-50 transition-colors rounded-md">
+                      <span className="font-medium text-gray-900 text-sm">{emp.name}</span>
+                      <span className="text-xs text-gray-500 mt-1">{emp.department} • {emp.age} anos</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-gray-500 italic text-sm">Nenhum colaborador nesta faixa.</p>
+              )}
+            </div>
+            <div className="p-4 border-t bg-gray-50 flex justify-end rounded-b-lg">
+              <button
+                onClick={() => setSelectedAgeRange(null)}
+                className="px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 transition-colors text-sm font-medium"
+              >
+                Fechar
+              </button>
+            </div>
           </div>
         </div>
       )}

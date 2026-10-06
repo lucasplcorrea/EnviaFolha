@@ -43,17 +43,17 @@ DEFAULT_ROLES = [
     {
         'name': 'admin',
         'description': 'Administrador - Acesso completo',
-        'allowed_pages': ['dashboard', 'employees', 'payroll', 'communications', 'reports', 'users', 'settings']
+        'allowed_pages': ['dashboard', 'employees', 'payroll', 'tax-statements', 'communications', 'reports', 'users', 'settings']
     },
     {
         'name': 'manager',
         'description': 'Gerente - Operações e configurações',
-        'allowed_pages': ['dashboard', 'employees', 'payroll', 'communications', 'reports', 'settings']
+        'allowed_pages': ['dashboard', 'employees', 'payroll', 'tax-statements', 'communications', 'reports', 'settings']
     },
     {
         'name': 'operator',
         'description': 'Operador - Envios e relatórios',
-        'allowed_pages': ['dashboard', 'payroll', 'communications', 'reports']
+        'allowed_pages': ['dashboard', 'payroll', 'tax-statements', 'communications', 'reports']
     },
     {
         'name': 'viewer',

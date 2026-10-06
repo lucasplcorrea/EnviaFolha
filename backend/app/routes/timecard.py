@@ -97,14 +97,20 @@ class TimecardStats(BaseModel):
     night_overtime_50: Decimal  # HE Noturna 50%
     night_overtime_100: Decimal  # HE Noturna 100%
     night_hours: Decimal  # Adicional Noturno
+    intrajornada_hours: Decimal
+    dsr_debit_hours: Decimal
     # Totais agregados (para compatibilidade)
     total_overtime_hours: Decimal
     total_night_hours: Decimal
     # Contadores
     employees_with_overtime: int
     employees_with_night_hours: int
+    employees_with_intrajornada: int
+    employees_with_dsr_debit: int
     average_overtime: Decimal
     average_night_hours: Decimal
+    average_intrajornada: Decimal
+    average_dsr_debit: Decimal
     by_company: dict
 
 
@@ -400,12 +406,18 @@ async def get_timecard_stats(
                 night_overtime_50=Decimal('0'),
                 night_overtime_100=Decimal('0'),
                 night_hours=Decimal('0'),
+                intrajornada_hours=Decimal('0'),
+                dsr_debit_hours=Decimal('0'),
                 total_overtime_hours=Decimal('0'),
                 total_night_hours=Decimal('0'),
                 employees_with_overtime=0,
                 employees_with_night_hours=0,
+                employees_with_intrajornada=0,
+                employees_with_dsr_debit=0,
                 average_overtime=Decimal('0'),
                 average_night_hours=Decimal('0'),
+                average_intrajornada=Decimal('0'),
+                average_dsr_debit=Decimal('0'),
                 by_company={}
             )
     
@@ -419,12 +431,18 @@ async def get_timecard_stats(
             night_overtime_50=Decimal('0'),
             night_overtime_100=Decimal('0'),
             night_hours=Decimal('0'),
+            intrajornada_hours=Decimal('0'),
+            dsr_debit_hours=Decimal('0'),
             total_overtime_hours=Decimal('0'),
             total_night_hours=Decimal('0'),
             employees_with_overtime=0,
             employees_with_night_hours=0,
+            employees_with_intrajornada=0,
+            employees_with_dsr_debit=0,
             average_overtime=Decimal('0'),
             average_night_hours=Decimal('0'),
+            average_intrajornada=Decimal('0'),
+            average_dsr_debit=Decimal('0'),
             by_company={}
         )
     
@@ -437,6 +455,8 @@ async def get_timecard_stats(
     sum_night_overtime_50 = sum((d.night_overtime_50 or Decimal('0') for d in timecard_data), Decimal('0'))
     sum_night_overtime_100 = sum((d.night_overtime_100 or Decimal('0') for d in timecard_data), Decimal('0'))
     sum_night_hours = sum((d.night_hours or Decimal('0') for d in timecard_data), Decimal('0'))
+    sum_intrajornada = sum((d.absences or Decimal('0') for d in timecard_data), Decimal('0'))
+    sum_dsr_debit = sum((d.dsr_debit or Decimal('0') for d in timecard_data), Decimal('0'))
     
     # Totais agregados
     total_overtime = sum_overtime_50 + sum_overtime_100
@@ -444,9 +464,13 @@ async def get_timecard_stats(
     
     employees_with_overtime = sum(1 for d in timecard_data if d.get_total_overtime() > 0)
     employees_with_night = sum(1 for d in timecard_data if d.get_total_night_hours() > 0)
+    employees_with_intrajornada = sum(1 for d in timecard_data if (d.absences or Decimal('0')) > 0)
+    employees_with_dsr_debit = sum(1 for d in timecard_data if (d.dsr_debit or Decimal('0')) > 0)
     
     avg_overtime = total_overtime / total_employees if total_employees > 0 else Decimal('0')
     avg_night = total_night / total_employees if total_employees > 0 else Decimal('0')
+    avg_intrajornada = sum_intrajornada / total_employees if total_employees > 0 else Decimal('0')
+    avg_dsr_debit = sum_dsr_debit / total_employees if total_employees > 0 else Decimal('0')
     
     # Estatísticas por empresa
     by_company = {}
@@ -457,8 +481,12 @@ async def get_timecard_stats(
                 'employees': len(company_data),
                 'total_overtime': float(sum((d.get_total_overtime() for d in company_data), Decimal('0'))),
                 'total_night_hours': float(sum((d.get_total_night_hours() for d in company_data), Decimal('0'))),
+                'total_intrajornada': float(sum((d.absences or Decimal('0') for d in company_data), Decimal('0'))),
+                'total_dsr_debit': float(sum((d.dsr_debit or Decimal('0') for d in company_data), Decimal('0'))),
                 'average_overtime': float(sum((d.get_total_overtime() for d in company_data), Decimal('0')) / len(company_data)),
-                'average_night_hours': float(sum((d.get_total_night_hours() for d in company_data), Decimal('0')) / len(company_data))
+                'average_night_hours': float(sum((d.get_total_night_hours() for d in company_data), Decimal('0')) / len(company_data)),
+                'average_intrajornada': float(sum((d.absences or Decimal('0') for d in company_data), Decimal('0')) / len(company_data)),
+                'average_dsr_debit': float(sum((d.dsr_debit or Decimal('0') for d in company_data), Decimal('0')) / len(company_data)),
             }
     
     return TimecardStats(
@@ -468,11 +496,17 @@ async def get_timecard_stats(
         night_overtime_50=sum_night_overtime_50,
         night_overtime_100=sum_night_overtime_100,
         night_hours=sum_night_hours,
+        intrajornada_hours=sum_intrajornada,
+        dsr_debit_hours=sum_dsr_debit,
         total_overtime_hours=total_overtime,
         total_night_hours=total_night,
         employees_with_overtime=employees_with_overtime,
         employees_with_night_hours=employees_with_night,
+        employees_with_intrajornada=employees_with_intrajornada,
+        employees_with_dsr_debit=employees_with_dsr_debit,
         average_overtime=avg_overtime,
         average_night_hours=avg_night,
+        average_intrajornada=avg_intrajornada,
+        average_dsr_debit=avg_dsr_debit,
         by_company=by_company
     )

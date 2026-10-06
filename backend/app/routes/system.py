@@ -3,8 +3,13 @@ System Routes - Sistema, Health Checks e Logs
 """
 import os
 import urllib.parse
+import time
 from datetime import datetime
 from .base import BaseRouter
+from app.services.runtime_compat import SessionLocal
+
+
+START_TIME = time.time()
 
 
 class SystemRouter(BaseRouter):
@@ -16,23 +21,7 @@ class SystemRouter(BaseRouter):
         Status geral do sistema (uptime, versão, database)
         """
         try:
-            import time
-            from main_legacy import SessionLocal
-            
-            # Calcular uptime usando tempo de módulo (alternativa sem psutil)
-            try:
-                import psutil
-                current_process = psutil.Process()
-                uptime_seconds = time.time() - current_process.create_time()
-            except ImportError:
-                # Fallback: usar variável global se disponível
-                uptime_seconds = 0
-                try:
-                    from main_legacy import start_time
-                    uptime_seconds = time.time() - start_time
-                except (ImportError, NameError):
-                    # Se não conseguir, retornar 0
-                    pass
+            uptime_seconds = time.time() - START_TIME
             
             uptime_str = f"{int(uptime_seconds // 3600)}h {int((uptime_seconds % 3600) // 60)}m"
             
@@ -55,8 +44,6 @@ class SystemRouter(BaseRouter):
         Health check do banco de dados PostgreSQL
         """
         try:
-            from main_legacy import SessionLocal
-            
             if SessionLocal:
                 from sqlalchemy import text
                 db = SessionLocal()
@@ -266,8 +253,6 @@ class SystemRouter(BaseRouter):
         Lista logs do sistema com filtros opcionais
         Query params: level, category, user_id, limit, offset
         """
-        from main_legacy import SessionLocal
-        
         db = SessionLocal()
         try:
             from app.services.logging_service import LoggingService

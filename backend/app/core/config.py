@@ -1,6 +1,12 @@
 from pydantic_settings import BaseSettings
 from typing import Optional
 import os
+from pathlib import Path
+
+
+CURRENT_FILE = Path(__file__).resolve()
+BACKEND_DIR = CURRENT_FILE.parents[2]
+REPO_DIR = CURRENT_FILE.parents[3]
 
 class Settings(BaseSettings):
     # Configurações básicas
@@ -9,18 +15,18 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     
     # Configurações do banco de dados
-    DATABASE_URL: str = "postgresql://enviafolha_user:secure_password@localhost:5432/enviafolha_db"
+    DATABASE_URL: Optional[str] = None
     
     # Configurações PostgreSQL individuais
     DB_HOST: str = "localhost"
     DB_PORT: str = "5432"
     DB_NAME: str = "enviafolha_db"
     DB_USER: str = "enviafolha_user"
-    DB_PASSWORD: str = "secure_password"
+    DB_PASSWORD: str = ""
     PORT: str = "8002"
     
     # Configurações de autenticação
-    SECRET_KEY: str = "your-secret-key-change-this"
+    SECRET_KEY: str = "change-this-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
@@ -52,7 +58,10 @@ class Settings(BaseSettings):
     ADMIN_WHATSAPP_NUMBER: Optional[str] = None
     
     class Config:
-        env_file = ".env"
+        env_file = (
+            str(BACKEND_DIR / ".env"),
+            str(REPO_DIR / ".env"),
+        )
         env_file_encoding = "utf-8"
         extra = "allow"  # Permite campos extras
         case_sensitive = True
@@ -82,6 +91,13 @@ class Settings(BaseSettings):
         return security
 
 settings = Settings()
+
+# Fallback para manter compatibilidade quando DATABASE_URL nao foi informado.
+if not settings.DATABASE_URL:
+    settings.DATABASE_URL = (
+        f"postgresql://{settings.DB_USER}:{settings.DB_PASSWORD}"
+        f"@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
+    )
 
 # Criar diretórios necessários
 os.makedirs(settings.UPLOAD_FOLDER, exist_ok=True)

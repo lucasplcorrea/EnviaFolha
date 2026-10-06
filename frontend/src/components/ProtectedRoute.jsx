@@ -4,7 +4,7 @@ import { usePermissions } from '../hooks/usePermissions';
 
 const ProtectedRoute = ({ children }) => {
   const location = useLocation();
-  const { canAccessRoute, userRole } = usePermissions();
+  const { canAccessRoute } = usePermissions();
   
   const hasAccess = canAccessRoute(location.pathname);
   

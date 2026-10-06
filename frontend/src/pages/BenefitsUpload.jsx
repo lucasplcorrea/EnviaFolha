@@ -24,6 +24,7 @@ const BenefitsUpload = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [periodToDelete, setPeriodToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [deletingLogId, setDeletingLogId] = useState(null);
 
   useEffect(() => {
     loadBenefitsPeriods();
@@ -138,6 +139,36 @@ const BenefitsUpload = () => {
       toast.error(error.response?.data?.error || 'Erro ao deletar período');
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleDeleteUploadLog = async (log) => {
+    if (!log?.id) return;
+
+    const label = log.filename || `ID ${log.id}`;
+    const periodLabel = log.period_name || `${String(log.month).padStart(2, '0')}/${log.year}`;
+    const confirmed = window.confirm(
+      `Deseja remover somente este upload de benefícios?\n\nArquivo: ${label}\nPeríodo: ${periodLabel}\n\nA ação vai desfazer os valores deste upload e manter os demais.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setDeletingLogId(log.id);
+      const response = await api.delete(`/benefits/processing-logs/${log.id}`);
+
+      if (response.data?.success) {
+        toast.success(response.data.message || 'Upload removido com sucesso');
+        loadBenefitsPeriods();
+        loadProcessingHistory();
+      } else {
+        toast.error(response.data?.error || 'Erro ao remover upload');
+      }
+    } catch (error) {
+      console.error('Erro ao remover upload de benefícios:', error);
+      toast.error(error.response?.data?.error || 'Erro ao remover upload de benefícios');
+    } finally {
+      setDeletingLogId(null);
     }
   };
 
@@ -383,6 +414,7 @@ const BenefitsUpload = () => {
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Registros</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tempo</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ações</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -416,11 +448,30 @@ const BenefitsUpload = () => {
                     <td className="px-4 py-3 text-sm text-gray-600">
                       {log.processing_time ? `${parseFloat(log.processing_time).toFixed(2)}s` : '-'}
                     </td>
+                    <td className="px-4 py-3 text-sm text-gray-600">
+                      <button
+                        onClick={() => handleDeleteUploadLog(log)}
+                        disabled={deletingLogId === log.id || !log.can_delete}
+                        title={
+                          log.can_delete
+                            ? `Remover somente este upload (modo: ${log.delete_mode === 'rollback' ? 'reversão' : 'simples'})`
+                            : (log.rollback_reason || 'Este upload não pode ser removido individualmente')
+                        }
+                        className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-xs font-medium ${
+                          log.can_delete
+                            ? 'text-red-700 border-red-300 hover:bg-red-50'
+                            : 'text-gray-400 border-gray-200 cursor-not-allowed'
+                        }`}
+                      >
+                        <TrashIcon className="h-3.5 w-3.5" />
+                        {deletingLogId === log.id ? 'Removendo...' : 'Remover upload'}
+                      </button>
+                    </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan="6" className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan="7" className="px-4 py-8 text-center text-gray-500">
                     <p className="text-sm">Nenhum histórico de processamento disponível</p>
                     <p className="text-xs mt-1">Os uploads aparecerão aqui após serem processados</p>
                   </td>

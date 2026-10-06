@@ -22,6 +22,94 @@ import PyPDF2
 from io import BytesIO
 
 
+def _only_digits(value: Optional[str]) -> str:
+    return re.sub(r'\D', '', str(value or ''))
+
+
+def _normalize_unique_id(value: Optional[str]) -> str:
+    digits = _only_digits(value)
+    if not digits:
+        return ''
+    return digits.zfill(9) if len(digits) <= 9 else digits
+
+
+def _build_absolute_id(unique_id: Optional[str], cpf: Optional[str]) -> str:
+    uid = _normalize_unique_id(unique_id)
+    cpf_digits = _only_digits(cpf)
+    if uid and len(cpf_digits) == 11:
+        return f"{uid}{cpf_digits}"
+    return ''
+
+
+def _is_employee_active(emp: Dict) -> bool:
+    status = str(emp.get('employment_status') or '').strip().lower()
+    status_reason = str(emp.get('status_reason') or '').strip().lower()
+    termination = str(emp.get('termination_date') or '').strip()
+    return bool(emp.get('is_active')) and not termination and 'deslig' not in status and 'demit' not in status_reason
+
+
+def _pick_best_candidate(candidates: List[Dict], cpf: Optional[str]) -> Optional[Dict]:
+    if not candidates:
+        return None
+
+    cpf_digits = _only_digits(cpf)
+
+    def score(emp: Dict) -> int:
+        points = 0
+        if _is_employee_active(emp):
+            points += 100
+        emp_cpf = _only_digits(emp.get('cpf'))
+        if cpf_digits and emp_cpf == cpf_digits:
+            points += 50
+        if str(emp.get('admission_date') or '').strip():
+            points += 10
+        return points
+
+    return max(candidates, key=score)
+
+
+def _find_employee_for_page(employees_data: List[Dict], extracted_matricula: Optional[str], cpf: Optional[str]) -> Optional[Dict]:
+    cpf_digits = _only_digits(cpf)
+    uid_digits = _normalize_unique_id(extracted_matricula)
+
+    if uid_digits and len(cpf_digits) == 11:
+        target_abs = _build_absolute_id(uid_digits, cpf_digits)
+        abs_matches = [
+            emp for emp in employees_data
+            if _only_digits(emp.get('absolute_id')) == target_abs
+        ]
+        best_abs = _pick_best_candidate(abs_matches, cpf_digits)
+        if best_abs:
+            return best_abs
+
+    if uid_digits:
+        uid_matches = [
+            emp for emp in employees_data
+            if _normalize_unique_id(emp.get('unique_id')) == uid_digits
+        ]
+
+        if cpf_digits:
+            cpf_uid_matches = [emp for emp in uid_matches if _only_digits(emp.get('cpf')) == cpf_digits]
+            best_uid_cpf = _pick_best_candidate(cpf_uid_matches, cpf_digits)
+            if best_uid_cpf:
+                return best_uid_cpf
+
+        best_uid = _pick_best_candidate(uid_matches, cpf_digits)
+        if best_uid:
+            return best_uid
+
+    if cpf_digits:
+        cpf_matches = [
+            emp for emp in employees_data
+            if _only_digits(emp.get('cpf')) == cpf_digits
+        ]
+        best_cpf = _pick_best_candidate(cpf_matches, cpf_digits)
+        if best_cpf:
+            return best_cpf
+
+    return None
+
+
 class PayrollFormatter:
     """Classe para formatar e organizar holerites no novo padrão"""
     
@@ -363,23 +451,7 @@ def segment_pdf_by_employee(pdf_path: str,
                 cpf = formatter.extract_cpf_from_text(text)
                 
                 # Buscar funcionário correspondente
-                employee = None
-                
-                # Primeiro: tentar buscar pela matrícula extraída
-                if extracted_matricula:
-                    for emp in employees_data:
-                        emp_unique_id = emp.get('unique_id', '')
-                        if formatter.remove_leading_zeros(emp_unique_id) == formatter.remove_leading_zeros(extracted_matricula):
-                            employee = emp
-                            break
-                
-                # Segundo: se não encontrou, tentar por CPF
-                if not employee and cpf:
-                    for emp in employees_data:
-                        emp_cpf = emp.get('cpf', '').replace('.', '').replace('-', '')
-                        if emp_cpf == cpf:
-                            employee = emp
-                            break
+                employee = _find_employee_for_page(employees_data, extracted_matricula, cpf)
                 
                 # Usar matrícula extraída do PDF ou fallback
                 matricula = extracted_matricula if extracted_matricula else (employee.get('unique_id') if employee else f'UNKNOWN_{page_num + 1}')

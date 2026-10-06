@@ -47,6 +47,15 @@ def run_all_migrations():
             print(f"⚠️  Erro ao executar {migration_file.name}: {e}")
             # Continuar com as outras migrations
             continue
+
+    # Os módulos recuperados da develop incluem tabelas novas (empresas,
+    # locais de trabalho e informes). create_all é idempotente e cria apenas
+    # as tabelas ausentes; alterações em tabelas existentes permanecem nas
+    # migrations explícitas acima.
+    from app.models import Base
+    from app.models.base import engine
+    Base.metadata.create_all(bind=engine)
+    print("✅ Tabelas dos módulos verificadas")
     
     print()
     print("✅ Migrations concluídas")

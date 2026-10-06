@@ -44,6 +44,7 @@ class EndomarketingService:
                 # Mesma semana no mesmo mês
                 employees = self.db.query(Employee).filter(
                     Employee.is_active == True,
+                    Employee.termination_date.is_(None),
                     Employee.birth_date.isnot(None),
                     extract('month', Employee.birth_date) == current_month,
                     extract('day', Employee.birth_date) >= start_day,
@@ -53,6 +54,7 @@ class EndomarketingService:
                 # Semana atravessa virada de mês
                 employees = self.db.query(Employee).filter(
                     Employee.is_active == True,
+                    Employee.termination_date.is_(None),
                     Employee.birth_date.isnot(None),
                     or_(
                         and_(
@@ -72,6 +74,7 @@ class EndomarketingService:
             # Mês inteiro
             employees = self.db.query(Employee).filter(
                 Employee.is_active == True,
+                Employee.termination_date.is_(None),
                 Employee.birth_date.isnot(None),
                 extract('month', Employee.birth_date) == current_month
             ).order_by(extract('day', Employee.birth_date)).all()
@@ -136,6 +139,7 @@ class EndomarketingService:
             if end_date.month == current_month:
                 employees = self.db.query(Employee).filter(
                     Employee.is_active == True,
+                    Employee.termination_date.is_(None),
                     Employee.admission_date.isnot(None),
                     extract('month', Employee.admission_date) == current_month,
                     extract('day', Employee.admission_date) >= start_day,
@@ -144,6 +148,7 @@ class EndomarketingService:
             else:
                 employees = self.db.query(Employee).filter(
                     Employee.is_active == True,
+                    Employee.termination_date.is_(None),
                     Employee.admission_date.isnot(None),
                     or_(
                         and_(
@@ -163,6 +168,7 @@ class EndomarketingService:
             # Mês inteiro
             employees = self.db.query(Employee).filter(
                 Employee.is_active == True,
+                Employee.termination_date.is_(None),
                 Employee.admission_date.isnot(None),
                 extract('month', Employee.admission_date) == current_month
             ).order_by(extract('day', Employee.admission_date)).all()
@@ -239,6 +245,7 @@ class EndomarketingService:
         
         employees = self.db.query(Employee).filter(
             Employee.is_active == True,
+            Employee.termination_date.is_(None),
             Employee.admission_date.isnot(None),
             Employee.admission_date >= min_date,
             Employee.admission_date <= max_date

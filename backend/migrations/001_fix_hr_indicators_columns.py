@@ -19,7 +19,7 @@ def run_migration():
     
     # Só executar para PostgreSQL
     if 'postgresql' not in db_url:
-        print("ℹ️  Migration não necessária para SQLite")
+        print("ℹ️  Migration aplicável apenas ao PostgreSQL")
         return
     
     print("=" * 60)
