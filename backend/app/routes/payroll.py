@@ -7,6 +7,8 @@ import zipfile
 import re
 import PyPDF2
 from io import BytesIO
+from collections import defaultdict
+from decimal import Decimal
 from datetime import datetime
 from typing import List, Optional
 
@@ -348,8 +350,7 @@ class PayrollRouter(BaseRouter):
         elif path == '/api/v1/payrolls/periods':
             self.handle_list_payroll_periods()
         elif path == '/api/v1/payroll/period-comparison':
-            # Ainda usa implementacao consolidada do legado
-            self.handler.handle_period_comparison()
+            self.handle_period_comparison()
         elif path == '/api/v1/payroll/processing-history':
             self.handle_payroll_processing_history()
         elif path.startswith('/api/v1/payroll/statistics-debug'):
@@ -365,6 +366,96 @@ class PayrollRouter(BaseRouter):
             self.handle_bulk_send_status(job_id)
         else:
             self.send_error('Endpoint não encontrado', 404)
+
+    def handle_period_comparison(self):
+        """Retorna totais consolidados por competência de folha."""
+        db = None
+        try:
+            query_params = urllib.parse.parse_qs(urllib.parse.urlparse(self.handler.path).query)
+            company = query_params.get('company', ['all'])[0]
+            period_filter = query_params.get('period', ['all'])[0]
+            start_month = query_params.get('start_month', [None])[0]
+            end_month = query_params.get('end_month', [None])[0]
+
+            if not SessionLocal:
+                self.send_error('PostgreSQL não disponível', 500)
+                return
+
+            db = SessionLocal()
+            periods_query = db.query(PayrollPeriod)
+
+            if company != 'all':
+                periods_query = periods_query.filter(PayrollPeriod.company == company)
+
+            if period_filter == 'mensal':
+                periods_query = periods_query.filter(~PayrollPeriod.period_name.ilike('%13%'))
+            elif period_filter == '13':
+                periods_query = periods_query.filter(PayrollPeriod.period_name.ilike('%13%'))
+
+            if start_month:
+                start_year, start_mon = self._parse_comparison_month(start_month)
+                periods_query = periods_query.filter(
+                    (PayrollPeriod.year > start_year)
+                    | ((PayrollPeriod.year == start_year) & (PayrollPeriod.month >= start_mon))
+                )
+
+            if end_month:
+                end_year, end_mon = self._parse_comparison_month(end_month)
+                periods_query = periods_query.filter(
+                    (PayrollPeriod.year < end_year)
+                    | ((PayrollPeriod.year == end_year) & (PayrollPeriod.month <= end_mon))
+                )
+
+            grouped_data = defaultdict(lambda: {
+                'period_names': set(),
+                'employee_ids': set(),
+                'total_earnings': Decimal('0'),
+                'total_net': Decimal('0'),
+            })
+
+            for period in periods_query.all():
+                key = (period.year, period.month)
+                group = grouped_data[key]
+                group['period_names'].add(period.period_name)
+
+                records = db.query(PayrollData).filter(PayrollData.period_id == period.id).all()
+                for record in records:
+                    group['employee_ids'].add(record.employee_id)
+                    group['total_earnings'] += Decimal(str(record.gross_salary or 0))
+                    group['total_net'] += Decimal(str(record.net_salary or 0))
+
+            periods_data = []
+            for (year, month), data in sorted(grouped_data.items(), reverse=True):
+                total_deductions = data['total_earnings'] - data['total_net']
+                periods_data.append({
+                    'year': year,
+                    'month': month,
+                    'period_names': ', '.join(sorted(data['period_names'])),
+                    'employee_count': len(data['employee_ids']),
+                    'total_earnings': float(data['total_earnings']),
+                    'total_deductions': float(total_deductions),
+                    'total_net': float(data['total_net']),
+                })
+
+            self.send_json_response({'periods': periods_data})
+        except ValueError as ex:
+            self.send_error(str(ex), 400)
+        except Exception as ex:
+            print(f'❌ Erro ao buscar comparativo de períodos: {ex}')
+            self.send_error(f'Erro interno: {str(ex)}', 500)
+        finally:
+            if db is not None:
+                db.close()
+
+    @staticmethod
+    def _parse_comparison_month(value: str):
+        try:
+            year, month = map(int, value.split('-', 1))
+        except (TypeError, ValueError):
+            raise ValueError('Período deve estar no formato YYYY-MM')
+        if year < 1900 or month < 1 or month > 12:
+            raise ValueError('Período deve estar no formato YYYY-MM')
+        return year, month
 
     def handle_post(self, path: str):
         if path == '/api/v1/payroll/upload-csv' or path == '/api/v1/payroll-data/upload-csv':

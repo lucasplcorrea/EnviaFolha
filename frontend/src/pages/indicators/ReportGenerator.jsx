@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
+import api from '../../services/api';
 import {
   DocumentArrowDownIcon,
   ChartBarIcon,
@@ -120,25 +121,15 @@ const ReportGenerator = () => {
   useEffect(() => {
     const loadFilters = async () => {
       try {
-        const token = localStorage.getItem('token');
-        
         const [yearsRes, monthsRes, divisionsRes] = await Promise.all([
-          fetch('http://localhost:8002/api/v1/payroll/years', {
-            headers: { 'Authorization': `Bearer ${token}` }
-          }),
-          fetch('http://localhost:8002/api/v1/payroll/months', {
-            headers: { 'Authorization': `Bearer ${token}` }
-          }),
-          fetch('http://localhost:8002/api/v1/payroll/divisions', {
-            headers: { 'Authorization': `Bearer ${token}` }
-          })
+          api.get('/payroll/years'),
+          api.get('/payroll/months'),
+          api.get('/payroll/divisions')
         ]);
         
-        const [yearsData, monthsData, divisionsData] = await Promise.all([
-          yearsRes.json(),
-          monthsRes.json(),
-          divisionsRes.json()
-        ]);
+        const yearsData = yearsRes.data;
+        const monthsData = monthsRes.data;
+        const divisionsData = divisionsRes.data;
         
         const divisionNames = (divisionsData.departments || []).map(d => 
           typeof d === 'object' ? d.name : d
@@ -203,8 +194,6 @@ const ReportGenerator = () => {
     setGenerating(true);
     
     try {
-      const token = localStorage.getItem('token');
-      
       const params = new URLSearchParams({
         report_type: selectedReport.id,
         sections: selectedSections.join(','),
@@ -220,18 +209,10 @@ const ReportGenerator = () => {
         params.append('division', selectedFilters.division);
       }
       
-      const response = await fetch(`http://localhost:8002/api/v1/reports/generate?${params}`, {
-        method: 'GET',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Erro ao gerar relatório');
-      }
-      
+      const response = await api.get(`/reports/generate?${params}`);
+
       // Novo sistema: recebe JSON com caminho do arquivo HTML
-      const responseData = await response.json();
+      const responseData = response.data;
       
       if (responseData.success) {
         toast.success(

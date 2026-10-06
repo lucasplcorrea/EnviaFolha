@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { ComposedChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import toast from 'react-hot-toast';
 import ExportPDFButton from '../../components/ExportPDFButton';
+import api from '../../services/api';
 
 const Leaves = () => {
   const [loading, setLoading] = useState(true);
@@ -48,25 +49,15 @@ const Leaves = () => {
 
     const loadFilters = async () => {
       try {
-        const token = localStorage.getItem('token');
-
         const [yearsRes, monthsRes, divisionsRes] = await Promise.all([
-          fetch('http://localhost:8002/api/v1/payroll/years', {
-            headers: { 'Authorization': `Bearer ${token}` }
-          }),
-          fetch('http://localhost:8002/api/v1/payroll/months', {
-            headers: { 'Authorization': `Bearer ${token}` }
-          }),
-          fetch('http://localhost:8002/api/v1/payroll/divisions', {
-            headers: { 'Authorization': `Bearer ${token}` }
-          })
+          api.get('/payroll/years'),
+          api.get('/payroll/months'),
+          api.get('/payroll/divisions')
         ]);
 
-        const [yearsData, monthsData, divisionsData] = await Promise.all([
-          yearsRes.json(),
-          monthsRes.json(),
-          divisionsRes.json()
-        ]);
+        const yearsData = yearsRes.data;
+        const monthsData = monthsRes.data;
+        const divisionsData = divisionsRes.data;
 
         // Extrair apenas os nomes das divisões
         const divisionNames = (divisionsData.departments || []).map(d =>
@@ -111,7 +102,6 @@ const Leaves = () => {
 
     setLoading(true);
     try {
-      const token = localStorage.getItem('token');
       const params = new URLSearchParams({
         year: selectedFilters.year,
         month: selectedFilters.month,
@@ -131,13 +121,8 @@ const Leaves = () => {
         params.append('leave_type', 'all');
       }
 
-      const response = await fetch(`http://localhost:8002/api/v1/indicators/leaves?${params}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-
-      if (!response.ok) throw new Error('Erro ao carregar dados');
-
-      const result = await response.json();
+      const response = await api.get(`/indicators/leaves?${params}`);
+      const result = response.data;
       setData(result);
 
       // Atualizar tipos de afastamento disponíveis

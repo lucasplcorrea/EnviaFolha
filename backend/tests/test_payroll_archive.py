@@ -3,6 +3,8 @@ import os
 import tempfile
 import unittest
 import zipfile
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from app.routes.payroll import PayrollRouter
 
@@ -72,6 +74,72 @@ class PayrollArchiveTests(unittest.TestCase):
                 self.assertEqual(set(archive.namelist()), {duplicate, sent_only})
                 self.assertEqual(archive.read(duplicate), b'processed-copy')
                 self.assertEqual(archive.read(sent_only), b'sent-only')
+
+
+class _Query:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def filter(self, *args):
+        return self
+
+    def all(self):
+        return self.rows
+
+
+class _Session:
+    def __init__(self):
+        self.closed = False
+        self.period = SimpleNamespace(id=7, year=2026, month=2, period_name='Fevereiro 2026')
+        self.records = [
+            SimpleNamespace(employee_id=10, gross_salary=2500, net_salary=2100),
+            SimpleNamespace(employee_id=11, gross_salary=3000, net_salary=2400),
+        ]
+
+    def query(self, model):
+        if model.__name__ == 'PayrollPeriod':
+            return _Query([self.period])
+        return _Query(self.records)
+
+    def close(self):
+        self.closed = True
+
+
+class _PeriodComparisonRouter(PayrollRouter):
+    def __init__(self):
+        handler = _Handler()
+        handler.path = '/api/v1/payroll/period-comparison'
+        super().__init__(handler)
+        self.response = None
+
+    def send_json_response(self, data, status_code=200):
+        self.response = (data, status_code)
+
+
+class PeriodComparisonTests(unittest.TestCase):
+    def test_active_route_uses_modular_handler_and_returns_totals(self):
+        session = _Session()
+        router = _PeriodComparisonRouter()
+
+        with patch('app.routes.payroll.SessionLocal', return_value=session):
+            router.handle_get('/api/v1/payroll/period-comparison')
+
+        data, status_code = router.response
+        self.assertEqual(status_code, 200)
+        self.assertEqual(data['periods'], [{
+            'year': 2026,
+            'month': 2,
+            'period_names': 'Fevereiro 2026',
+            'employee_count': 2,
+            'total_earnings': 5500.0,
+            'total_deductions': 1000.0,
+            'total_net': 4500.0,
+        }])
+        self.assertTrue(session.closed)
+
+    def test_rejects_invalid_month_range(self):
+        with self.assertRaisesRegex(ValueError, 'YYYY-MM'):
+            PayrollRouter._parse_comparison_month('2026-13')
 
 
 if __name__ == '__main__':

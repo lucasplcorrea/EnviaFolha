@@ -1,7 +1,7 @@
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
-const configuredBaseURL = process.env.REACT_APP_API_URL || 'http://localhost:8002/api/v1';
+const configuredBaseURL = process.env.REACT_APP_API_URL || '/api/v1';
 const normalizedBaseURL = configuredBaseURL.replace(/\/+$/, '');
 
 const api = axios.create({
@@ -41,7 +41,7 @@ export default api;
 // Funções específicas para verificação de saúde
 export const healthAPI = {
   // Verificação geral de saúde
-  checkHealth: () => api.get('/health', { baseURL: 'http://localhost:8002' }),
+  checkHealth: () => api.get('/database/health'),
   
   // Verificação específica do banco de dados
   checkDatabaseHealth: () => api.get('/database/health'),

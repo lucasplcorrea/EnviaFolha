@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { UserGroupIcon, UserPlusIcon, UserMinusIcon, ChartBarIcon, CalendarDaysIcon, CalendarIcon, ClockIcon } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import ExportPDFButton from '../../components/ExportPDFButton';
+import api from '../../services/api';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 function Turnover() {
@@ -31,25 +32,15 @@ function Turnover() {
 
     const loadFilters = async () => {
       try {
-        const token = localStorage.getItem('token');
-
         const [yearsRes, monthsRes, divisionsRes] = await Promise.all([
-          fetch('http://localhost:8002/api/v1/payroll/years', {
-            headers: { 'Authorization': `Bearer ${token}` }
-          }),
-          fetch('http://localhost:8002/api/v1/payroll/months', {
-            headers: { 'Authorization': `Bearer ${token}` }
-          }),
-          fetch('http://localhost:8002/api/v1/payroll/divisions', {
-            headers: { 'Authorization': `Bearer ${token}` }
-          })
+          api.get('/payroll/years'),
+          api.get('/payroll/months'),
+          api.get('/payroll/divisions')
         ]);
 
-        const [yearsData, monthsData, divisionsData] = await Promise.all([
-          yearsRes.json(),
-          monthsRes.json(),
-          divisionsRes.json()
-        ]);
+        const yearsData = yearsRes.data;
+        const monthsData = monthsRes.data;
+        const divisionsData = divisionsRes.data;
 
         // Extrair apenas os nomes das divisões (vem como objetos {name, total_employees})
         const divisionNames = (divisionsData.departments || []).map(d =>
@@ -95,7 +86,6 @@ function Turnover() {
 
     setLoading(true);
     try {
-      const token = localStorage.getItem('token');
       const params = new URLSearchParams({
         year: String(selectedFilters.year),
         month: String(selectedFilters.month),
@@ -104,14 +94,8 @@ function Turnover() {
         months_range: String(selectedFilters.monthsRange)
       });
 
-      const response = await fetch(`http://localhost:8002/api/v1/indicators/turnover?${params}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-
-      if (!response.ok) throw new Error('Erro ao carregar dados');
-
-      const data = await response.json();
-      setTurnoverData(data);
+      const response = await api.get(`/indicators/turnover?${params}`);
+      setTurnoverData(response.data);
     } catch (error) {
       console.error('Erro ao carregar turnover:', error);
       toast.error('Erro ao carregar dados de turnover');
